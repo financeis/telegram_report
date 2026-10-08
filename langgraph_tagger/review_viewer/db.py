@@ -1,16 +1,12 @@
-"""supabase-py REST wrapper for review viewer queries.
+"""supabase-py REST reads for the review queue.
 
-Sync (Streamlit-friendly), unlike the async asyncpg adapter in
-langgraph_tagger/supabase_io.py used by the tagger pipeline.
+Sync, unlike the async asyncpg adapter in langgraph_tagger/supabase_io.py
+used by the tagger pipeline. Review writes and undo live in
+langgraph_tagger/workspace/review.py.
 """
 from __future__ import annotations
 
 from typing import Any, Iterable
-
-from langgraph_tagger.review_viewer.actions import (
-    SNAPSHOT_COLUMNS,
-    build_pending_reset_payload,
-)
 
 
 class ReviewDB:
@@ -45,18 +41,3 @@ class ReviewDB:
         result = q.execute()
         data = result.data or []
         return data[0] if data else None
-
-    def mark_verified(self, row_id: int, payload: dict[str, Any]) -> None:
-        self._sb.table('reports').update(payload).eq('id', row_id).execute()
-
-    def mark_oos(self, row_id: int, payload: dict[str, Any]) -> None:
-        self._sb.table('reports').update(payload).eq('id', row_id).execute()
-
-    def mark_pending(self, row_id: int) -> None:
-        payload = build_pending_reset_payload()
-        self._sb.table('reports').update(payload).eq('id', row_id).execute()
-
-    def restore_snapshot(self, row_id: int, snapshot: dict[str, Any]) -> None:
-        """Apply only allowlisted columns from snapshot, ignoring any leakage."""
-        filtered = {col: snapshot[col] for col in SNAPSHOT_COLUMNS if col in snapshot}
-        self._sb.table('reports').update(filtered).eq('id', row_id).execute()

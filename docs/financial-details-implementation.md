@@ -8,6 +8,9 @@
 
 ## 사용 방법
 
+> 아래는 Streamlit 대시보드 시절의 사용법이다. 그 대시보드는 삭제됐고, 같은 정보는
+> Research Desk의 리포트 상세·비교 화면에서 본다 ([research-workspace.md](research-workspace.md)).
+
 1. 분석 대시보드에서 종목을 검색한다.
 2. `🤖 LLM 분석` 탭에서 자료가 있는 기간을 선택한다.
 3. 새 보고서는 `🤖 LLM 분석`으로 생성한다.

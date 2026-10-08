@@ -10,8 +10,9 @@ from typing import Any
 
 V2_OOS_REASONS: tuple[str, ...] = ('foreign', 'fund', 'digital', 'private', 'ir_self')
 
-# Columns the viewer may write. Used both by capture_snapshot (for undo) and
-# restore_snapshot in db.py. Original / message / file meta NEVER appear here.
+# Columns review actions may write. capture_snapshot uses them for the undo
+# snapshot that workspace/review.py restores. Original / message / file meta
+# NEVER appear here.
 SNAPSHOT_COLUMNS: tuple[str, ...] = (
     # analysis body
     'published_at',

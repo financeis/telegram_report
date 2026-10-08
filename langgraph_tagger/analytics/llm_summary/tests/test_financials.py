@@ -150,23 +150,3 @@ def test_current_valuation_period_does_not_prove_rollover():
     }]
     result, _ = ground_metrics(FinancialDetails.model_validate(payload), '')
     assert result.valuation.change_drivers == []
-
-
-def test_financial_ui_renders_all_sections_and_supports_old_cards(tmp_path):
-    from streamlit.testing.v1 import AppTest
-    import json
-    payload = financial_details()
-    script = tmp_path / 'financial_card.py'
-    script.write_text(
-        'from langgraph_tagger.analytics.llm_summary.financial_view import render_financial_details\n'
-        + 'import json\n'
-        + f'details = json.loads({json.dumps(payload, ensure_ascii=False)!r})\n'
-        + "render_financial_details({'financial_details': details, 'prev_match_type': 'none'})\n"
-        + "render_financial_details({'one_line_summary': '기존 요약'})\n",
-        encoding='utf-8',
-    )
-    app = AppTest.from_file(str(script)).run()
-    assert not app.exception
-    assert [t.label for t in app.tabs] == ['실적 전망', '밸류에이션', '투자 논리·촉매', '보고서 비교']
-    assert any('Outperform' in m.value for m in app.markdown)
-    assert any('기본 요약' in c.value for c in app.caption)

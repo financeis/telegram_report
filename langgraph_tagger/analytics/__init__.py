@@ -1,1 +1,1 @@
-"""Analytics dashboard: Streamlit web app for sector coverage + stock dashboards."""
+"""Report reads, KRX lookup, favorites and coverage aggregation used by Research Desk."""

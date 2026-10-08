@@ -1,1 +1,1 @@
-"""Review viewer: Streamlit web app for manually verifying review_needed rows."""
+"""Review queue reads and review payload rules used by Research Desk."""

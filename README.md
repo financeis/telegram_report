@@ -131,7 +131,7 @@ changing models does not trigger a bulk reanalysis.
 
 ## Financial research details
 
-The stock dashboard's **🤖 LLM 분석** cards now include:
+Research Desk's report detail and comparison views show:
 
 - **실적 전망**: fiscal-period estimates, actuals/guidance, units, accounting basis,
   explicitly reported prior estimates, and page-level evidence.
@@ -147,10 +147,9 @@ For an existing database, apply `migrations/006_financial_details.sql` once befo
 running the updated application. It adds two nullable JSONB fields to the existing
 summary table. Existing basic summaries remain readable.
 
-Select a stock and period in `python -m langgraph_tagger.analytics`. New analyses
-extract financial details automatically. **금융 정보 확장** refreshes basic summaries
-in the selected period and also analyzes uncached reports; already expanded
-summaries are reused. The button shows the number of basic summaries affected.
+Analyze reports from Research Desk (see above). Each analysis extracts financial
+details. Reports that already have a detailed analysis are reused; reports with
+only a basic summary are analyzed again when selected.
 
 Numeric observations without support in their cited quote and PDF page are omitted.
 This check does not guarantee correct table-column alignment. Missing figures stay
