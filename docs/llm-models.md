@@ -8,7 +8,7 @@
 | 태깅 재처리 (escalate) | `LLM_MODEL_ESCALATION` | `gpt-5.4` | OpenAI API (`OPENAI_API_KEY`) |
 | 재무 분석·리포트 비교 | `LLM_MODEL_PHASE2` | `gpt-6-luna` (운영 `.env`는 `codex:gpt-6-luna`) | `codex:` 접두사 → 로컬 `codex exec` |
 
-모델 이름이 실행 경로를 정한다 ([llm_provider.py](../langgraph_tagger/llm_provider.py)):
+모델 이름이 실행 경로를 정한다 ([core/llm.py](../research_desk/core/llm.py)):
 `claude-*` → Anthropic API, `codex:<model>` → Codex CLI, 그 외 → OpenAI API.
 바꾸거나 되돌릴 때는 `.env`의 모델명만 고치고 워커·Research Desk를 재시작한다.
 구 이름 `OPENAI_MODEL_*`도 `LLM_MODEL_*`이 없을 때 읽는다.
@@ -49,7 +49,7 @@ Haiku는 정확하지만 과거 실적·업종 KPI·이전 추정치를 절반 �
 못 써 8회 중 1회꼴로 형식이 깨졌다.
 
 ### 추출 프롬프트 개편
-[prompts.py](../langgraph_tagger/analytics/llm_summary/prompts.py)의 `_EXTRACTION_SYSTEM`.
+[prompts.py](../research_desk/features/analysis/prompts.py)의 `_EXTRACTION_SYSTEM`.
 - 결과 용도(카드, 리포트 비교의 정확 일치 매칭) 설명. "간결하게"와 "최대 48개"가 충돌하던 지시 제거.
 - 증권사 리포트 구조(표지, 투자지표, 실적 추정 변경, 분기 실적, 목표주가 산정, 변동 추이,
   컴플라이언스)와 필수 범위(연간 표 전 연도, 수정 전·후 전 행, 최근 분기, 업종 KPI) 지정.
