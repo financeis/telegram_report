@@ -1,0 +1,27 @@
+# Source-of-truth enums for research_desk, read through research_desk/domain/reports.py.
+# Mirrors migrations/003_v2_redesign.sql CHECK constraints
+# (6 report_types, 5 oos_reasons, 4 publisher_types).
+# No version field: changing a value here needs a DB migration too, and
+# reports.taxonomy_version records the stock-list (KRX CSV) version, not this file.
+
+report_types:
+  - 단일종목
+  - 산업
+  - 섹터
+  - IR자료
+  - 전략·시황
+  - 기타
+
+oos_reasons: [foreign, fund, digital, private, ir_self]
+publisher_types: [broker, data_provider, ir_agency, other]
+tagging_statuses: [pending, processing, auto, review_needed, verified]
+tagging_confidences: [high, medium, low]
+
+# Reference-only: precedence rules (codes implement these in oos_gate / decide_status / resolve_krx)
+precedence_rules:
+  - "OOS patterns override all other classification (foreign/fund/digital/private)"
+  - "report_type='IR자료' → automatic OOS ir_self (separate branch in oos_gate)"
+  - "단일종목 + KRX unmatched → review_needed (IPO pending or unknown)"
+  - "산업/전략·시황 → KRX lookup skipped (entry == None is normal)"
+  - "섹터 → KRX lookup over all stock_codes_raw + company_names_raw, union sectors/products"
+  - "단일종목 stock_code matched but company name not in raw → krx_name_code_mismatch (auto/medium)"
