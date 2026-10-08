@@ -6,6 +6,9 @@ SQL without RPC functions; the direct connection keeps the SQL transparent.
 """
 from __future__ import annotations
 
+# Recorded in reports.tagger_version by every tagged row. The one definition.
+TAGGER_VERSION = "langgraph-tagger@2.0"
+
 STALE_LOCK_RECLAIM_SQL = """
 UPDATE reports
    SET tagging_status='pending', tagging_locked_at=NULL, tagging_worker_id=NULL
@@ -61,7 +64,8 @@ RETURNING id
 """
 
 # Note: in-scope, OOS, unreadable rows all share this UPDATE; payload semantics differ.
-UPDATE_SQL = """
+# 19 bind args ($1..$19), built by nodes/write.py.
+UPDATE_SQL = f"""
 UPDATE reports
    SET published_at=$2,
        report_type=$3,
@@ -83,7 +87,7 @@ UPDATE reports
        tagging_locked_at=NULL,
        tagging_worker_id=NULL,
        tagged_at=now(),
-       tagger_version='langgraph-tagger@2.0',
+       tagger_version='{TAGGER_VERSION}',
        taxonomy_version=$19
  WHERE id=$1
 """
