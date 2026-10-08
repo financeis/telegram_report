@@ -1,7 +1,7 @@
 """The ``collect`` command (ported from the root tests/test_main.py).
 
 The old ``parse_args(argv)`` is now the ``collect`` subparser that
-``register(subparsers)`` adds; the old ``main(argv)`` is ``args.handler(args)``.
+``register(subparsers)`` adds; the old ``main(argv)`` is ``args.func(args)``.
 The handler tests at the end run the whole command with fake Telegram/Storage
 objects (the collector conftest fails any test that reaches a real one).
 """
@@ -36,7 +36,7 @@ def parse(*argv: str) -> argparse.Namespace:
 def invoke(*argv: str) -> int:
     """Run ``research_desk collect <argv>`` the way the entry point does."""
     args = parse(*argv)
-    return args.handler(args)
+    return args.func(args)
 
 
 # === parse_args ===
@@ -217,13 +217,13 @@ async def test_dry_run_normal_mode_continues_after_last_seen(tmp_path, caplog):
 
 # === register ===
 
-def test_register_adds_collect_with_handler():
+def test_register_adds_collect_with_func():
     parser = argparse.ArgumentParser(prog='research_desk')
     collect_parser = register(parser.add_subparsers(dest='command'))
 
     assert collect_parser.prog == 'research_desk collect'
     args = parser.parse_args(['collect'])
-    assert args.handler is cli.collect
+    assert args.func is cli.collect
 
 
 def test_collect_help_exits_0(capsys):

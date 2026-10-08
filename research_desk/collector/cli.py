@@ -1,7 +1,7 @@
 """The ``collect`` command: ``python -m research_desk collect [options]``.
 
-``register(subparsers)`` adds the subcommand. Parsing sets ``args.handler`` to
-``collect``; the entry point calls ``args.handler(args)`` and exits with the
+``register(subparsers)`` adds the subcommand. Parsing sets ``args.func`` to
+``collect``; the entry point calls ``args.func(args)`` and exits with the
 code it returns.
 
 Exit codes (collector design §5.5):
@@ -31,7 +31,7 @@ DESCRIPTION = 'Collect PDF reports from a Telegram channel into Supabase + local
 def register(subparsers) -> argparse.ArgumentParser:
     """Add the ``collect`` subcommand to ``subparsers`` (from ``add_subparsers()``).
 
-    Returns the new parser. Its parsed namespace carries ``handler=collect``.
+    Returns the new parser. Its parsed namespace carries ``func=collect``.
     """
     p = subparsers.add_parser('collect', help=DESCRIPTION, description=DESCRIPTION)
     mode = p.add_mutually_exclusive_group()
@@ -58,7 +58,7 @@ def register(subparsers) -> argparse.ArgumentParser:
         action='store_true',
         help='Set log level to DEBUG.',
     )
-    p.set_defaults(handler=collect)
+    p.set_defaults(func=collect)
     return p
 
 
