@@ -1,6 +1,11 @@
 # Golden PDFs for research_desk.tagger
 
-Each PDF maps to a spec rule. Fail at parity test = drift from spec §6.5/§6.6.
+These PDFs were made for the v1 tagging rules, and the "Expected outcome" column
+below records those v1 rules. The v2 rules the code follows differ: `IR자료` is
+out of scope (`ir_self`), an unknown publisher or product no longer sends a row
+to review, and `publisher_type=company` no longer exists. No test reads these
+PDFs today; the classification rules are pinned by the parity fixtures
+(`../parity/fixtures.json`). Do not change the code to match this table.
 
 | File | Maps to | Expected outcome |
 |---|---|---|
