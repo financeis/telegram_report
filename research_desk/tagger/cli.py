@@ -28,7 +28,6 @@ from typing import Optional
 from research_desk.core import db, llm, settings
 from research_desk.domain.stocks import StockList, StockListError
 from research_desk.tagger import settings as tagger_settings
-from research_desk.tagger.orchestrator import run_batch
 from research_desk.tagger.sql import ESCALATION_PICK_SQL, INSPECT_SUMMARY_SQL, RESET_WORKER_SQL
 
 EXIT_NOT_READY = 4
@@ -45,6 +44,18 @@ STOCK_LIST_VERSION_MISMATCH = (
 
 class NotReadyToRun(Exception):
     """A start-up check failed; ``str()`` is the stderr message (exit code 4)."""
+
+
+async def run_batch(**kwargs) -> dict:
+    """``orchestrator.run_batch``, imported on the first call.
+
+    The command entry imports this module for every command, so the row graph (LangGraph, and
+    the warning LangGraph prints when it loads) loads only when run or escalate tags rows, never
+    for collect, web, stocks or ``--help``. Tests replace this name.
+    """
+    from research_desk.tagger.orchestrator import run_batch as run
+
+    return await run(**kwargs)
 
 
 @dataclass(frozen=True)

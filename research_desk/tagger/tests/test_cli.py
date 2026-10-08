@@ -13,6 +13,7 @@ variable the command reads before each test sets its own.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import shutil
@@ -464,6 +465,21 @@ def test_run_ai_client_settings(env, backend):
         "openai_api_key": "sk-openai-test", "anthropic_api_key": "sk-ant-test",
         "max_retries": 2, "timeout": 60.0,
     }
+
+
+def test_run_batch_is_the_orchestrators_loaded_on_the_first_call(monkeypatch):
+    """The entry imports cli for every command; the row graph loads only when rows are tagged."""
+    from research_desk.tagger import orchestrator
+
+    got = {}
+
+    async def fake_run_batch(**kwargs):
+        got.update(kwargs)
+        return {"processed": 3}
+
+    monkeypatch.setattr(orchestrator, "run_batch", fake_run_batch)
+    assert asyncio.run(cli.run_batch(batch_size=3, dry_run=True)) == {"processed": 3}
+    assert got == {"batch_size": 3, "dry_run": True}
 
 
 @pytest.mark.parametrize("name,argv", [

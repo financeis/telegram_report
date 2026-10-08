@@ -10,7 +10,7 @@ New:
 - a command's exit code comes back from ``main`` (collect without settings: 1, tag inspect without
   SUPABASE_DB_URL: 4) and, through ``python -m research_desk`` in a fresh process, becomes the
   process's exit code; the commands load neither FastAPI nor uvicorn (only ``web`` does, when it
-  runs);
+  runs) nor LangGraph (only ``tag run`` / ``tag escalate``, when they tag rows);
 - ``web``: the address line of the view, then the app of ``create_app()`` served on
   127.0.0.1:8520 (``uvicorn.run`` replaced: no server starts), exit 0;
 - ``stocks set-version``: the new version on stdout and exit 0, the version file with that version
@@ -195,7 +195,7 @@ def test_python_m_research_desk_help_exits_0():
     assert result.stdout.startswith('usage: research_desk')
 
 
-def test_python_m_research_desk_without_a_command_exits_2_and_loads_no_web_package():
+def test_python_m_research_desk_without_a_command_exits_2_and_loads_no_web_package_or_tag_graph():
     # With import times on, stderr names every module the process imported.
     result = run_python('-X', 'importtime', '-m', 'research_desk')
     assert result.returncode == 2
@@ -205,6 +205,11 @@ def test_python_m_research_desk_without_a_command_exits_2_and_loads_no_web_packa
     assert {'research_desk.cli', 'research_desk.collector.cli', 'research_desk.tagger.cli',
             'research_desk.web.server'} <= imported
     assert not imported & {'fastapi', 'uvicorn', 'research_desk.web.app'}
+    # The row graph loads only when tag run / escalate tag rows: collect, web and stocks start
+    # without LangGraph and without the warning it prints when it loads.
+    assert 'research_desk.tagger.orchestrator' not in imported
+    assert not {name for name in imported if name.split('.')[0] == 'langgraph'}
+    assert 'LangChainPendingDeprecationWarning' not in result.stderr
 
 
 # ── web ──────────────────────────────────────────────────────────────────────
