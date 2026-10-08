@@ -1,7 +1,8 @@
 """The ``web`` command: ``python -m research_desk web [--view reports|market|review]`` (spec §5).
 
-``register(subparsers)`` adds the command; parsing sets ``func=serve``. ``serve(args)`` prints
-``Research Desk: http://127.0.0.1:8520/?view=<view>``, then serves the app of
+``register(subparsers)`` adds the command; parsing sets ``func=serve``. ``serve(args)`` re-reads
+``.env`` when it starts, like every command (spec §7; each feature reads it again when it prepares),
+prints ``Research Desk: http://127.0.0.1:8520/?view=<view>``, then serves the app of
 ``app.create_app()`` on 127.0.0.1:8520 until it is stopped, and returns 0. The view is the
 screen's own ``?view=`` (default ``reports``); it replaces the old entry points
 ``python -m langgraph_tagger.workspace`` / ``.analytics`` / ``.review_viewer``.
@@ -12,6 +13,8 @@ need the web packages (``requirements-workspace.txt``).
 from __future__ import annotations
 
 import argparse
+
+from research_desk.core import settings
 
 HOST = '127.0.0.1'
 PORT = 8520
@@ -30,11 +33,13 @@ def register(subparsers) -> argparse.ArgumentParser:
 
 
 def serve(args: argparse.Namespace) -> int:
-    """Print the address, then serve the app on 127.0.0.1:8520 until stopped. Returns 0."""
+    """Re-read ``.env``, print the address, then serve the app on 127.0.0.1:8520 until stopped.
+    Returns 0."""
     import uvicorn
 
     from .app import create_app
 
+    settings.load_env()
     print(f'Research Desk: http://{HOST}:{PORT}/?view={args.view}', flush=True)
     uvicorn.run(create_app(), host=HOST, port=PORT)
     return 0

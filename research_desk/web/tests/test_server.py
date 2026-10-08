@@ -7,6 +7,7 @@ through ``python -m research_desk`` is tested in research_desk/tests/test_cli.py
 from __future__ import annotations
 
 import argparse
+import os
 
 import pytest
 import uvicorn
@@ -54,6 +55,18 @@ def test_serve_prints_the_address_then_serves_the_app_on_127_0_0_1_8520(served, 
     assert printed_before == f'Research Desk: http://127.0.0.1:8520/?view={view}\n'
     assert options == {'host': '127.0.0.1', 'port': 8520}
     assert (server.HOST, server.PORT) == ('127.0.0.1', 8520)
+
+
+def test_serve_reads_dotenv_when_it_starts(env_file, monkeypatch, tmp_path):
+    """spec §7: like every command, ``web`` re-reads ``.env`` when it starts, before serving."""
+    monkeypatch.setattr(app_module, 'DEFAULT_DIST', tmp_path / 'no-dist')
+    monkeypatch.delenv('RESEARCH_DESK_WEB_PROBE', raising=False)
+    env_file.write_text('RESEARCH_DESK_WEB_PROBE=from-dotenv\n', encoding='utf-8')
+    seen = []
+    monkeypatch.setattr(uvicorn, 'run',
+                        lambda app, **options: seen.append(os.environ.get('RESEARCH_DESK_WEB_PROBE')))
+    assert serve(parse(['web'])) == 0
+    assert seen == ['from-dotenv']
 
 
 def test_serve_builds_the_app_with_the_default_screen_folder(served, monkeypatch, dist):
