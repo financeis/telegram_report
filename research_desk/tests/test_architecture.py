@@ -897,6 +897,18 @@ def test_r11_table_access_outside_owner_areas_is_detected(tmp_path):
     assert "failed_attempts" in retry.message
 
 
+def test_r11_catches_the_from_alias_of_table(tmp_path):
+    # supabase-py's client.from_('<표>') opens the same table as client.table('<표>').
+    root = make_tree(tmp_path, {
+        "features/coverage/service.py": 'def load(sb):\n    return sb.from_("reports").select("*").execute()\n',
+        "features/reports/store.py": 'def rows(sb):\n    return sb.from_("reports").select("*").execute()\n',
+    })
+    violations = check_tree(root)
+    assert hits(violations) == at("features/coverage/service.py", 2, rule="R11 표 주인")
+    (only,) = violations
+    assert ".from_('reports')" in only.message
+
+
 def test_r11_ignores_docstrings_but_not_other_strings(tmp_path):
     root = make_tree(tmp_path, {
         "features/coverage/service.py": '''

@@ -28,7 +28,7 @@
   다른 파일은 cli·__main__을 import하지 않는다.
   패키지 뿌리 파일은 research_desk 모듈을 import하지 않는다(여러 칸을 묶는 곳은 입구뿐).
 - R9: 외부 도구는 정해진 칸에서만. R10: 옛 코드 금지(테스트 포함).
-- R11: `.table('<표>')` 호출과, docstring이 아닌 문자열의 FROM/UPDATE/INTO/JOIN <표>
+- R11: `.table('<표>')` 호출(supabase-py의 별칭 `.from_('<표>')` 포함)과, docstring이 아닌 문자열의 FROM/UPDATE/INTO/JOIN <표>
   (대소문자 무시, 단어 경계, `public.`·큰따옴표 허용)는 주인 칸에만 있어야 한다.
   docstring = 모듈·클래스·함수 본문의 첫 문장인 문자열.
 """
@@ -95,6 +95,8 @@ TABLE_OWNERS = {
     "failed_attempts": ("collector",),
     "report_summaries": ("features/analysis",),
 }
+# supabase-py opens a table with client.table('<표>') or its alias client.from_('<표>').
+_TABLE_METHODS = ("table", "from_")
 _SQL_TABLE = re.compile(
     r'\b(?:FROM|UPDATE|INTO|JOIN)\s+(?:"?public"?\s*\.\s*)?"?'
     r"(" + "|".join(TABLE_OWNERS) + r")\b",
@@ -479,12 +481,14 @@ def _check_tables(source: _Source) -> Iterator[Violation]:
     fstring_lines = {id(part): node.lineno for node in ast.walk(source.tree)
                      if isinstance(node, ast.JoinedStr) for part in node.values}
     for node in ast.walk(source.tree):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "table":
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _TABLE_METHODS):
             for arg in [*node.args[:1], *(kw.value for kw in node.keywords)]:
                 if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                     table = arg.value.strip().lower()
                     if table in TABLE_OWNERS and area not in TABLE_OWNERS[table]:
-                        yield _violation(source, arg.lineno, 11, _owner_message(table, f".table('{table}')"))
+                        call = f".{node.func.attr}('{table}')"
+                        yield _violation(source, arg.lineno, 11, _owner_message(table, call))
         elif (isinstance(node, ast.Constant) and isinstance(node.value, str)
               and id(node) not in docstrings):
             first: dict[str, re.Match] = {}
