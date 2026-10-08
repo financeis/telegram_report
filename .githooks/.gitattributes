@@ -1,0 +1,2 @@
+# Hook scripts run under sh: keep LF line endings on every checkout (core.autocrlf=true).
+* text eol=lf
