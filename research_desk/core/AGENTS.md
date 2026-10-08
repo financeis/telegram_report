@@ -1,0 +1,110 @@
+# research_desk/core/ — 공용 설비: 설정, DB 연결, AI 호출, PDF 파일
+
+## 맡는 일
+
+- `settings.py`: 설정을 읽는 유일한 방법. `.env` 읽기(`load_env`), 값 읽기 도우미(`required`·`optional`·`get_int`·`get_float`·`get_bool`·`model_name`), 여러 칸이 함께 쓰는 값(Supabase URL·서비스 키·DB URL, 두 공급자의 API 키, `STORAGE_BASE_DIR`, `KRX_CSV_PATH`), 설정 누락 오류 `MissingSetting`, 기능 준비 실패 오류 `NotReady`.
+- `db.py`: Supabase REST 클라이언트(서비스 키), Postgres 직접 연결 풀(asyncpg), 그 위의 얇은 `SupabaseSQL`(fetch/execute, 행은 dict).
+- `llm.py`: 모델 이름으로 공급자(Anthropic API, OpenAI API, 로컬 Codex CLI)를 골라 구조화 출력을 받는 `LLMClient`, 키 확인 `require_key`, 일시 오류 묶음 `TRANSIENT_ERRORS`, 분석·비교가 쓰는 한 번 재시도 `call_with_retry`.
+- `pdf.py`: 저장 폴더 안의 PDF인지 확인(`resolve_in_storage`), 쪽별 글자, 쪽 수, 쪽 그림(PNG).
+- 외부 도구 `supabase`·`asyncpg`·`openai`·`anthropic`·`dotenv`·`fitz`/`pymupdf`는 저장소 전체에서 이 칸만 import한다. DB 연결·AI 호출·PDF 열기·`.env` 읽기를 한곳에 모아 두어, 나중에 서버를 옮기거나 공급자를 바꿀 때 고칠 범위가 이 칸으로 줄어든다.
+
+## 맡지 않는 일
+
+- 업무 개념. 리포트·종목·분류 상태·분석 대상 규칙·종목표 버전은 `research_desk.domain`이다. core는 이런 이름을 모르게 둔다.
+- research_desk의 다른 칸 import. core는 core만 import한다(어기면 `R1 core`).
+- 표와 SQL. core는 어느 표의 주인도 아니다. `reports`·`failed_attempts`·`report_summaries`를 `.table(…)`나 문자열 SQL로 다루면 `R11 표 주인`으로 잡힌다. SQL은 표의 주인 칸(`collector`, `tagger`, `features/review`, `features/reports`, `features/analysis`)에 둔다. docstring에 표 이름을 쓰는 것은 괜찮다.
+- 웹. FastAPI·starlette를 import하지 않고 HTTP 응답이나 상태 코드를 만들지 않는다. 오류는 평범한 예외로 던지고, 404·503으로 바꾸는 일은 기능(`features/*`)과 `web`이 한다.
+- 호출하는 쪽마다 다른 정책.
+  - 모델 기본값은 `tagger/settings.py`·`features/analysis/settings.py`, 프롬프트와 응답 스키마는 각 칸에 있다.
+  - 재시도와 시간 한도는 호출자가 정한다. 분류기는 SDK 재시도 2·요청 60초에 실패한 행을 `pending`으로 되돌리고, 분석·비교는 SDK 기본 재시도에 `call_with_retry`와 호출마다 `PHASE2_PER_REPORT_TIMEOUT_S`를 쓴다.
+  - 동시 호출 수도 호출자 몫이다. 분류기는 `MAX_CONCURRENT_LLM`(운영 천장 2), 웹 서버는 analysis의 `ai_slot`(2)이 막는다.
+  - core에 공통 제한이나 기본 정책을 새로 넣지 않는다. 넣으면 호출자마다 지켜 온 방식이 한꺼번에 바뀐다.
+- 칸 전용 설정 값. 각 칸의 `settings.py`가 core 도우미로 읽는다.
+- 준비 판정. 무엇이 없으면 어느 기능이 멈추는지는 각 기능과 명령이 정한다. core는 `NotReady`를 정의할 뿐 스스로 던지지 않는다.
+- `telethon`(collector), `langgraph`(tagger).
+
+## 늘 지켜야 할 것
+
+설정.
+- import 시점에는 아무 설정도 읽지 않는다. 모듈 최상위·클래스 본문·데코레이터·기본 인자에서 `os.environ`이나 설정 읽기 함수를 부르면 `test_core_modules_read_no_settings_at_import`가 실패한다. 테스트가 import 뒤에 환경을 바꾸는 것도, `.env`에 나중에 넣은 키가 다음 시도에 반영되는 것도 이 규칙에 기댄다.
+- `load_env()`는 부를 때마다 `.env`를 다시 읽고, 이미 있는 환경 변수는 덮지 않는다(`load_dotenv(override=False)`). 그래서 `.env`에 새로 추가한 키는 재시작 없이 다음 시도에 반영되고, 이미 있던 값을 바꾼 것은 재시작해야 반영된다. 의도한 동작이다. 분석 기능의 안내 문구(`<변수>가 설정되지 않았습니다. .env에 추가 후 분석 다시 시도하세요.`)가 이것에 기대고, 테스트가 넣은 값이 이기는 것도 이 덕분이다. `override=True`로 바꾸지 않는다.
+- 읽는 파일은 인자로 준 경로 → `ENV_FILE_PATH` → `research_desk/core/`에서 위로 올라가며 가장 가까운 `.env` 순서다. 현재 폴더 기준이 아니다. 그래서 저장소 폴더 안에 만든 별도 작업 폴더에서 명령을 돌리면, 그 폴더에 `.env`가 없는 한 바깥 저장소의 실제 `.env`가 읽힌다.
+- `ENV_FILE_ENABLED`가 거짓이면 아무것도 읽지 않고 None을 돌려준다. 이 스위치 확인은 `load_env()` 안에 그대로 둔다. 테스트의 `.env` 차단이 이것에 기댄다.
+- 도우미의 값 처리(테스트로 고정):
+  - `required`: 없거나 빈 값이면 `MissingSetting`.
+  - `optional`: 기본값은 변수가 없을 때만 쓴다. 빈 값은 빈 값 그대로 돌려준다.
+  - `get_int`·`get_float`: 없으면 기본값, 그 밖에 숫자가 아니면(빈 값 포함) 변수 이름이 든 `ValueError`.
+  - `get_bool`: 대소문자를 무시한 `true`만 참이다. `1`, `yes`, ` true`는 거짓.
+  - `model_name(role, default)`: `LLM_MODEL_<ROLE>` → 옛 이름 `OPENAI_MODEL_<ROLE>` → 기본값. 빈 값은 없는 것으로 본다.
+  - 비밀 값(Supabase URL·키·DB URL, API 키)은 빈 값이면 None.
+  - `STORAGE_BASE_DIR` 기본값은 `./reports`, `KRX_CSV_PATH` 기본값은 저장소 안의 종목표 CSV(`DEFAULT_KRX_CSV_PATH`)다. 상대 경로는 현재 폴더 기준이다.
+- 변수 이름은 바꾸지 않는다(사용자 `.env`는 고치지 않는다). 이름을 새로 정해야 하면 `model_name`처럼 읽는 쪽에서 옛 이름도 받아 준다.
+
+오류와 문구. 다른 칸·화면·스크립트가 문자 그대로 쓰므로 바꾸지 않는다.
+- `MissingSetting`: `RuntimeError`의 하위 클래스, `str()`은 `<NAME> is required`, `.name`은 변수 이름. `tag`는 이 문구를 stderr에 찍고 4로, `collect`는 `.name`으로 `Config error: Missing required env var: <NAME>`을 찍고 1로 끝난다.
+- `NotReady(area, reason)`: `str()`은 `<area> 기능을 지금 쓸 수 없습니다: <reason>`이고, 웹이 이 문자열을 503 응답의 `detail`로 그대로 보낸다. `area`는 기능의 화면 이름(`기업 목록`·`리포트`·`분석`·`비교`·`커버리지`·`검토`), `reason`은 한국어 고정 문장이다. 변수 이름은 넣어도 되지만 파일 경로·키 값·traceback은 넣지 않는다(브라우저까지 간다).
+- `NotReady`를 `RuntimeError`의 하위로 만들지 않는다. 호출 주변의 `except RuntimeError`(분석이 `require_key` 실패를 잡는 자리 같은 곳)가 준비 실패를 삼켜 일반 오류로 바꿔 버린다.
+- 두 예외 모두 pickle을 거쳐도 같은 문구가 나와야 한다(테스트). 생성자를 바꾸면 `super().__init__`에 생성자 인자를 그대로 넘긴다.
+- `require_key(model)`의 실패는 `RuntimeError`이고, 문구는 codex 모델이면 `codex CLI not found for model <model>`(`tag`가 stderr에 그대로 찍는다), 그 밖에는 `<ENV> is required for model <model>`이다. 호출하는 쪽이 `RuntimeError`로 잡으므로 예외 종류를 바꾸지 않는다.
+- `PDFNotFound.message`: 저장 폴더 밖이거나 PDF가 아니면 `PDF를 찾을 수 없습니다.`, 파일이 없으면 `로컬 PDF 파일이 없습니다. 수집 상태를 확인해 주세요.` 기능이 이 문구를 404 응답의 `detail`로 그대로 보낸다.
+
+DB.
+- `create_pool`의 `statement_cache_size=0`을 빼지 않는다. `SUPABASE_DB_URL`이 Supabase 트랜잭션 풀러(6543 포트, pgbouncer 트랜잭션 모드)를 가리키면 이름 붙은 prepared statement가 연결 사이에 남지 않아 쿼리가 깨진다. 5432 직접 연결에서는 꺼도 해가 없다. `min_size=1`이고 `max_size`는 키워드 필수 인자다(부르는 쪽이 정한다).
+- URL이 없으면 연결을 시도하기 전에 `MissingSetting("SUPABASE_DB_URL")`을 던진다.
+- `SupabaseSQL.fetch`는 `asyncpg.Record`가 아닌 평범한 dict 목록을 돌려주고, 인자는 `$1…$n` 순서대로 넘긴다.
+- `supabase_client`는 서비스 키(행 수준 보안을 건너뛰는 마스터 키)로 연결한다. 키와 클라이언트가 브라우저 응답이나 로그로 나가지 않게 한다.
+
+AI 호출.
+- 공급자는 모델 이름이 정한다. `claude-*` → Anthropic(`ANTHROPIC_API_KEY`), `codex:<모델>` → 로컬 `codex exec`(ChatGPT 로그인, 키 없음), 그 밖 → OpenAI(`OPENAI_API_KEY`). 모델 교체나 되돌리기가 `.env`의 `LLM_MODEL_*` 수정만으로 끝나야 하므로, 공급자 분기를 다른 칸에 따로 만들지 않는다.
+- Anthropic.
+  - `temperature`를 보내지 않는다. Claude 모델은 기본값이 아닌 샘플링 값을 거절한다.
+  - 시스템 프롬프트는 `cache_control: ephemeral`을 단 블록 하나다. 행마다 같은 문장이라 반복 호출이 캐시로 싸게 읽힌다.
+  - `max_tokens`는 16000이다. 적응형 사고가 `max_tokens`에 포함되므로 JSON 뒤에 여유가 필요하다.
+  - 사고 깊이는 `ANTHROPIC_EFFORT`(기본 `medium`).
+  - 응답 앞에 사고 블록이 올 수 있으므로 `type == "text"`인 블록만 이어 읽는다.
+  - 거절(`stop_reason == "refusal"`)은 예외가 아니라 `parsed=None`과 거절 사유로 돌려준다. 잘린 JSON은 pydantic `ValidationError`가 난다.
+- `constrained=False`는 Claude에서만 쓰이고 OpenAI·Codex 경로는 무시한다. 스키마를 디코딩 문법으로 강제하지 않고, JSON Schema를 시스템 프롬프트 뒤 `<output_format>`에 붙여 JSON 텍스트로 받은 뒤 pydantic으로 검증한다.
+  - 스키마가 커서 API가 "compiled grammar is too large"로 거절하는 재무 추출(`ExtractionResult`) 때문에 있다.
+  - 스키마는 호출자 시스템 문장 뒤에 붙인다. 그래야 프롬프트가 호출마다 같아져 캐시가 유지된다.
+  - 코드 펜스나 군말은 가장 바깥 `{…}`만 잘라서 견딘다.
+  - 엄격하지 않은 tool 입력 방식은 시험했다가 버렸다(중첩 객체를 JSON 문자열로 돌려줬다). 되살리지 않는다.
+- OpenAI는 `chat.completions.parse(response_format=<스키마>)`로 부른다. `temperature`는 값을 줬을 때만 보낸다(luna 계열은 0을 거절해서 분류기가 None을 넘긴다).
+- Codex CLI.
+  - 실행 방식을 유지한다. 사용자 설정을 무시하고(`--ignore-user-config --ignore-rules`: 사용자의 MCP 서버·훅·알림을 끈다), 빈 임시 폴더가 작업 공간 전부이고, 읽기 전용(`-s read-only`)에 `--skip-git-repo-check --ephemeral`, 출력 스키마는 `--output-schema`(OpenAI 경로와 같은 엄격 스키마), 마지막 메시지는 `-o` 파일로 받는다.
+  - CLI에 시스템 역할이 없어서 시스템 문장과 사용자 문장을 빈 줄로 이어 stdin으로 넣는다.
+  - 생각 깊이 `CODEX_REASONING_EFFORT`의 기본값은 `high`다. 재무 추출에서 `high`가 OpenAI API와 같은 결과를 냈고 `medium`은 지표를 눈에 띄게 적게 뽑았다.
+  - 종료 코드가 0이 아니거나 마지막 메시지가 비면 `CodexExecError`이고, 재시도하지 않는다. 토큰 수는 마지막 `turn.completed` 줄에서 읽는다.
+  - 프로세스는 asyncio 서브프로세스가 아니라 작업 스레드의 `Popen`으로 돌린다. Windows의 selector 이벤트 루프가 asyncio 서브프로세스를 지원하지 않는다.
+  - 시간 초과나 취소로 끊기면 프로세스 트리 전체를 죽인다(`taskkill /F /T /PID`). Windows의 `codex`는 npm 껍데기(cmd → node → codex.exe)라 껍데기만 죽이면 실제 프로세스가 고아로 남아 계속 돈다.
+- LangSmith 감싸기는 `LANGSMITH_TRACING=true`와 `LANGSMITH_API_KEY`가 둘 다 있을 때만 하고, 패키지가 없으면 조용히 건너뛴다.
+- `TRANSIENT_ERRORS`(두 공급자의 429·5xx·시간 초과·연결 오류)는 서로 다른 두 정책이 같이 쓴다. 분류기는 이것(과 응답 형식 오류)을 "행을 `pending`으로 되돌릴 오류"로 보고, `call_with_retry`는 이것을 한 번 다시 시도한다. 여기에 넣거나 빼면 두 쪽이 동시에 바뀐다.
+- `call_with_retry(call, backoff_s=5.0)`: 일시 오류(`TRANSIENT_ERRORS`, `TransientLLMError`, `asyncio.TimeoutError`)면 `backoff_s`를 기다린 뒤 정확히 한 번 더 부르고, 또 일시 오류면 그 오류를 원인으로 단 `TransientLLMError`를 던진다. 그 밖의 오류(`ValidationError`, `CodexExecError`, 거절로 만든 `RuntimeError`)는 기다리지 않고 바로 올린다. `call`은 시도마다 새 awaitable을 만들어야 한다(`lambda: asyncio.wait_for(client.parse(...), t)`). 코루틴 하나는 두 번 await할 수 없다.
+
+PDF.
+- `resolve_in_storage(base, relative)`는 경로를 끝까지 풀어서(`..`, 절대 경로 포함) 저장 폴더 안이고 확장자가 `.pdf`(대소문자 무관)일 때만 통과시킨다. 밖이거나 PDF가 아니면 `PDF를 찾을 수 없습니다.`, 안이지만 파일이 아니면 `로컬 PDF 파일이 없습니다. …`이다. 저장 폴더 안을 가리키는 절대 경로는 받아들인다.
+- 웹으로 PDF를 내보낼 때 이 확인을 건너뛰고 DB의 `file_path`를 바로 열지 않는다. 저장 폴더 밖의 `.env` 같은 파일이 새어 나가는 길이 된다.
+- `page_texts`는 예외를 던지지 않는다. 열 수 없는 파일(없음·깨짐·빈 파일)은 `[]`, 읽지 못한 쪽은 그 쪽만 `""`이다. 분류기의 "PDF를 읽을 수 없음" 판정과 분석의 "읽을 글자 없음" 422가 이것에 기댄다.
+- `page_count`·`render_page_png`는 파일 여는 오류를 그대로 올린다. `render_page_png`의 쪽 번호는 1부터, 기본 120dpi, 범위 밖이면 `PageNotFound`(`LookupError`의 하위)다.
+
+## 이 칸의 방식
+
+- 설정 값 추가: 두 칸 이상이 읽는 값만 `settings.py`에 함수로 둔다. 한 칸만 쓰는 값은 그 칸의 `settings.py`에서 core 도우미로 읽는다. 어느 쪽이든 import 때가 아니라 부를 때 읽는 함수로 만든다. 부르는 쪽은 먼저 `load_env()`를 부른다(명령은 시작할 때, 웹 기능은 준비할 때마다, 분석은 모델 키를 확인할 때마다).
+- 준비 실패 흐름: core는 재료만 준다. 명령은 `MissingSetting`을 받아 종료 코드로 바꾸고(`tag` 4, `collect` 1), 웹 기능은 준비에 실패하면 `NotReady(<기능 이름>, <고정 문장>)`을 던지고 `web`이 그것을 503으로 바꾼다. 원인(경로, 예외 내용)은 로컬 로그에만 남긴다.
+- DB 연결 함수는 모듈 속성으로 부른다. `from research_desk.core import db` 다음 `db.supabase_client(...)`, `db.SupabaseSQL.from_env(...)`처럼 쓴다. 테스트 안전망이 `core.db.supabase_client`·`core.db.create_pool`·`SupabaseSQL.from_env`를 거절하는 가짜로 바꿔 두는데, 모듈 맨 위에서 `from research_desk.core.db import supabase_client`처럼 함수를 복사해 두면 안전망을 빠져나가 진짜 연결을 시도한다. `load_env`는 스위치 방식이라 이름으로 가져가도 된다.
+- AI 기능 추가: 공급자별 차이는 `LLMClient` 안에서 모델 이름으로 가른다. 호출자마다 다른 값(`timeout`, `max_retries`, `effort`, `temperature`, `constrained`)은 인자로 받아, 각 호출자가 지금 방식을 그대로 유지하게 한다. SDK 클라이언트는 공급자마다 처음 쓸 때 하나 만들어 재사용하고, 쓰는 쪽이 `async with`나 `close()`로 닫는다.
+- 새 외부 설비(DB 드라이버, AI SDK, PDF 라이브러리)는 이 칸에 두고, 구조 검사의 외부 도구 표(`research_desk/tests/architecture_rules.py`의 `EXTERNAL_TOOL_AREAS`)에 넣어 다른 칸에서 못 쓰게 한다.
+- core는 모든 명령이 시작할 때 import된다(입구 → `tag` 등록 모듈 → `core.db`·`core.llm`). 무겁거나 없어도 되는 패키지(`langsmith.wrappers`)는 쓰는 함수 안에서 import한다.
+- `core/__init__.py`는 아무것도 다시 내보내지 않는다. 모듈을 직접 import한다(`from research_desk.core import settings`).
+
+## 테스트
+
+- 네트워크·실제 DB·실제 `.env` 없이 돈다.
+  - AI: `LLMClient`의 `_anthropic`·`_openai`에 MagicMock·AsyncMock을 꽂고 보낸 요청 모양을 확인한다. Codex는 `llm._run_codex`·`llm._codex_bin`을 바꾼다. 진짜 서브프로세스는 `sys.executable -c <스크립트>`로만 띄워 stdin 전달, 출력 디코딩, 취소 때의 트리 종료를 본다.
+  - DB: `db.asyncpg.create_pool`을 AsyncMock으로 바꾸고, 연결과 레코드는 가짜(`FakePool`, `FakeConn`, dict가 아닌 Mapping인 `FakeRecord`)를 쓴다.
+  - PDF: `tmp_path`에 pymupdf로 만든다. 한글은 내장 `korea` 글꼴로 넣어야 글자 추출이 된다.
+- 설정 테스트는 `RD_CORE_*`처럼 다른 테스트와 겹치지 않는 변수 이름과 `monkeypatch.setenv`·`delenv`를 쓴다. `.env` 동작은 `env_file` fixture로만 시험한다.
+- `test_env_file_fixture_loads_variables`와 바로 뒤의 `test_env_file_fixture_cleans_up_after_the_test`는 파일 순서에 기대는 짝이다. 뒤 테스트가 앞 테스트가 넣은 변수가 지워졌는지 본다. 떼어 놓거나 순서를 바꾸지 않는다.
+- `settings.py`에 환경을 읽는 함수를 새로 만들면 `test_settings.py`의 `_ENV_READS`에 이름을 더한다. 빠지면 import 시점 읽기 검사가 그 함수를 보지 못한다.
+- `call_with_retry` 테스트는 `llm.asyncio.sleep`을 바꿔 실제로 기다리지 않는다. LangSmith를 시험하지 않는 테스트에서 SDK 클라이언트를 만들 때는 `LANGSMITH_TRACING`·`LANGSMITH_API_KEY`를 지운다. 개발 PC에서 켜져 있으면 클라이언트가 감싸져 비교가 틀어진다.
+- 남겨야 할 경계 경우: 빈 값·옛 변수 이름·pickle, 캐시 토큰 필드가 None인 응답, 사고 블록이 앞선 응답, 코드 펜스 안의 JSON, 거절(사유 있음·없음), 잘린 JSON, codex 실패와 빈 출력, Windows와 그 밖 플랫폼의 트리 종료 분기(`llm.sys.platform`을 바꿔서), 저장 폴더 밖(`../`, 바깥 절대 경로, `.env`)·이름만 `.pdf`인 폴더·대문자 `.PDF`.
+- 비동기 테스트는 표시 없이 `async def`로 쓴다(`asyncio_mode = auto`).
