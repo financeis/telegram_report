@@ -118,7 +118,8 @@ class Violation:
 
 
 def format_violations(violations: list[Violation]) -> str:
-    header = f"구조 규칙 위반 {len(violations)}건 (spec §3). 형식: 파일:줄 — 규칙 이름: 설명"
+    header = (f"구조 규칙 위반 {len(violations)}건 (규칙 표: research_desk/tests/architecture_rules.py). "
+              "형식: 파일:줄 — 규칙 이름: 설명")
     return "\n".join([header, *(str(v) for v in violations)])
 
 
