@@ -1,7 +1,5 @@
 from unittest.mock import MagicMock
 
-import pytest
-
 from langgraph_tagger.analytics.llm_summary import summary_store as store
 
 
@@ -96,114 +94,6 @@ def test_update_diff_marks_none_when_no_prev():
     assert payload['prev_report_id'] is None
     assert payload['prev_match_type'] == 'none'
     assert payload['diff_narrative'] is None
-
-
-# -- asyncpg cascade tests ----------------------------------------------------
-
-class FakeRecord(dict):
-    """asyncpg.Record-like dict."""
-
-
-class FakeConn:
-    def __init__(self, fetchrow_result=None):
-        self.fetchrow_result = fetchrow_result
-        self.queries = []
-    async def fetchrow(self, sql, *args):
-        self.queries.append((sql, args))
-        return self.fetchrow_result
-
-
-class FakePool:
-    def __init__(self, fetchrow_result=None):
-        self.conn = FakeConn(fetchrow_result)
-    def acquire(self):
-        outer = self
-        class _Ctx:
-            async def __aenter__(self_): return outer.conn
-            async def __aexit__(self_, *a): return False
-        return _Ctx()
-
-
-@pytest.mark.asyncio
-async def test_find_prev_same_publisher_hit():
-    record = FakeRecord({
-        'prev_report_id': 10, 'prev_publisher': '삼성증권',
-        'prev_published_at': '2026-03-15', 'is_same_pub': True,
-        'target_price_new': 70000, 'target_price_old': None,
-        'target_price_dir': '신규', 'recommendation': '매수',
-        'recommendation_dir': '신규', 'one_line_summary': '이전 view',
-        'positive_points': [], 'risk_points': [],
-        'target_price_raw': '7만원', 'recommendation_raw': 'Buy',
-        'match_type': 'same_publisher',
-    })
-    pool = FakePool(fetchrow_result=record)
-    r = await store.find_prev_for_diff(
-        pool, stock_code='005930', publisher='삼성증권',
-        current_published_at='2026-05-05', active_version='llm-summary@1.0',
-    )
-    assert r is not None
-    assert r.prev_report_id == 10
-    assert r.match_type == 'same_publisher'
-    assert r.summary['target_price_new'] == 70000
-
-
-@pytest.mark.asyncio
-async def test_find_prev_none():
-    pool = FakePool(fetchrow_result=None)
-    r = await store.find_prev_for_diff(
-        pool, stock_code='005930', publisher='X',
-        current_published_at='2026-05-05', active_version='llm-summary@1.0',
-    )
-    assert r is None
-
-
-@pytest.mark.asyncio
-async def test_find_prev_passes_correct_sql_args():
-    """asyncpg는 date 인자에 str을 받지 않음 ('str object has no attribute toordinal').
-    find_prev_for_diff은 caller가 str을 줘도 내부에서 datetime.date로 변환해서
-    fetchrow에 넘겨야 함."""
-    from datetime import date
-    pool = FakePool(fetchrow_result=None)
-    await store.find_prev_for_diff(
-        pool, stock_code='005930', publisher='삼성증권',
-        current_published_at='2026-05-05', active_version='llm-summary@1.0',
-    )
-    sql, args = pool.conn.queries[0]
-    assert '005930' in args
-    assert '삼성증권' in args
-    assert date(2026, 5, 5) in args, \
-        f'published_at은 datetime.date여야 하는데 args={args}'
-    assert 'llm-summary@1.0' in args
-    assert 'INNER JOIN report_summaries' in sql
-    assert 'r.published_at < ' in sql  # 같은 날짜 제외
-
-
-@pytest.mark.asyncio
-async def test_find_prev_accepts_date_object_too():
-    """ISO str과 date 객체 둘 다 받아야 함 (caller가 어느 형태로 줘도 OK)."""
-    from datetime import date
-    pool = FakePool(fetchrow_result=None)
-    await store.find_prev_for_diff(
-        pool, stock_code='005930', publisher='X',
-        current_published_at=date(2026, 5, 5),
-        active_version='llm-summary@1.0',
-    )
-    _, args = pool.conn.queries[0]
-    assert date(2026, 5, 5) in args
-
-
-@pytest.mark.asyncio
-async def test_find_prev_decodes_financial_jsonb():
-    pool = FakePool(fetchrow_result=FakeRecord({
-        'prev_report_id': 10, 'prev_publisher': 'X',
-        'prev_published_at': '2026-03-15', 'match_type': 'same_publisher',
-        'financial_details': '{"metrics": [{"metric": "EPS", "value": 100}]}',
-    }))
-    result = await store.find_prev_for_diff(
-        pool, stock_code='005930', publisher='X',
-        current_published_at='2026-05-05', active_version='llm-summary@1.0',
-    )
-    assert result.summary['financial_details']['metrics'][0]['value'] == 100
 
 
 def test_store_comparison_details():

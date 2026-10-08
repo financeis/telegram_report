@@ -85,10 +85,6 @@ class FinancialDetails(BaseModel):
     rating: RatingDetails
 
 
-def has_financial_details(summary: dict) -> bool:
-    return isinstance(summary.get('financial_details'), dict) and bool(summary['financial_details'])
-
-
 def _numbers(text: str) -> set[float]:
     text = text.replace('−', '-').replace('－', '-')
     values = set()
