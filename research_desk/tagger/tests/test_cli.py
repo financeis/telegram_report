@@ -30,7 +30,9 @@ from research_desk.tagger.cli import register
 from research_desk.tagger.sql import ESCALATION_PICK_SQL, INSPECT_SUMMARY_SQL, RESET_WORKER_SQL
 from research_desk.tagger.tests.conftest import BUNDLED_CSV
 
-BUNDLED_VERSION = "KRX@2026-05-08"
+# The bundled stock list's version as its version file records it (replacing the CSV and running
+# `stocks set-version` changes it without touching this test).
+BUNDLED_VERSION = json.loads(stocks.version_file(BUNDLED_CSV).read_text(encoding="utf-8"))["version"]
 
 # spec §8, word for word.
 VERSION_GUIDANCE = (

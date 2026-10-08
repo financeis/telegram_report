@@ -29,7 +29,6 @@ from research_desk.domain.stocks import (
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BUNDLED_CSV = REPO_ROOT / "docs" / "stock_data" / "KRX_stocks_data.csv"
-BUNDLED_VERSION = "KRX@2026-05-08"
 
 # The first header cell has a line break inside quotes, like the real file.
 HEADER_LINE = '"종목\n코드",종목명,시장,산업명(대),산업명(중),주요제품\n'
@@ -406,11 +405,13 @@ def test_version_file_sits_next_to_the_csv():
 
 
 def test_bundled_csv_matches_its_version_file():
+    # The version file decides the bundled version, so replacing the CSV and running
+    # `stocks set-version` needs no change here; the content hash still binds the two files.
     data = json.loads(version_file(BUNDLED_CSV).read_text(encoding="utf-8"))
-    assert data == {"version": BUNDLED_VERSION, "content_hash": content_hash(BUNDLED_CSV)}
+    assert data == {"version": data["version"], "content_hash": content_hash(BUNDLED_CSV)}
     assert re.fullmatch(r"[0-9a-f]{64}", data["content_hash"])
     check = StockList.load(BUNDLED_CSV).verify()
-    assert check == VersionCheck(ok=True, version=BUNDLED_VERSION, reason=None)
+    assert check == VersionCheck(ok=True, version=data["version"], reason=None)
     # KRX@YYYY-MM-DD (ported from test_taxonomy_version_format)
     assert check.version.startswith("KRX@")
     date.fromisoformat(check.version.removeprefix("KRX@"))
