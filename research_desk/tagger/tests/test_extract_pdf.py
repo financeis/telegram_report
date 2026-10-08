@@ -7,7 +7,10 @@ from pathlib import Path
 import fitz  # PyMuPDF
 import pytest
 
-from research_desk.tagger.nodes.extract_pdf import extract_pdf, _has_meta_signals, _sync_extract
+from research_desk.core import pdf as core_pdf
+from research_desk.tagger.nodes.extract_pdf import (
+    _META_KEYWORDS, _has_meta_signals, _resolve, _sync_extract, extract_pdf,
+)
 
 
 GOLDEN = Path(__file__).parent / "golden"
@@ -104,3 +107,61 @@ def test_extract_pdf_max_pages_is_3(monkeypatch, tmp_path):
     out = _sync_extract(pdf)  # uses default max_pages
     # v2: should stop at 3
     assert out["pages_used"] == [1, 2, 3]
+
+
+# ── where the PDF is read from (spec §7, §10 item 5) ─────────────────────────
+
+def test_relative_paths_default_to_the_reports_folder(tagger_env):
+    """STORAGE_BASE_DIR unset → ./reports (was the current folder)."""
+    assert _resolve("124784_report.pdf") == Path("reports") / "124784_report.pdf"
+
+
+def test_relative_paths_use_storage_base_dir(tagger_env, tmp_path):
+    tagger_env.setenv("STORAGE_BASE_DIR", str(tmp_path))
+    assert _resolve("124784_report.pdf") == tmp_path / "124784_report.pdf"
+
+
+def test_absolute_paths_are_kept(tagger_env, tmp_path):
+    tagger_env.setenv("STORAGE_BASE_DIR", str(tmp_path / "elsewhere"))
+    path = tmp_path / "x.pdf"
+    assert _resolve(str(path)) == path
+
+
+@pytest.mark.asyncio
+async def test_relative_path_is_read_from_storage_base_dir(tagger_env, tmp_path):
+    _make_pdf(tmp_path / "1_x.pdf", ["키움증권 리서치센터\n분석가: 홍길동"])
+    tagger_env.setenv("STORAGE_BASE_DIR", str(tmp_path))
+    out = await extract_pdf({"file_path": "1_x.pdf"})
+    assert out["pages_used"] == [1]
+    assert "홍길동" in out["pdf_text"]
+
+
+# ── page walk on top of core.pdf.page_texts (spec §9.2) ─────────────────────
+
+@pytest.mark.parametrize("pages,used,text,unreadable", [
+    (["키움증권 분석가", "둘", "셋"], [1], "키움증권 분석가", False),     # meta on p1 → stop
+    (["", "투자의견 매수", "셋"], [1, 2], "투자의견 매수", False),          # blank p1 → p2
+    (["하나", "둘", "셋"], [1, 2, 3], "하나\n둘\n셋", False),               # no meta → all 3
+    (["하나"], [1], "하나", False),
+    (["", "  ", "\n"], [1, 2, 3], "", True),                              # no text → unreadable
+    ([], [], "", True),                                                   # cannot open → unreadable
+])
+def test_page_walk_rules(monkeypatch, pages, used, text, unreadable):
+    calls = []
+
+    def fake_page_texts(path, max_pages=None):
+        calls.append((path, max_pages))
+        return list(pages)
+
+    monkeypatch.setattr(core_pdf, "page_texts", fake_page_texts)
+    out = _sync_extract(Path("any.pdf"))
+    assert calls == [(Path("any.pdf"), 3)]       # at most 3 pages are read
+    assert out == {"pdf_text": text, "pages_used": used, "pdf_unreadable": unreadable}
+
+
+def test_meta_keywords_are_unchanged():
+    assert _META_KEYWORDS == [
+        "분석가", "애널리스트", "투자의견", "목표주가", "Research", "리서치",
+        "증권", "FnGuide", "KIRS", "Investor Relations", "IR Material",
+        "단일종목", "산업분석", "시황", "매크로", "퀀트", "전략",
+    ]

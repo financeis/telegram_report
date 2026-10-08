@@ -23,13 +23,12 @@ def _has_meta_signals(text: str) -> bool:
 
 
 def _resolve(file_path: str) -> Path:
-    """Resolve relative paths against STORAGE_BASE_DIR (read at call time so
-    pytest monkeypatch.setenv applied after module import still takes effect)."""
+    """Resolve relative paths against STORAGE_BASE_DIR (default ./reports), read
+    at call time so pytest monkeypatch.setenv after module import still applies."""
     p = Path(file_path)
     if p.is_absolute():
         return p
-    base = Path(settings.optional("STORAGE_BASE_DIR", "."))
-    return base / p
+    return settings.storage_base_dir() / p
 
 
 def _sync_extract(path: Path, max_pages: int = MAX_PAGES) -> dict:

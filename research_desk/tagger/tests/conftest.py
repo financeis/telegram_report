@@ -11,6 +11,29 @@ from research_desk.tagger.llm_schemas import LLMExtraction, OOSSignals
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BUNDLED_CSV = REPO_ROOT / "docs" / "stock_data" / "KRX_stocks_data.csv"
 
+# Every variable the tag command and its AI calls read (spec §7), plus the
+# removed HEARTBEAT_* ones.
+TAGGER_ENV_VARS = (
+    "SUPABASE_DB_URL", "STORAGE_BASE_DIR", "KRX_CSV_PATH",
+    "LLM_MODEL_DEFAULT", "OPENAI_MODEL_DEFAULT", "LLM_MODEL_ESCALATION", "OPENAI_MODEL_ESCALATION",
+    "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_EFFORT", "CODEX_REASONING_EFFORT", "CODEX_BIN",
+    "MAX_CONCURRENT_LLM", "TAGGER_BATCH_SIZE_DEFAULT", "LOCK_TTL_MINUTES", "PER_ROW_DEADLINE_S",
+    "LANGSMITH_TRACING", "LANGSMITH_API_KEY", "LANGSMITH_PROJECT", "LANGSMITH_ENDPOINT",
+    "HEARTBEAT_ENABLED", "HEARTBEAT_INTERVAL_S",
+)
+
+
+@pytest.fixture
+def tagger_env(monkeypatch):
+    """None of TAGGER_ENV_VARS is set; the test sets what it needs (returns monkeypatch).
+
+    The real .env is never read (research_desk/conftest.py), but an earlier test
+    in the session may have left values in the process environment.
+    """
+    for name in TAGGER_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    return monkeypatch
+
 
 @pytest.fixture(scope="session")
 def krx() -> StockList:
