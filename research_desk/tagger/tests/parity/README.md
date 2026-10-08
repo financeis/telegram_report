@@ -18,7 +18,7 @@ The 12 cases below cover the 6 v2 `report_type`s, all 5 OOS reasons
 (`foreign` / `fund` / `digital` / `private` / `ir_self`), and the
 `krx_name_code_mismatch` boundary scenario. Reference docs:
 
-- `docs/superpowers/specs/2026-05-07-report-metadata-tagging-routine-design.md`
+- `docs/superpowers/specs/2026-05-09-langgraph-tagger-v2-design.md`
   for the v2 policy (oos_gate / mark_oos_reason / decide_status).
 - `research_desk/tagger/llm_schemas.py` for the LLMExtraction v2 fields.
 - `research_desk/tagger/sql.py::UPDATE_SQL` for the 19-arg payload.
