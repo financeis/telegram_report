@@ -19,12 +19,13 @@
 
 **규칙** — 위반마다 "파일:줄 — 규칙 이름: 설명"
 - R1~R5·R7: 칸마다 import해도 되는 research_desk 모듈. 입구 모듈(cli·__main__) import는 R8로만 보고한다.
-- 공개 창구(R5·R7): 다른 기능과 web은 기능을 `research_desk.features.<기능>` 자체나 거기서 가져온
+- 공개 창구(R5·R7·R8): 자기 기능 밖에서는 기능을 `research_desk.features.<기능>` 자체나 거기서 가져온
   이름으로만 쓴다. `from research_desk.features.<기능> import x`에서 x가 하위 모듈 이름이면, 그 기능의
   `__init__.py` 최상위가 x를 직접 묶을 때만(예: `from .router import router`, `from . import store`)
   공개 이름으로 본다. `import *`, `__all__` 목록, 하위 모듈 import의 부수효과는 묶은 것으로 치지 않는다.
 - R6: 기능 → 다른 기능 import(테스트 제외)로 그래프를 만들고 순환마다 한 줄 보고한다.
-- R8: 입구만 모든 칸을 import한다. 다른 파일은 cli·__main__을 import하지 않는다.
+- R8: 입구만 모든 칸(하위 모듈 포함)을 import한다. 단 기능은 입구도 공개 창구로만 쓴다.
+  다른 파일은 cli·__main__을 import하지 않는다.
   패키지 뿌리 파일은 research_desk 모듈을 import하지 않는다(여러 칸을 묶는 곳은 입구뿐).
 - R9: 외부 도구는 정해진 칸에서만. R10: 옛 코드 금지(테스트 포함).
 - R11: `.table('<표>')` 호출과, docstring이 아닌 문자열의 FROM/UPDATE/INTO/JOIN <표>
@@ -314,6 +315,12 @@ class _Checker:
     def _internal_rule(self, area: str, imp: _Import, target_area: str) -> Optional[tuple[int, str]]:
         target = f"`{imp.target}`"
         if area == ENTRY:
+            # 입구는 모든 칸(하위 모듈 포함)을 import하지만, 기능은 공개 창구로만 쓴다(spec §2).
+            if target_area.startswith(FEATURES + "/"):
+                feature = _feature(target_area)
+                if not self._through_window(imp, feature):
+                    return 8, (f"입구(cli.py·__main__.py)도 기능은 공개 창구 `{PACKAGE}.{FEATURES}.{feature}`로만 "
+                               f"쓴다. 하위 모듈 직접 import 금지: {target}")
             return None
         if target_area == ENTRY:
             return 8, f"다른 칸은 입구(cli·__main__)를 import하지 않는다. 금지: {target}"

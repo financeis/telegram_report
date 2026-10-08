@@ -74,7 +74,7 @@ CLEAN_TREE = {
         from research_desk.collector.cli import register as register_collect
         from research_desk.core.settings import load_env
         from research_desk.domain.stocks import write_version
-        from research_desk.features.analysis.jobs import register as register_analysis_jobs
+        from research_desk.features.analysis import register_jobs as register_analysis_jobs
         from research_desk.tagger.cli import register as register_tag
         from research_desk.web.server import register as register_web
 
@@ -191,6 +191,7 @@ CLEAN_TREE = {
     """,
     "features/__init__.py": '"""Web app features."""\n',
     "features/analysis/__init__.py": """
+        from .jobs import register as register_jobs
         from .service import ai_slot, analyze_report, phase2_llm, save_comparison, summaries_for
     """,
     "features/analysis/service.py": """
@@ -458,10 +459,12 @@ def test_star_import_in_a_window_publishes_no_submodule_names(tmp_path):
             from research_desk.features.reports import store
         """,
         "web/app.py": "from research_desk.features.reports import store\n",
+        "cli.py": "from research_desk.features.reports import store\n",
     })
     assert hits(check_tree(root)) == (
         at("features/compare/service.py", 2, rule="R5 기능")
         | at("web/app.py", 1, rule="R7 web")
+        | at("cli.py", 1, rule="R8 입구")
     )
 
 
@@ -603,7 +606,7 @@ def test_r8_only_the_entry_imports_cli_and_package_roots_import_nothing(tmp_path
         "cli.py": """
             from research_desk.collector.cli import register as register_collect
             from research_desk.tagger import cli as tag_cli
-            from research_desk.features.reports.store import report_rows
+            from research_desk.features import reports
             from research_desk.web.server import register as register_web
             from research_desk.domain.stocks import write_version
             from research_desk.core.settings import load_env
@@ -630,6 +633,44 @@ def test_r8_only_the_entry_imports_cli_and_package_roots_import_nothing(tmp_path
     )
     (relative,) = [v for v in violations if v.path == "research_desk/web/server.py"]
     assert "research_desk.cli" in relative.message
+
+
+def test_r8_entry_uses_features_only_through_their_public_window(tmp_path):
+    root = make_tree(tmp_path, {
+        "features/analysis/__init__.py": "from .jobs import register as register_jobs\nfrom . import settings\n",
+        "features/analysis/jobs.py": "def register(subparsers):\n    return None\n",
+        "features/analysis/settings.py": "",
+        "features/analysis/store.py": "",
+        "features/reports/__init__.py": "from .router import router\n",
+        "features/reports/router.py": "router = object()\n",
+        "features/reports/store.py": "",
+        "collector/cli.py": "def register(subparsers):\n    return None\n",
+        "tagger/nodes/extract_pdf.py": "",
+        "web/server.py": "def register(subparsers):\n    return None\n",
+        "cli.py": """
+            from research_desk.collector.cli import register as register_collect
+            import research_desk.tagger.nodes.extract_pdf
+            from research_desk.web.server import register as register_web
+            from research_desk.features import analysis, reports
+            from research_desk.features.analysis import register_jobs
+            from research_desk.features.analysis import settings
+            from research_desk.features.reports import router
+            import research_desk.features.reports
+            from research_desk.features.analysis.jobs import register
+            from research_desk.features.analysis import jobs
+            import research_desk.features.reports.store
+            from research_desk.features.analysis import store
+        """,
+        "__main__.py": """
+            from research_desk.cli import main
+            from research_desk.features.reports.store import rows
+            from .features.analysis import jobs as via_relative
+        """,
+    })
+    violations = check_tree(root)
+    assert hits(violations) == at("cli.py", 9, 10, 11, 12, rule="R8 입구") | at("__main__.py", 2, 3, rule="R8 입구")
+    (relative,) = [v for v in violations if v.path == "research_desk/__main__.py" and v.line == 3]
+    assert "research_desk.features.analysis.jobs" in relative.message
 
 
 # ── R9·R10: 외부 도구·옛 코드 ─────────────────────────────────────────────────
