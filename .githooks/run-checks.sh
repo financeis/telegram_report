@@ -27,5 +27,8 @@ top=$(git rev-parse --show-toplevel) ||
     block "커밋 검사를 시작하지 못해서 커밋을 막았습니다: 작업 폴더 위치를 찾지 못했습니다."
 cd "$top" || block "커밋 검사를 시작하지 못해서 커밋을 막았습니다: $top 폴더로 이동하지 못했습니다."
 
-"$python" -m pytest -q -p no:cacheprovider ||
+# UTF-8 output: on a pipe Python would use the ANSI code page (949 here), and pytest prints a
+# whole line as \uXXXX escapes when one character of it (such as the rule messages' "—") does
+# not fit, so the architecture check's Korean messages would be unreadable.
+PYTHONIOENCODING=utf-8 "$python" -m pytest -q -p no:cacheprovider ||
     block "구조 규칙 검사 또는 테스트가 실패해서 커밋을 막았습니다. 위 실패 내용을 고친 뒤 다시 커밋하세요."
