@@ -2,6 +2,7 @@ from datetime import date
 
 import pytest
 
+from research_desk.domain.reports import OOS_REASONS, oos_row_shape
 from research_desk.tagger.nodes.write import _build_payload, write
 from research_desk.tagger.sql import UPDATE_SQL
 from research_desk.tagger.tests.conftest import make_llm_extraction
@@ -170,3 +171,41 @@ def test_unreadable_payload_19_args():
     assert out[14] is None             # out_of_scope_reason NULL
     assert out[15] == "review_needed"
     assert out[18] == "KRX@test"
+
+
+# ── the OOS branch is the shared out-of-scope row shape (spec §4, §9.2) ─────
+
+PAYLOAD_COLUMNS = [
+    "id", "published_at", "report_type", "publisher", "publisher_type", "analysts", "title",
+    "stock_codes", "company_names", "stock_codes_raw", "company_names_raw",
+    "sectors_major", "sectors_minor", "products", "out_of_scope_reason",
+    "tagging_status", "tagging_confidence", "tagging_notes", "taxonomy_version",
+]
+
+
+@pytest.mark.parametrize("reason", OOS_REASONS)
+@pytest.mark.parametrize("raw", [
+    None,
+    make_llm_extraction(),
+    make_llm_extraction(report_type="IR자료", publisher_canon="해당기업", publisher_type="other",
+                        title=None, analysts=[], stock_codes_raw=[], company_names_raw=["X사"]),
+])
+def test_oos_payload_is_the_shared_out_of_scope_row_shape(reason, raw):
+    state = {
+        "id": 3, "is_oos": True, "oos_reason": reason, "llm_raw": raw,
+        # in-scope values the OOS row must not pick up
+        "published_at_final": date(2026, 5, 1), "stock_codes_final": ["005930"],
+        "company_names_final": ["삼성전자"], "sectors_major_final": ["반도체"],
+        "sectors_minor_final": ["메모리반도체"], "products_final": ["DRAM"],
+        "tagging_status": "auto", "tagging_confidence": "high", "tagging_notes": None,
+    }
+    payload = dict(zip(PAYLOAD_COLUMNS, _build_payload(state, taxonomy_version="KRX@test")))
+    llm_fields = None if raw is None else {
+        "report_type": raw.report_type, "publisher": raw.publisher_canon,
+        "publisher_type": raw.publisher_type, "analysts": raw.analysts, "title": raw.title,
+        "stock_codes_raw": raw.stock_codes_raw, "company_names_raw": raw.company_names_raw,
+    }
+    shape = oos_row_shape(llm_fields, reason)
+    assert {column: payload[column] for column in shape} == shape
+    assert (payload["id"], payload["tagging_status"], payload["tagging_confidence"],
+            payload["tagging_notes"], payload["taxonomy_version"]) == (3, "auto", "high", None, "KRX@test")
