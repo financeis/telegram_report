@@ -635,6 +635,71 @@ def test_tests_folders_are_exempt_from_every_rule_but_r10(tmp_path):
     assert hits(check_tree(root)) == at("tagger/tests/golden/_synthesize.py", 2, rule="R10 옛 코드")
 
 
+def test_root_conftest_that_imports_core_settings_is_not_flagged(tmp_path):
+    """research_desk/conftest.py(T1): core.settings의 .env 스위치를 끄고 켜는 준비. 테스트 코드다."""
+    root = make_tree(tmp_path, {
+        "__init__.py": '"""Research Desk."""\n',
+        "conftest.py": '''
+            import pytest
+
+            from research_desk.core import settings
+            from research_desk.core.settings import load_env
+
+
+            @pytest.fixture(autouse=True)
+            def _env_loading_off(monkeypatch):
+                monkeypatch.setattr(settings, "ENV_LOADING_ENABLED", False)
+
+
+            @pytest.fixture
+            def temp_env_file(tmp_path, monkeypatch):
+                env = tmp_path / ".env"
+                env.write_text("SUPABASE_URL=https://example.invalid\\n", encoding="utf-8")
+                monkeypatch.setattr(settings, "ENV_LOADING_ENABLED", True)
+                load_env(env)
+                return env
+        ''',
+        "core/settings.py": "ENV_LOADING_ENABLED = True\n\n\ndef load_env(path=None):\n    return None\n",
+    })
+    assert check_tree(root) == []
+
+
+def test_conftest_files_are_exempt_from_every_rule_but_r10(tmp_path):
+    root = make_tree(tmp_path, {
+        # 패키지 뿌리는 conftest와 같은 import라도 잡힌다(R8).
+        "__init__.py": "from research_desk.core import settings\n",
+        "conftest.py": """
+            import dotenv
+            import research_desk.cli
+            from research_desk.collector.storage import Storage
+            from research_desk.core import settings
+            from research_desk.features.reports.store import report_rows
+            import langgraph_tagger
+
+            SQL = "UPDATE reports SET tagging_status = 'pending'"
+
+
+            def rows(sb):
+                return sb.table("report_summaries").select("*").execute()
+        """,
+        "features/reports/__init__.py": "from research_desk.features.analysis import analyze_report\n",
+        "features/reports/store.py": "",
+        "features/analysis/__init__.py": "def analyze_report(row):\n    return row\n",
+        # 기능 폴더 안의 conftest: 하위 모듈 import도, 거꾸로 가는 기능 의존(순환)도 잡지 않는다.
+        "features/analysis/conftest.py": """
+            import openai
+            from research_desk.features.reports.store import report_rows
+            from research_desk.tagger.graph import build_graph
+            from main import compute_exit_code
+        """,
+    })
+    assert hits(check_tree(root)) == (
+        at("__init__.py", 1, rule="R8 입구")
+        | at("conftest.py", 6, rule="R10 옛 코드")
+        | at("features/analysis/conftest.py", 4, rule="R10 옛 코드")
+    )
+
+
 # ── R11: 표 주인 ──────────────────────────────────────────────────────────────
 
 
