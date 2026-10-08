@@ -10,7 +10,7 @@ check_supabase.py
 auth_helper.py
 
 # Downloaded data
-reports/
+/reports/
 
 # Python
 __pycache__/
