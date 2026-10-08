@@ -1,0 +1,99 @@
+# publisher canonical name + aliases + publisher_type.
+# lookup_publisher() in vocabulary/__init__.py reads this.
+broker:
+  - canonical: 키움증권
+    aliases: ["키움", "Kiwoom", "KIWOOM", "키움리서치"]
+  - canonical: 미래에셋증권
+    aliases: ["미래에셋", "Mirae Asset", "미래대우"]
+  - canonical: NH투자증권
+    aliases: ["NH", "NH투자", "농협증권", "NH Investment"]
+  - canonical: 삼성증권
+    aliases: ["삼성", "Samsung Securities"]
+  - canonical: KB증권
+    aliases: ["KB", "KB Securities", "케이비증권"]
+  - canonical: 신한투자증권
+    aliases: ["신한", "신한금융투자", "신한증권", "Shinhan"]
+  - canonical: 한국투자증권
+    aliases: ["한투", "한국투자", "KIS", "Korea Investment"]
+  - canonical: 하나증권
+    aliases: ["하나", "하나금융투자", "하나대투"]
+  - canonical: 메리츠증권
+    aliases: ["메리츠", "Meritz", "메리츠종금"]
+  - canonical: 하이투자증권
+    aliases: ["하이", "Hi Investment"]
+  - canonical: 유진투자증권
+    aliases: ["유진", "Eugene"]
+  - canonical: 유안타증권
+    aliases: ["유안타", "Yuanta"]
+  - canonical: IBK투자증권
+    aliases: ["IBK", "기업증권"]
+  - canonical: 대신증권
+    aliases: ["대신", "Daishin"]
+  - canonical: BNK투자증권
+    aliases: ["BNK", "부산은행증권"]
+  - canonical: 현대차증권
+    aliases: ["현대차", "현대증권"]
+  - canonical: iM증권
+    aliases: ["iM", "아이엠증권", "하이투자"]
+  - canonical: 다올투자증권
+    aliases: ["다올", "KTB"]
+  - canonical: SK증권
+    aliases: ["SK", "SK Securities"]
+  - canonical: 한화투자증권
+    aliases: ["한화", "Hanwha Securities"]
+  - canonical: DB금융투자
+    aliases: ["DB", "DB증권"]
+  - canonical: DS투자증권
+    aliases: ["DS", "디에스투자"]
+  - canonical: LS증권
+    aliases: ["LS", "이베스트", "Ebest"]
+  - canonical: 상상인증권
+    aliases: ["상상인"]
+  - canonical: 흥국증권
+    aliases: ["흥국"]
+  - canonical: 부국증권
+    aliases: ["부국"]
+  - canonical: 유화증권
+    aliases: ["유화"]
+  - canonical: 교보증권
+    aliases: ["교보", "Kyobo"]
+  - canonical: 우리투자증권
+    aliases: ["우리", "NH우리"]
+  - canonical: 미래대우증권
+    aliases: []   # historical alias, retained for old reports
+
+data_provider:
+  - canonical: FnGuide
+    aliases: ["FN가이드", "에프엔가이드", "에프앤가이드"]
+  - canonical: KIRS
+    aliases: []
+  - canonical: 한국기업평가
+    aliases: ["KR"]
+  - canonical: NICE신용평가
+    aliases: ["NICE", "나이스평가"]
+  - canonical: 한국신용평가
+    aliases: ["KIS rating"]
+
+ir_agency:
+  - canonical: IRKUDOS
+    aliases: ["IR쿠도스", "아이알쿠도스"]
+  - canonical: dyneasset
+    aliases: ["다인에셋", "Dyneasset"]
+  - canonical: GL Research
+    aliases: ["GL리서치"]
+  - canonical: Smart Korea
+    aliases: ["스마트코리아"]
+  - canonical: Hellotrader
+    aliases: ["헬로트레이더"]
+  - canonical: 밸류파인더
+    aliases: ["독립리서치법인밸류파인더", "valuefinder"]
+
+other:
+  - canonical: 해당기업
+    aliases: []
+  - canonical: KRX
+    aliases: ["한국거래소"]
+  - canonical: 금융투자협회
+    aliases: ["KOFIA"]
+  - canonical: 한국은행
+    aliases: ["BOK"]
