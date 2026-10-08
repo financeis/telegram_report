@@ -19,9 +19,10 @@
 
 **규칙** — 위반마다 "파일:줄 — 규칙 이름: 설명"
 - R1~R5·R7: 칸마다 import해도 되는 research_desk 모듈. 입구 모듈(cli·__main__) import는 R8로만 보고한다.
-- R5·R7 공개 창구: 다른 기능은 `research_desk.features.<기능>` 자체나 거기서 가져온 이름으로만 쓴다.
-  `from research_desk.features.<기능> import x`에서 x가 하위 모듈이면, 그 기능의 `__init__.py`가
-  x라는 이름을 내보낼 때만(예: `from .router import router`) 공개 이름으로 본다.
+- 공개 창구(R5·R7): 다른 기능과 web은 기능을 `research_desk.features.<기능>` 자체나 거기서 가져온
+  이름으로만 쓴다. `from research_desk.features.<기능> import x`에서 x가 하위 모듈 이름이면, 그 기능의
+  `__init__.py` 최상위가 x를 직접 묶을 때만(예: `from .router import router`, `from . import store`)
+  공개 이름으로 본다. `import *`, `__all__` 목록, 하위 모듈 import의 부수효과는 묶은 것으로 치지 않는다.
 - R6: 기능 → 다른 기능 import(테스트 제외)로 그래프를 만들고 순환마다 한 줄 보고한다.
 - R8: 입구만 모든 칸을 import한다. 다른 파일은 cli·__main__을 import하지 않는다.
   패키지 뿌리 파일은 research_desk 모듈을 import하지 않는다(여러 칸을 묶는 곳은 입구뿐).
@@ -238,7 +239,7 @@ class _Checker:
             if (source.is_package and source.tree is not None
                     and len(source.parts) == 2 and source.parts[0] == FEATURES):
                 self._windows[source.parts[1]] = source.tree
-        self._exports: dict[str, tuple[frozenset[str], bool]] = {}
+        self._exports: dict[str, frozenset[str]] = {}
         # R6: 기능 → 기능 → [(파일, 줄)]
         self._edges: dict[str, dict[str, list[tuple[str, int]]]] = defaultdict(lambda: defaultdict(list))
 
@@ -272,12 +273,11 @@ class _Checker:
         return _area(tuple(module.split(".")[1:]), self._modules.get(module, True))
 
     def _exports_name(self, feature: str, name: str) -> bool:
-        """기능의 공개 창구(__init__.py)가 이 이름을 내보내는가."""
+        """기능의 공개 창구(__init__.py) 최상위가 이 이름을 직접 묶는가(`_bound_names`)."""
         if feature not in self._exports:
             tree = self._windows.get(feature)
-            self._exports[feature] = _bound_names(tree) if tree is not None else (frozenset(), False)
-        names, has_star = self._exports[feature]
-        return has_star or name in names
+            self._exports[feature] = _bound_names(tree) if tree is not None else frozenset()
+        return name in self._exports[feature]
 
     def _through_window(self, imp: _Import, feature: str) -> bool:
         window = f"{PACKAGE}.{FEATURES}.{feature}"
@@ -382,40 +382,55 @@ def _feature(area: str) -> str:
     return area.split("/", 1)[1]
 
 
-def _bound_names(tree: ast.Module) -> tuple[frozenset[str], bool]:
-    """모듈 최상위에서 묶이는 이름들과 `import *` 여부. 함수·클래스 본문 안은 보지 않는다."""
+def _bound_names(tree: ast.Module) -> frozenset[str]:
+    """모듈 최상위 문장이 직접 묶는 이름. 함수·클래스 본문 안은 보지 않는다.
+
+    import(별칭 포함)·`from … import 이름`·값이 있는 대입·def·class·for/with 대상만 센다.
+    `from … import *`, `__all__` 목록, 하위 모듈 import의 부수효과로 생기는 이름
+    (`from .store import f` 뒤의 `store`), 값 없는 주석 선언(`x: int`)은 세지 않는다.
+    """
     names: set[str] = set()
-    has_star = False
 
     def visit(statements: list[ast.stmt]) -> None:
-        nonlocal has_star
         for st in statements:
             if isinstance(st, ast.Import):
                 names.update(a.asname or a.name.split(".")[0] for a in st.names)
             elif isinstance(st, ast.ImportFrom):
-                for a in st.names:
-                    if a.name == "*":
-                        has_star = True
-                    else:
-                        names.add(a.asname or a.name)
+                names.update(a.asname or a.name for a in st.names if a.name != "*")
             elif isinstance(st, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 names.add(st.name)
-            elif isinstance(st, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
-                targets = st.targets if isinstance(st, ast.Assign) else [st.target]
-                names.update(n.id for t in targets for n in ast.walk(t) if isinstance(n, ast.Name))
-                if st.value is not None and any(isinstance(t, ast.Name) and t.id == "__all__" for t in targets):
-                    names.update(n.value for n in ast.walk(st.value)
-                                 if isinstance(n, ast.Constant) and isinstance(n.value, str))
+            elif isinstance(st, ast.Assign):
+                for target in st.targets:
+                    names.update(_target_names(target))
+            elif isinstance(st, ast.AugAssign) or (isinstance(st, ast.AnnAssign) and st.value is not None):
+                names.update(_target_names(st.target))
             else:  # if / try / with / for 등은 안쪽 문장도 본다
+                if isinstance(st, (ast.For, ast.AsyncFor)):
+                    names.update(_target_names(st.target))
+                if isinstance(st, (ast.With, ast.AsyncWith)):
+                    for item in st.items:
+                        if item.optional_vars is not None:
+                            names.update(_target_names(item.optional_vars))
                 for field in ("body", "orelse", "finalbody"):
                     inner = getattr(st, field, None)
                     if isinstance(inner, list):
                         visit(inner)
-                for handler in getattr(st, "handlers", None) or []:
-                    visit(handler.body)
+                for block in [*(getattr(st, "handlers", None) or []), *(getattr(st, "cases", None) or [])]:
+                    visit(block.body)
 
     visit(tree.body)
-    return frozenset(names), has_star
+    return frozenset(names)
+
+
+def _target_names(target: ast.expr) -> set[str]:
+    """대입 대상이 묶는 이름. `a.b = …`·`a[0] = …`는 새 이름을 묶지 않는다."""
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return set().union(*(_target_names(element) for element in target.elts))
+    if isinstance(target, ast.Starred):
+        return _target_names(target.value)
+    return set()
 
 
 def _reachable(start: str, edges) -> set[str]:

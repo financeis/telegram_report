@@ -447,6 +447,92 @@ def test_r5_features_do_not_import_collector_tagger_or_web(tmp_path):
     assert hits(check_tree(root)) == at("features/coverage/service.py", 1, 2, 3, 4, 5, rule="R5 기능")
 
 
+def test_star_import_in_a_window_publishes_no_submodule_names(tmp_path):
+    root = make_tree(tmp_path, {
+        # 실행하면 `from .service import *`가 service가 묶은 store(하위 모듈)까지 창구로 옮긴다.
+        "features/reports/__init__.py": "from .service import *\n",
+        "features/reports/service.py": "from . import store\n\n\ndef get_report(rid):\n    return rid\n",
+        "features/reports/store.py": "",
+        "features/compare/service.py": """
+            from research_desk.features.reports import get_report
+            from research_desk.features.reports import store
+        """,
+        "web/app.py": "from research_desk.features.reports import store\n",
+    })
+    assert hits(check_tree(root)) == (
+        at("features/compare/service.py", 2, rule="R5 기능")
+        | at("web/app.py", 1, rule="R7 web")
+    )
+
+
+def test_names_the_window_does_not_really_bind_are_not_public(tmp_path):
+    root = make_tree(tmp_path, {
+        # __all__에만 있는 이름, 하위 모듈 import의 부수효과로 생기는 이름, 값 없는 주석 선언은
+        # 창구가 묶은 이름이 아니다.
+        "features/reports/__init__.py": """
+            __all__ = ["store", "cache", "router"]
+
+            from .router import router
+            from .store import fetch_rows
+            store.loaded = True
+            cache: dict
+        """,
+        "features/reports/router.py": "router = object()\n",
+        "features/reports/store.py": "def fetch_rows():\n    return []\n",
+        "features/reports/cache.py": "",
+        "features/compare/service.py": """
+            from research_desk.features.reports import fetch_rows
+            from research_desk.features.reports import router
+            from research_desk.features.reports import store
+            from research_desk.features.reports import cache
+        """,
+        "web/app.py": "from research_desk.features.reports import store\n",
+    })
+    assert hits(check_tree(root)) == (
+        at("features/compare/service.py", 3, 4, rule="R5 기능")
+        | at("web/app.py", 1, rule="R7 web")
+    )
+
+
+def test_names_bound_explicitly_in_a_window_are_public(tmp_path):
+    root = make_tree(tmp_path, {
+        "features/reports/__init__.py": """
+            from . import store
+            from .service import get_report as service
+            import research_desk.features.reports.jobs as jobs
+            settings = object()
+            if True:
+                logic = None
+
+
+            def schemas():
+                return None
+
+
+            class cache:
+                pass
+        """,
+        "features/reports/store.py": "",
+        "features/reports/service.py": "def get_report(rid):\n    return rid\n",
+        "features/reports/jobs.py": "",
+        "features/reports/settings.py": "",
+        "features/reports/logic.py": "",
+        "features/reports/schemas.py": "",
+        "features/reports/cache.py": "",
+        "features/compare/service.py": """
+            from research_desk.features.reports import store
+            from research_desk.features.reports import service
+            from research_desk.features.reports import jobs
+            from research_desk.features.reports import settings
+            from research_desk.features.reports import logic
+            from research_desk.features.reports import schemas
+            from research_desk.features.reports import cache
+        """,
+    })
+    violations = check_tree(root)
+    assert violations == [], format_violations(violations)
+
+
 def test_r6_feature_dependency_cycle_is_detected(tmp_path):
     root = make_tree(tmp_path, {
         "features/alpha/__init__.py": "from research_desk.features.beta import helper\n",
