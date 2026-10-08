@@ -10,13 +10,12 @@ from .coverage import market_payload, stock_activity_payload
 from .review import ReviewService
 
 from fastapi import HTTPException
-from openai import AsyncOpenAI
 from supabase import create_client
 
 from langgraph_tagger.analytics import favorites, krx
 from langgraph_tagger.analytics.config import load_analytics_config
 from langgraph_tagger.analytics.db import AnalyticsDB, SELECT_COLS
-from langgraph_tagger.analytics.llm_summary.config import load_llm_summary_config, require_openai_key
+from langgraph_tagger.analytics.llm_summary.config import load_llm_summary_config, make_llm_client
 from langgraph_tagger.analytics.llm_summary.financials import compare_financials, ground_metrics, numeric_change
 from langgraph_tagger.analytics.llm_summary.llm import extract_one, diff_one
 from langgraph_tagger.analytics.llm_summary.pdf_text import extract_all_pages
@@ -132,14 +131,14 @@ class WorkspaceService:
                 if existing and existing.get('financial_details'):
                     return public_report(row, existing) | {'analysis_reused': True}
                 cfg = load_llm_summary_config()
-                key = require_openai_key(cfg)
+                llm = make_llm_client(cfg)
                 path = resolve_pdf(self.cfg.storage_base_dir, row['file_path'])
                 pdf = await asyncio.to_thread(extract_all_pages, path, cfg.max_input_tokens)
                 if not pdf.text:
                     raise HTTPException(422, 'PDF에서 읽을 수 있는 텍스트가 없습니다.')
-                async with AsyncOpenAI(api_key=key) as client:
+                async with llm as client:
                     result, tin, tout = await extract_one(
-                        client=client, model=cfg.openai_model,
+                        client=client, model=cfg.llm_model,
                         metadata={k: row.get(k) for k in ('publisher', 'stock_codes', 'published_at', 'title')},
                         pages_text=pdf.text, timeout_s=cfg.per_report_timeout_s,
                     )
@@ -150,7 +149,7 @@ class WorkspaceService:
                     payload['financial_details'] = grounded.model_dump() | {'unsupported_numeric_values': omitted}
                 payload.update(report_id=rid, input_truncated=pdf.input_truncated,
                                input_pages_used=pdf.pages_used, input_total_pages=pdf.total_pages,
-                               summary_version=cfg.summary_version, llm_model=cfg.openai_model,
+                               summary_version=cfg.summary_version, llm_model=cfg.llm_model,
                                llm_tokens_input=tin, llm_tokens_output=tout, prev_report_id=None,
                                prev_match_type=None, diff_narrative=None, comparison_details=None)
                 await asyncio.to_thread(upsert_summary, self.sb, payload)
@@ -184,9 +183,9 @@ class WorkspaceService:
                 return result
             cfg = load_llm_summary_config()
             match = 'same_publisher' if result['same_publisher'] else 'cross_publisher'
-            async with AsyncOpenAI(api_key=require_openai_key(cfg)) as client:
+            async with make_llm_client(cfg) as client:
                 diff, _, _ = await diff_one(
-                    client=client, model=cfg.openai_model, prev_summary=left['summary'],
+                    client=client, model=cfg.llm_model, prev_summary=left['summary'],
                     curr_summary=right['summary'], prev_match_type=match,
                     prev_report_id=left['id'], prev_publisher=left['publisher'] or '미상',
                     curr_publisher=right['publisher'] or '미상', timeout_s=cfg.per_report_timeout_s,

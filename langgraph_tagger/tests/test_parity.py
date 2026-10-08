@@ -62,7 +62,7 @@ def _make_llm_mock(payload: dict) -> LLMExtraction:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fix", _load_fixtures(), ids=lambda f: f["case"])
-async def test_parity(fix, krx, mock_openai_client, mock_supabase, monkeypatch, tmp_path):
+async def test_parity(fix, krx, mock_llm_client, mock_supabase, monkeypatch, tmp_path):
     # Stub PDF on disk — extract_pdf reads STORAGE_BASE_DIR/<file_path>.
     # Use the built-in 'korea' CJK font so Hangul roundtrips through PyMuPDF.
     pdf = tmp_path / fix["input"]["file_name"]
@@ -74,10 +74,10 @@ async def test_parity(fix, krx, mock_openai_client, mock_supabase, monkeypatch, 
     doc.close()
     monkeypatch.setenv("STORAGE_BASE_DIR", str(tmp_path))
 
-    mock_openai_client.set_response(_make_llm_mock(fix["llm_mock"]))
+    mock_llm_client.set_response(_make_llm_mock(fix["llm_mock"]))
 
     app = build_graph(
-        mock_openai_client, mock_supabase, krx=krx,
+        mock_llm_client, mock_supabase, krx=krx,
         dry_run=False, taxonomy_version="KRX@parity-test",
     )
     init = {

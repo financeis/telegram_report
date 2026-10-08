@@ -9,21 +9,11 @@ from langgraph_tagger.analytics.llm_summary.llm import (
 from langgraph_tagger.analytics.llm_summary.schemas import (
     ExtractionResult, DiffResult,
 )
+from langgraph_tagger.llm_provider import StructuredResult
 
 
-def _fake_openai_response(parsed_obj):
-    msg = MagicMock()
-    msg.parsed = parsed_obj
-    msg.content = None
-    choice = MagicMock()
-    choice.message = msg
-    resp = MagicMock()
-    resp.choices = [choice]
-    usage = MagicMock()
-    usage.prompt_tokens = 1000
-    usage.completion_tokens = 200
-    resp.usage = usage
-    return resp
+def _fake_result(parsed_obj):
+    return StructuredResult(parsed=parsed_obj, input_tokens=1000, output_tokens=200)
 
 
 def _valid_extraction_obj():
@@ -42,8 +32,8 @@ def _valid_extraction_obj():
 @pytest.mark.asyncio
 async def test_extract_one_happy_path():
     fake = AsyncMock()
-    fake.beta.chat.completions.parse = AsyncMock(
-        return_value=_fake_openai_response(_valid_extraction_obj())
+    fake.parse = AsyncMock(
+        return_value=_fake_result(_valid_extraction_obj())
     )
     r, tokens_in, tokens_out = await extract_one(
         client=fake, model='gpt-5.4-mini',
@@ -64,9 +54,9 @@ async def test_extract_one_retry_on_transient():
         call_count['n'] += 1
         if call_count['n'] == 1:
             raise TransientLLMError("rate limit")
-        return _fake_openai_response(_valid_extraction_obj())
+        return _fake_result(_valid_extraction_obj())
     fake = AsyncMock()
-    fake.beta.chat.completions.parse = flaky_parse
+    fake.parse = flaky_parse
     r, _, _ = await extract_one(
         client=fake, model='gpt-5.4-mini',
         metadata={}, pages_text='', timeout_s=10, backoff_s=0,  # 빠른 테스트
@@ -81,7 +71,7 @@ async def test_extract_one_permanent_fail_raises():
     async def always_fail(**kwargs):
         raise TransientLLMError("persistent")
     fake = AsyncMock()
-    fake.beta.chat.completions.parse = always_fail
+    fake.parse = always_fail
     with pytest.raises(TransientLLMError):
         await extract_one(
             client=fake, model='gpt-5.4-mini',
@@ -98,10 +88,10 @@ async def test_extract_one_retries_on_wait_for_timeout():
         if call_count['n'] == 1:
             # Simulate a hang that wait_for would catch
             await asyncio.sleep(0.05)  # > timeout_s=0.01
-            return _fake_openai_response(_valid_extraction_obj())
-        return _fake_openai_response(_valid_extraction_obj())
+            return _fake_result(_valid_extraction_obj())
+        return _fake_result(_valid_extraction_obj())
     fake = AsyncMock()
-    fake.beta.chat.completions.parse = slow_then_succeeds
+    fake.parse = slow_then_succeeds
     r, _, _ = await extract_one(
         client=fake, model='gpt-5.4-mini',
         metadata={}, pages_text='',
@@ -115,8 +105,8 @@ async def test_extract_one_retries_on_wait_for_timeout():
 @pytest.mark.asyncio
 async def test_diff_one_happy_path():
     fake = AsyncMock()
-    fake.beta.chat.completions.parse = AsyncMock(
-        return_value=_fake_openai_response(
+    fake.parse = AsyncMock(
+        return_value=_fake_result(
             DiffResult(diff_narrative='이전 리포트 대비 ...')
         )
     )
@@ -133,8 +123,8 @@ async def test_diff_one_happy_path():
 @pytest.mark.asyncio
 async def test_diff_one_returns_null_narrative():
     fake = AsyncMock()
-    fake.beta.chat.completions.parse = AsyncMock(
-        return_value=_fake_openai_response(DiffResult(diff_narrative=None))
+    fake.parse = AsyncMock(
+        return_value=_fake_result(DiffResult(diff_narrative=None))
     )
     r, _, _ = await diff_one(
         client=fake, model='gpt-5.4-mini',
@@ -143,3 +133,31 @@ async def test_diff_one_returns_null_narrative():
         prev_publisher='', curr_publisher='', timeout_s=10,
     )
     assert r.diff_narrative is None
+
+
+@pytest.mark.asyncio
+async def test_extract_one_passes_system_and_user_to_client():
+    fake = AsyncMock()
+    fake.parse = AsyncMock(return_value=_fake_result(_valid_extraction_obj()))
+    await extract_one(
+        client=fake, model='claude-haiku-5-5',
+        metadata={'publisher': 'X'}, pages_text='--- Page 1 ---\nbody',
+        timeout_s=10,
+    )
+    kwargs = fake.parse.call_args.kwargs
+    assert kwargs['model'] == 'claude-haiku-5-5'
+    assert kwargs['schema'] is ExtractionResult
+    assert kwargs['constrained'] is False
+    assert '<report_pages>' in kwargs['user']
+    assert '<report_pages>' not in kwargs['system']
+
+
+@pytest.mark.asyncio
+async def test_extract_one_refusal_raises():
+    fake = AsyncMock()
+    fake.parse = AsyncMock(return_value=StructuredResult(parsed=None, refusal='refusal (cyber): x'))
+    with pytest.raises(RuntimeError, match='거부'):
+        await extract_one(
+            client=fake, model='claude-haiku-5-5',
+            metadata={}, pages_text='', timeout_s=10,
+        )

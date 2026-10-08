@@ -10,9 +10,8 @@ import socket
 import sys
 from datetime import datetime, timezone
 
-from openai import AsyncOpenAI
-
 from langgraph_tagger.config import load_config
+from langgraph_tagger.llm_provider import LLMClient
 from langgraph_tagger.orchestrator import run_batch
 from langgraph_tagger.supabase_io import (
     ESCALATION_PICK_SQL, INSPECT_SUMMARY_SQL, RESET_WORKER_SQL, SupabaseSQL,
@@ -28,27 +27,21 @@ def _parse_row_ids(s: str) -> list[int]:
     return [int(x) for x in s.split(",") if x.strip()]
 
 
-def _make_openai_client(api_key: str) -> AsyncOpenAI:
-    """AsyncOpenAI client, optionally wrapped for LangSmith.
+def _make_llm_client(cfg) -> LLMClient:
+    """Provider-routing client (claude-* → Anthropic, codex:* → Codex CLI, else OpenAI).
 
-    When LANGSMITH_TRACING=true and a key is set, wrap_openai instruments
-    chat.completions.parse so each call shows up as a child LLM run under
-    the surrounding LangGraph span (tokens, latency, full prompt/response).
-    Otherwise returns the raw client untouched (no-op).
+    LangSmith wrapping happens inside LLMClient when LANGSMITH_TRACING=true.
     """
-    client = AsyncOpenAI(api_key=api_key, max_retries=2, timeout=60.0)
-    if os.environ.get("LANGSMITH_TRACING", "").lower() == "true" and os.environ.get("LANGSMITH_API_KEY"):
-        try:
-            from langsmith.wrappers import wrap_openai
-            return wrap_openai(client)
-        except ImportError:
-            pass
-    return client
+    return LLMClient(
+        openai_api_key=cfg.openai_api_key,
+        anthropic_api_key=cfg.anthropic_api_key,
+        max_retries=2, timeout=60.0,
+    )
 
 
 async def _cmd_run(args, cfg):
     sb = await SupabaseSQL.from_env()
-    client = _make_openai_client(cfg.openai_api_key)
+    client = _make_llm_client(cfg)
     krx = KRXIndex.load(cfg.krx_csv_path)
     # Auto-generated unless --worker-id provided. Wrappers pass an explicit id
     # so they can scope reset-worker to exactly the failed run if it crashes.
@@ -104,7 +97,7 @@ async def _cmd_inspect(args, cfg):
 
 async def _cmd_escalate(args, cfg):
     sb = await SupabaseSQL.from_env()
-    client = _make_openai_client(cfg.openai_api_key)
+    client = _make_llm_client(cfg)
     krx = KRXIndex.load(cfg.krx_csv_path)
     try:
         since = datetime.fromisoformat(args.since)

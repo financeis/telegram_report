@@ -125,9 +125,9 @@ from langgraph_tagger.analytics.llm_summary.schemas import ExtractionResult
 
 @pytest.fixture
 def cfg():
-    """Test config with mock OpenAI key — passed explicitly to analyze_stock."""
+    """Test config with mock API key — passed explicitly to analyze_stock."""
     return LLMSummaryConfig(
-        openai_model='gpt-5.4-mini', max_concurrent=2,
+        llm_model='gpt-5.4-mini', max_concurrent=2,
         per_report_timeout_s=10, max_input_tokens=10000,
         summary_version='llm-summary@1.0',
         supabase_db_url='postgres://test',

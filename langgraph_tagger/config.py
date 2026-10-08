@@ -4,6 +4,9 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
+
+from langgraph_tagger.llm_provider import api_key_env
 
 try:
     from dotenv import load_dotenv
@@ -11,9 +14,19 @@ except ImportError:
     load_dotenv = lambda *a, **k: False
 
 
+def _model(role: str, default: str) -> str:
+    """LLM_MODEL_<ROLE>, falling back to the legacy OPENAI_MODEL_<ROLE> name."""
+    return (os.environ.get(f"LLM_MODEL_{role}")
+            or os.environ.get(f"OPENAI_MODEL_{role}")
+            or default)
+
+
 @dataclass(frozen=True)
 class TaggerConfig:
-    openai_api_key: str
+    # Only the key for the configured model's provider is required at load;
+    # the other is checked on first use (e.g. escalate on another provider).
+    openai_api_key: Optional[str]
+    anthropic_api_key: Optional[str]
     model_default: str
     model_escalation: str
     max_concurrent_llm: int
@@ -36,10 +49,14 @@ def load_config() -> TaggerConfig:
         if not v:
             raise RuntimeError(f"{name} is required")
         return v
+    model_default = _model("DEFAULT", "claude-haiku-5-5")
+    if api_key_env(model_default):
+        _req(api_key_env(model_default))
     return TaggerConfig(
-        openai_api_key=_req("OPENAI_API_KEY"),
-        model_default=os.environ.get("OPENAI_MODEL_DEFAULT", "gpt-5.6-luna"),
-        model_escalation=os.environ.get("OPENAI_MODEL_ESCALATION", "gpt-5.4"),
+        openai_api_key=os.environ.get("OPENAI_API_KEY"),
+        anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY"),
+        model_default=model_default,
+        model_escalation=_model("ESCALATION", "gpt-5.4"),
         max_concurrent_llm=int(os.environ.get("MAX_CONCURRENT_LLM", "10")),
         batch_size_default=int(os.environ.get("TAGGER_BATCH_SIZE_DEFAULT", "10")),
         krx_csv_path=Path(os.environ.get("KRX_CSV_PATH", "docs/stock_data/KRX_stocks_data.csv")),

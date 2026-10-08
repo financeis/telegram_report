@@ -1,7 +1,8 @@
 """Standalone config for the analytics dashboard.
 
 Intentionally separate from langgraph_tagger.config so the dashboard can
-run without OPENAI_API_KEY, SUPABASE_DB_URL, or TELEGRAM_* envs.
+run without LLM API keys (OPENAI_API_KEY / ANTHROPIC_API_KEY), SUPABASE_DB_URL,
+or TELEGRAM_* envs.
 """
 from __future__ import annotations
 

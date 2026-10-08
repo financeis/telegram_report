@@ -1,4 +1,4 @@
-"""End-to-end graph smoke tests with mock OpenAI + mock supabase."""
+"""End-to-end graph smoke tests with mock LLM client + mock supabase."""
 from datetime import datetime, timezone
 
 import pytest
@@ -8,7 +8,7 @@ from langgraph_tagger.tests.conftest import make_llm_extraction
 
 
 @pytest.mark.asyncio
-async def test_in_scope_single_stock_flows_end_to_end(krx, mock_openai_client, mock_supabase, tmp_path, monkeypatch):
+async def test_in_scope_single_stock_flows_end_to_end(krx, mock_llm_client, mock_supabase, tmp_path, monkeypatch):
     """In-scope 경로의 진짜 end-to-end. tiny PDF 합성으로 extract_pdf 통과시키고
     resolve_krx → decide_status → write까지 검증."""
     import fitz
@@ -23,7 +23,7 @@ async def test_in_scope_single_stock_flows_end_to_end(krx, mock_openai_client, m
     doc.close()
     monkeypatch.setenv("STORAGE_BASE_DIR", str(tmp_path))
 
-    mock_openai_client.set_response(make_llm_extraction(
+    mock_llm_client.set_response(make_llm_extraction(
         report_type="단일종목",
         stock_codes_raw=["005930"],
         sectors_major=["반도체"],
@@ -31,7 +31,7 @@ async def test_in_scope_single_stock_flows_end_to_end(krx, mock_openai_client, m
         publisher_raw="키움",
         topics=["연준"],
     ))
-    app = build_graph(mock_openai_client, mock_supabase, krx=krx,
+    app = build_graph(mock_llm_client, mock_supabase, krx=krx,
                       dry_run=False, taxonomy_version="KRX@2026-05-08")
 
     init = {
@@ -60,12 +60,12 @@ async def test_in_scope_single_stock_flows_end_to_end(krx, mock_openai_client, m
 
 
 @pytest.mark.asyncio
-async def test_unreadable_pdf_routes_to_status_unreadable(krx, mock_openai_client, mock_supabase, monkeypatch, tmp_path):
+async def test_unreadable_pdf_routes_to_status_unreadable(krx, mock_llm_client, mock_supabase, monkeypatch, tmp_path):
     """Missing file → status_unreadable → review_needed/low. Splits the
     smoke coverage so the in-scope test above can't accidentally fall
     back to this path again."""
     monkeypatch.setenv("STORAGE_BASE_DIR", str(tmp_path))   # empty dir
-    app = build_graph(mock_openai_client, mock_supabase, krx=krx,
+    app = build_graph(mock_llm_client, mock_supabase, krx=krx,
                       dry_run=False, taxonomy_version="KRX@2026-05-08")
 
     init = {
@@ -84,11 +84,11 @@ async def test_unreadable_pdf_routes_to_status_unreadable(krx, mock_openai_clien
     assert final["tagging_confidence"] == "low"
     assert final["tagging_notes"] == "first_page_unreadable"
     # llm_extract should NOT have been called for an unreadable PDF
-    mock_openai_client.chat.completions.parse.assert_not_called()
+    mock_llm_client.parse.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_oos_foreign_short_circuits_to_status_oos(krx, mock_openai_client, mock_supabase, tmp_path, monkeypatch):
+async def test_oos_foreign_short_circuits_to_status_oos(krx, mock_llm_client, mock_supabase, tmp_path, monkeypatch):
     # Make a tiny PDF so extract_pdf succeeds
     import fitz
     pdf = tmp_path / "x.pdf"
@@ -98,9 +98,9 @@ async def test_oos_foreign_short_circuits_to_status_oos(krx, mock_openai_client,
     doc.close()
     monkeypatch.setenv("STORAGE_BASE_DIR", str(tmp_path))
 
-    # Mock OpenAI to return foreign primary coverage signal
+    # Mock LLM to return foreign primary coverage signal
     from langgraph_tagger.llm_schemas import OOSSignals
-    mock_openai_client.set_response(make_llm_extraction(
+    mock_llm_client.set_response(make_llm_extraction(
         report_type="기타",
         oos_signals=OOSSignals(
             foreign_primary_coverage=True, etf_or_fund=False,
@@ -108,7 +108,7 @@ async def test_oos_foreign_short_circuits_to_status_oos(krx, mock_openai_client,
         ),
     ))
 
-    app = build_graph(mock_openai_client, mock_supabase, krx=krx,
+    app = build_graph(mock_llm_client, mock_supabase, krx=krx,
                       dry_run=False, taxonomy_version="KRX@2026-05-08")
 
     init = {

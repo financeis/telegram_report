@@ -1,6 +1,7 @@
-"""OpenAI async wrapper — extract_one + diff_one + transient 재시도 1회.
+"""LLM async wrapper — extract_one + diff_one + transient 재시도 1회.
 
-structured outputs (response_format=json_schema) 강제로 schema 준수 강제.
+structured outputs로 schema 준수 강제. provider는 모델 이름으로 결정
+(langgraph_tagger.llm_provider).
 """
 from __future__ import annotations
 
@@ -8,24 +9,23 @@ import asyncio
 import logging
 from typing import Any, Literal
 
-from openai import APIConnectionError, APITimeoutError, RateLimitError
-
 from langgraph_tagger.analytics.llm_summary.prompts import (
     render_extraction_messages, render_diff_messages,
 )
 from langgraph_tagger.analytics.llm_summary.schemas import (
     ExtractionResult, DiffResult,
 )
+from langgraph_tagger.llm_provider import TRANSIENT_ERRORS, StructuredResult
 
 logger = logging.getLogger(__name__)
 
 
 class TransientLLMError(RuntimeError):
-    """429 / timeout / connection — 재시도 가능."""
+    """429 / 5xx / timeout / connection — 재시도 가능."""
 
 
 _TRANSIENT_TYPES = (
-    APIConnectionError, APITimeoutError, RateLimitError,
+    *TRANSIENT_ERRORS,
     TransientLLMError, asyncio.TimeoutError,  # wait_for timeout
 )
 
@@ -43,9 +43,29 @@ async def _call_with_retry(coro_factory, backoff_s: float):
             raise TransientLLMError(str(e2)) from e2
 
 
+def _require_parsed(result: StructuredResult):
+    if result.parsed is None:
+        raise RuntimeError(f"LLM이 응답을 거부했습니다: {result.refusal}")
+    return result.parsed
+
+
+async def _parse(client, model, messages, schema, timeout_s, backoff_s, constrained=True):
+    system, user = messages[0]['content'], messages[1]['content']
+
+    async def _call():
+        return await asyncio.wait_for(
+            client.parse(model=model, system=system, user=user, schema=schema,
+                         constrained=constrained),
+            timeout=timeout_s,
+        )
+
+    result = await _call_with_retry(_call, backoff_s)
+    return _require_parsed(result), result.input_tokens, result.output_tokens
+
+
 async def extract_one(
     *,
-    client,                       # openai.AsyncOpenAI
+    client,                       # langgraph_tagger.llm_provider.LLMClient
     model: str,
     metadata: dict[str, Any],
     pages_text: str,
@@ -54,22 +74,10 @@ async def extract_one(
 ) -> tuple[ExtractionResult, int, int]:
     """ExtractionResult + (input_tokens, output_tokens) 반환."""
     messages = render_extraction_messages(metadata, pages_text)
-
-    async def _call():
-        return await asyncio.wait_for(
-            client.beta.chat.completions.parse(
-                model=model,
-                messages=messages,
-                response_format=ExtractionResult,
-            ),
-            timeout=timeout_s,
-        )
-
-    resp = await _call_with_retry(_call, backoff_s)
-    parsed: ExtractionResult = resp.choices[0].message.parsed
-    in_t = getattr(resp.usage, 'prompt_tokens', 0) or 0
-    out_t = getattr(resp.usage, 'completion_tokens', 0) or 0
-    return parsed, in_t, out_t
+    # ExtractionResult is too large for Claude's grammar compiler — see
+    # LLMClient.parse(constrained=False).
+    return await _parse(client, model, messages, ExtractionResult, timeout_s, backoff_s,
+                        constrained=False)
 
 
 async def diff_one(
@@ -89,19 +97,4 @@ async def diff_one(
         prev_summary, curr_summary, prev_match_type,
         prev_report_id, prev_publisher, curr_publisher,
     )
-
-    async def _call():
-        return await asyncio.wait_for(
-            client.beta.chat.completions.parse(
-                model=model,
-                messages=messages,
-                response_format=DiffResult,
-            ),
-            timeout=timeout_s,
-        )
-
-    resp = await _call_with_retry(_call, backoff_s)
-    parsed: DiffResult = resp.choices[0].message.parsed
-    in_t = getattr(resp.usage, 'prompt_tokens', 0) or 0
-    out_t = getattr(resp.usage, 'completion_tokens', 0) or 0
-    return parsed, in_t, out_t
+    return await _parse(client, model, messages, DiffResult, timeout_s, backoff_s)

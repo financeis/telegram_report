@@ -1,4 +1,4 @@
-"""Pydantic schema for the OpenAI structured-output call (v2).
+"""Pydantic schema for the structured-output LLM call (v2).
 
 v2 변경 (rev-7):
 - report_type 14종 → 6종

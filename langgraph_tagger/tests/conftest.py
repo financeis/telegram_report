@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from langgraph_tagger.llm_provider import StructuredResult
 from langgraph_tagger.llm_schemas import LLMExtraction, OOSSignals
 from langgraph_tagger.vocabulary.krx import KRXIndex
 
@@ -15,36 +16,26 @@ def krx() -> KRXIndex:
 
 
 @pytest.fixture
-def mock_openai_client():
-    """AsyncMock that returns a configurable LLMExtraction.
+def mock_llm_client():
+    """LLMClient stand-in whose ``parse`` returns a configurable LLMExtraction.
 
     Usage:
-        mock_openai_client.set_response(LLMExtraction(...))
+        mock_llm_client.set_response(LLMExtraction(...))
         # or
-        mock_openai_client.set_refusal("policy violation")
+        mock_llm_client.set_refusal("policy violation")
         # or
         from openai import RateLimitError
-        mock_openai_client.set_exception(RateLimitError("rate limited"))
+        mock_llm_client.set_exception(RateLimitError("rate limited"))
     """
     client = MagicMock()
-    client.chat = MagicMock()
-    client.chat.completions = MagicMock()
     parse = AsyncMock()
-    client.chat.completions.parse = parse
+    client.parse = parse
 
     def _set_response(parsed: LLMExtraction):
-        completion = MagicMock()
-        completion.choices = [MagicMock()]
-        completion.choices[0].message.parsed = parsed
-        completion.choices[0].message.refusal = None
-        parse.return_value = completion
+        parse.return_value = StructuredResult(parsed=parsed)
 
     def _set_refusal(reason: str):
-        completion = MagicMock()
-        completion.choices = [MagicMock()]
-        completion.choices[0].message.parsed = None
-        completion.choices[0].message.refusal = reason
-        parse.return_value = completion
+        parse.return_value = StructuredResult(parsed=None, refusal=reason)
 
     def _set_exception(exc: Exception):
         parse.side_effect = exc

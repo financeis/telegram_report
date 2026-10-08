@@ -1,19 +1,19 @@
-"""llm_extract node: single OpenAI structured-output call."""
+"""llm_extract node: single structured-output LLM call (provider picked by model name)."""
 from __future__ import annotations
 
-from openai import APITimeoutError, AsyncOpenAI, InternalServerError, RateLimitError
 from pydantic import ValidationError
 
+from langgraph_tagger.llm_provider import TRANSIENT_ERRORS, LLMClient
 from langgraph_tagger.llm_schemas import LLMExtraction
 from langgraph_tagger.prompts import SYSTEM_PROMPT, user_message
 from langgraph_tagger.state import RowState
 
 
-class OpenAITransientError(Exception):
-    """Wraps 429/5xx/timeout from OpenAI; orchestrator reverts row to pending."""
+class LLMTransientError(Exception):
+    """Wraps 429/5xx/timeout/network from the LLM provider; orchestrator reverts row to pending."""
 
 
-async def llm_extract(state: RowState, *, client: AsyncOpenAI) -> dict:
+async def llm_extract(state: RowState, *, client: LLMClient) -> dict:
     if state.get("pdf_unreadable"):
         # Short-circuit: don't burn an LLM call on unreadable input
         return {"llm_raw": None}
@@ -22,25 +22,22 @@ async def llm_extract(state: RowState, *, client: AsyncOpenAI) -> dict:
     sent_iso = sent_at.isoformat() if sent_at else ""
 
     try:
-        completion = await client.chat.completions.parse(
+        result = await client.parse(
             model=state["model"],
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_message(
-                    file_name=state["file_name"],
-                    caption=state.get("caption"),
-                    sent_at_iso=sent_iso,
-                    pdf_text=state["pdf_text"],
-                )},
-            ],
-            response_format=LLMExtraction,
-            # Luna rejects temperature=0; omit it to use the supported default.
-            **({} if state["model"].startswith("gpt-5.6-luna") else {"temperature": 0}),
+            system=SYSTEM_PROMPT,
+            user=user_message(
+                file_name=state["file_name"],
+                caption=state.get("caption"),
+                sent_at_iso=sent_iso,
+                pdf_text=state["pdf_text"],
+            ),
+            schema=LLMExtraction,
+            # Luna models reject temperature=0; omit it to use the supported default.
+            temperature=None if "luna" in state["model"] else 0,
         )
-    except (RateLimitError, APITimeoutError, InternalServerError, ValidationError) as e:
-        raise OpenAITransientError(str(e)) from e
+    except (*TRANSIENT_ERRORS, ValidationError) as e:
+        raise LLMTransientError(str(e)) from e
 
-    msg = completion.choices[0].message
-    if msg.refusal:
-        return {"llm_raw": None, "llm_refusal": msg.refusal}
-    return {"llm_raw": msg.parsed}
+    if result.refusal:
+        return {"llm_raw": None, "llm_refusal": result.refusal}
+    return {"llm_raw": result.parsed}

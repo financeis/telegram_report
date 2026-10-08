@@ -163,11 +163,10 @@ def test_review_preview_caps_pages_and_serves_png(tmp_path):
 @pytest.mark.asyncio
 async def test_explicit_pair_narrative_reads_only_selected_reports(monkeypatch):
     from langgraph_tagger.workspace import service as module
-    cfg = SimpleNamespace(openai_model='gpt-5.6-luna', per_report_timeout_s=90)
+    cfg = SimpleNamespace(llm_model='claude-haiku-5-5', per_report_timeout_s=90)
     monkeypatch.setattr(module, 'load_llm_summary_config', lambda: cfg)
-    monkeypatch.setattr(module, 'require_openai_key', lambda _: 'test-key')
     client = AsyncMock()
-    monkeypatch.setattr(module, 'AsyncOpenAI', lambda **_: client)
+    monkeypatch.setattr(module, 'make_llm_client', lambda _: client)
     generate = AsyncMock(return_value=(SimpleNamespace(diff_narrative='Selected pair only'), 10, 10))
     save = Mock()
     monkeypatch.setattr(module, 'diff_one', generate)

@@ -16,7 +16,7 @@ from collections import Counter
 from typing import Any
 
 from langgraph_tagger.graph import build_graph
-from langgraph_tagger.nodes.llm_extract import OpenAITransientError
+from langgraph_tagger.nodes.llm_extract import LLMTransientError
 from langgraph_tagger.supabase_io import (
     ATOMIC_CLAIM_SQL, DRY_RUN_SELECT_SQL, REVERT_TO_PENDING_SQL,
     ROW_IDS_FETCH_SQL, STALE_LOCK_RECLAIM_SQL,
@@ -82,7 +82,7 @@ async def run_batch(
                     timeout=per_row_deadline_s,
                 )
                 return {"id": row["id"], **final}
-            except OpenAITransientError as e:
+            except LLMTransientError as e:
                 await _revert(row["id"])
                 return {"id": row["id"], "error": "transient", "detail": str(e)}
             except asyncio.TimeoutError:

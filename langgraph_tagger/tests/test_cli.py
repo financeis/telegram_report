@@ -28,6 +28,7 @@ def test_main_inspect_runs_past_argparse_to_load_config(monkeypatch):
     # Wipe the env vars load_config requires, so it raises RuntimeError.
     monkeypatch.delenv("SUPABASE_DB_URL", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     # Disable .env discovery so any local .env doesn't satisfy _req().
     monkeypatch.setattr("langgraph_tagger.config.load_dotenv", lambda *a, **k: False)
 

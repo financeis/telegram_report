@@ -1,7 +1,7 @@
 """Standalone config for the review viewer.
 
 Intentionally separate from langgraph_tagger.config so the viewer can run
-without OPENAI_API_KEY, SUPABASE_DB_URL, or TELEGRAM_* envs — those belong
+without LLM API keys, SUPABASE_DB_URL, or TELEGRAM_* envs — those belong
 to the tagger and collector.
 """
 from __future__ import annotations

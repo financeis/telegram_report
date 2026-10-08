@@ -103,19 +103,31 @@ uncompared. A new comparison narrative runs only through the explicit button
 for the selected two reports; viewing or selecting reports never starts an LLM.
 
 This is a **local, single-user application** bound to `127.0.0.1`; Supabase and
-OpenAI credentials remain on the Python server. All former Streamlit dashboard
+LLM API credentials remain on the Python server. All former Streamlit dashboard
 and review functionality now lives here. The old `python -m langgraph_tagger.analytics`
 and `python -m langgraph_tagger.review_viewer` commands also launch Research Desk
 (coverage and review entry views, respectively).
 
 ## Analysis models
 
-Tagging (`OPENAI_MODEL_DEFAULT`) and financial extraction/report comparison
-(`OPENAI_MODEL_PHASE2`) default to `gpt-5.6-luna`. Set both in `.env` to migrate
-an existing installation. Tagging escalation remains `gpt-5.4` via
-`OPENAI_MODEL_ESCALATION`. Restart running workers and the dashboard after changing
-these environment variables. Saved analyses keep their original model metadata
-and are reused; changing models does not trigger a bulk reanalysis.
+Tagging (`LLM_MODEL_DEFAULT`) defaults to `claude-haiku-5-5`; financial
+extraction/report comparison (`LLM_MODEL_PHASE2`) defaults to `gpt-6-luna`,
+which extracted about twice as many financial metrics as Haiku with no format
+failures in a side-by-side check. A `codex:` prefix (e.g.
+`LLM_MODEL_PHASE2=codex:gpt-6-luna`) runs the model through the local Codex CLI
+(`codex exec`, using its ChatGPT login instead of an API key); this suits Phase 2
+because it only runs on reports a user selects. `CODEX_REASONING_EFFORT`
+(default `high`) sets its reasoning depth. Tagging escalation
+(`LLM_MODEL_ESCALATION`) defaults to `gpt-5.4`. The model name picks the provider:
+`claude-*` models use `ANTHROPIC_API_KEY`, `codex:*` models use the Codex CLI login,
+anything else uses `OPENAI_API_KEY`, so switching or rolling back is a `.env`
+change only (e.g. `LLM_MODEL_PHASE2=gpt-6-luna` for the API). The
+legacy `OPENAI_MODEL_*` names are still read when the `LLM_MODEL_*` ones are unset.
+Claude thinking depth is set by `ANTHROPIC_EFFORT` (default `medium`).
+Measurements behind these choices: [docs/llm-models.md](docs/llm-models.md).
+Restart running workers and the dashboard after changing these environment
+variables. Saved analyses keep their original model metadata and are reused;
+changing models does not trigger a bulk reanalysis.
 
 ## Financial research details
 

@@ -11,11 +11,11 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 import asyncpg
-from openai import AsyncOpenAI
+from langgraph_tagger.llm_provider import LLMClient
 
 from langgraph_tagger.analytics.llm_summary import summary_store
 from langgraph_tagger.analytics.llm_summary.config import (
-    LLMSummaryConfig, load_llm_summary_config, require_openai_key,
+    LLMSummaryConfig, load_llm_summary_config, make_llm_client,
 )
 from langgraph_tagger.analytics.llm_summary.llm import (
     diff_one, extract_one, TransientLLMError,
@@ -123,10 +123,9 @@ async def analyze_stock(
         refresh_financials and not has_financial_details(cached[rid])
     )]
 
-    # Step C — OpenAI client는 cache miss가 있을 때만 필요 (lazy)
+    # Step C — LLM client는 cache miss가 있을 때만 필요 (lazy)
     if miss_ids:
-        api_key = require_openai_key(cfg)
-        client = AsyncOpenAI(api_key=api_key)
+        client = make_llm_client(cfg)
     else:
         client = None
 
@@ -165,8 +164,7 @@ async def analyze_stock(
             if client is None:
                 # Pass1에서 client 안 만들었지만 Pass2는 LLM diff 필요할 수 있음
                 # — cascade hit 시에만 호출됨. lazy 검증.
-                api_key = require_openai_key(cfg)
-                client = AsyncOpenAI(api_key=api_key)
+                client = make_llm_client(cfg)
             tasks2 = [
                 _process_diff_one(
                     rid=rid, row_meta=row_meta, curr_summary=curr_summary,
@@ -197,7 +195,7 @@ async def analyze_stock(
 async def _process_extract_one(
     *,
     row: dict[str, Any],
-    client: AsyncOpenAI,
+    client: LLMClient,
     cfg: LLMSummaryConfig,
     sb,
     storage_base_dir: Path,
@@ -222,7 +220,7 @@ async def _process_extract_one(
                 'title': row.get('title'),
             }
             extracted, tokens_in, tokens_out = await extract_one_safe(
-                client=client, model=cfg.openai_model,
+                client=client, model=cfg.llm_model,
                 metadata=metadata, pages_text=text,
                 timeout_s=cfg.per_report_timeout_s,
             )
@@ -241,7 +239,7 @@ async def _process_extract_one(
                 'input_pages_used': pages_used,
                 'input_total_pages': total_pages,
                 'summary_version': cfg.summary_version,
-                'llm_model': cfg.openai_model,
+                'llm_model': cfg.llm_model,
                 'llm_tokens_input': tokens_in,
                 'llm_tokens_output': tokens_out,
                 # diff fields 의무 reset (spec §10)
@@ -263,7 +261,7 @@ async def _process_diff_one(
     row_meta: dict[str, Any],
     curr_summary: dict[str, Any],
     stock_code: str,
-    client: AsyncOpenAI,
+    client: LLMClient,
     cfg: LLMSummaryConfig,
     sb,
     pool,
@@ -288,7 +286,7 @@ async def _process_diff_one(
                 return
 
             diff, _, _ = await diff_one_safe(
-                client=client, model=cfg.openai_model,
+                client=client, model=cfg.llm_model,
                 prev_summary=prev.summary, curr_summary=curr_summary,
                 prev_match_type=prev.match_type,
                 prev_report_id=prev.prev_report_id,
