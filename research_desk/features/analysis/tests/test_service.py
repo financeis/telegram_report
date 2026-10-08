@@ -111,12 +111,15 @@ class FakeSupabase:
         return [q for q in self.executed if q.kind == kind]
 
 
-async def until(condition, tries=200):
-    for _ in range(tries):
-        if condition():
-            return
-        await asyncio.sleep(0)
-    raise AssertionError('condition not reached')
+async def until(condition, timeout_s=5.0):
+    # Poll by wall-clock time, not a fixed number of loop ticks: PDF reading runs in
+    # a worker thread, so a busy machine can need more ticks before the AI is called.
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
+    while not condition():
+        if loop.time() > deadline:
+            raise AssertionError('condition not reached')
+        await asyncio.sleep(0.005)
 
 
 def row(rid, report_type='단일종목', file_path='r.pdf', **extra):
