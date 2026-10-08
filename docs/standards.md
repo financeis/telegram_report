@@ -1,7 +1,5 @@
 # 규칙
 
-어기면 테스트·커밋 검사·실행 중 하나가 실패하거나, 운영 데이터가 깨지는 규칙만 적는다.
-
 ## 검증 관문
 
 - **커밋과 병합 커밋마다 전체 테스트가 돈다.** `.githooks/pre-commit`과 `.githooks/pre-merge-commit`이 `.githooks/run-checks.sh`를 부르고, 이 스크립트가 기본 작업 폴더(`git rev-parse --git-common-dir`의 상위 폴더)의 `.venv` 파이썬으로 `python -m pytest -q -p no:cacheprovider`를 돌린다. 하나라도 실패하거나 파이썬을 못 찾으면 커밋이 막힌다. 저장소마다 한 번 `git config core.hooksPath .githooks`로 켜야 한다.
@@ -57,7 +55,7 @@
 ## 명령과 종료 코드
 
 - 모든 실행은 저장소 루트에서 `python -m research_desk <명령>`이다. `sessions/`와 `.env`의 상대 경로가 현재 폴더 기준이다.
-- 종료 코드 4는 "준비 문제"(다시 실행해도 저절로 풀리지 않는 상태: 설정 누락, codex CLI 없음, 종목표를 못 읽음, 종목표 버전 불일치, 잘못된 날짜 인자)다. `tag`·`stocks` 명령과 새로 붙는 명령이 쓴다. 분류 명령은 4로 끝날 때 어떤 행도 가져가지 않은 상태여야 한다. `collect`만 예외로 설정 누락이 1이다.
+- 종료 코드 4는 "준비 문제"(다시 실행해도 저절로 풀리지 않는 상태: 설정 누락, codex CLI 없음, 종목표를 못 읽음, 종목표 버전 불일치, `stocks set-version --as-of`의 잘못된 날짜)다. `tag escalate --since`의 형식 오류는 4가 아니라 1이다. `tag`·`stocks` 명령과 새로 붙는 명령이 쓴다. 분류 명령은 4로 끝날 때 어떤 행도 가져가지 않은 상태여야 한다. `collect`만 예외로 설정 누락이 1이다.
 - 인자가 없거나 틀리면 사용법을 보여 주고 2, `--help`는 0이다.
 - 새로 만드는 사용자 문구는 한국어로 쓴다. 이미 있는 영어 명령 출력(`<NAME> is required`, `Config error: Missing required env var: <NAME>`, `codex CLI not found for model <모델>`, JSON 보고의 키)은 바꾸지 않는다 — 스크립트와 운영자가 그 문구를 본다.
 
@@ -80,7 +78,7 @@
 - 데이터를 바꾸는 마이그레이션은 다시 실행해도 결과가 같게 쓰고, 운영 DB에 적용하기 전에 바뀔 행을 백업한다.
 - 저장되는 버전 이름 `langgraph-tagger@2.0`(분류기, `tagger/sql.py`의 상수 하나), `llm-summary@1.0`(분석)을 바꾸지 않는다. 바꾸면 기존 행과 새 행이 다른 버전으로 갈리고, 분석 결과 조회가 현재 버전만 보여 주므로 기존 분석이 화면에서 사라진다.
 - 종목표 CSV를 바꾸는 커밋에는 `stocks set-version`으로 갱신한 버전 정보 파일이 함께 들어가야 한다. 함께 들어 있는 CSV와 버전 정보 파일의 지문이 같은지 테스트가 확인하므로, CSV만 바꾸면 커밋 검사가 막는다.
-- 분류 체계 값(리포트 종류·사유·발행처 종류·상태·신뢰도)은 `research_desk/domain/vocabulary.yaml` 한 곳에서 읽는다. "분석 대상" 정의와 "분석 대상 외 행 모양"도 `research_desk/domain/reports.py` 한 곳에만 둔다. 다른 칸에 같은 규칙을 다시 적지 않는다.
+- 분류 체계 값(리포트 종류·사유·발행처 종류·상태·신뢰도)의 원본은 `research_desk/domain/vocabulary.yaml` 하나다. 다른 곳에 있는 사본(분류기의 LLM 응답 모양과 상태 타입, 검토 주소의 사유 목록)은 테스트가 원본과 같은지 확인한다. 새 사본을 만들면 같은 확인 테스트를 붙인다(화면 쪽 사본은 아직 확인하지 않는다). "분석 대상" 정의와 "분석 대상 외 행 모양"도 `research_desk/domain/reports.py` 한 곳에만 둔다. 다른 칸에 같은 규칙을 다시 적지 않는다.
 - 웹 API의 주소·요청 값·응답 키·상태 코드·문구는 화면이 그대로 쓴다. 바꾸려면 화면 코드를 함께 바꾼다.
 
 ## 커밋

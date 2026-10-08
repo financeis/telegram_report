@@ -72,7 +72,7 @@
 
 **가벼운 등록과 설정 읽기**
 
-- 입구는 어떤 명령이든 모든 명령을 등록하므로, `collector.cli`를 import해도 `telethon`·`supabase`·`asyncpg`가 올라오면 안 된다. Telethon은 `TelegramClient.__init__` 안에서, `core.db`는 `build_storage` 안에서 import한다. 모듈 최상위로 올리면 테스트가 실패한다.
+- 입구는 어떤 명령이든 모든 명령을 등록하므로 `collector.cli`의 최상위 import는 가볍게 둔다. `collector.cli` 자체는 `telethon`·`supabase`·`asyncpg`를 불러오지 않는다(테스트가 새 프로세스로 확인한다). Telethon은 `TelegramClient.__init__` 안에서, `core.db`는 `build_storage` 안에서 import한다. 지금은 분류기 쪽(`tagger.cli`)이 `core.db`를 통해 supabase·asyncpg를 이미 모든 명령에서 불러오지만, 텔레그램 라이브러리는 `collect`가 돌 때만 올라온다. 모듈 최상위로 올리면 테스트가 실패한다.
 - 설정은 `collect`가 시작할 때 `load_config()`가 읽는다(`core.settings.load_env()`로 `.env`를 다시 읽되, 이미 있는 환경 변수가 이긴다). import 시점에는 읽지 않는다.
 - `sessions/`와 `./reports` 같은 상대 경로는 현재 폴더 기준이다. 명령은 저장소 루트에서 실행한다.
 

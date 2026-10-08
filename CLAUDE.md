@@ -53,7 +53,7 @@ telegram_report/
 ## 절대 규칙
 
 1. **분류 LLM 동시 호출은 2, 백필 배치는 10이다.** 실제 병목이 분당 토큰 한도라서, 공급자 한도 확인과 LangSmith 토큰 추이 검증 없이 올리지 않는다.
-2. **운영 데이터를 깨지 않는다.** DB 구조 변경은 `migrations/NNN_*.sql`로만 한다. 데이터를 직접 고칠 때는 바뀔 행을 먼저 백업하고 한 트랜잭션 안에서 바뀐 행 수를 확인한 뒤 커밋한다. 저장 버전 이름(`langgraph-tagger@2.0`, `llm-summary@1.0`)과 화면이 쓰는 웹 API 모양을 바꾸지 않는다. 이미 저장된 행의 종목표 표시(`KRX@…`)를 손으로 바꾸지 않는다 — 새 종목표 버전은 아래 5번의 `stocks set-version`으로만 생긴다.
+2. **운영 데이터를 깨지 않는다.** DB 구조 변경은 `migrations/NNN_*.sql`로만 한다. 데이터를 직접 고칠 때는 바뀔 행을 먼저 백업하고 한 트랜잭션 안에서 바뀐 행 수를 확인한 뒤 커밋한다. 저장 버전 이름(`langgraph-tagger@2.0`, `llm-summary@1.0`)을 바꾸지 않고, 화면이 쓰는 웹 API 모양(주소·응답 키·상태 코드·문구)은 화면 코드를 함께 바꾸지 않고는 바꾸지 않는다. 이미 저장된 행의 종목표 표시(`KRX@…`)를 손으로 바꾸지 않는다 — 새 종목표 버전은 아래 5번의 `stocks set-version`으로만 생긴다.
 3. **커밋마다 전체 테스트(구조 검사 포함)가 돈다. `--no-verify`로 건너뛰지 않고, 테스트를 지워서 통과시키지 않는다.** 칸 경계·표 주인 위반은 `research_desk/tests/test_architecture.py`가 막는다.
 4. **키·서비스 키·DB 주소·로컬 파일 경로는 브라우저 응답에 넣지 않는다.** 비밀 값은 `.env`에만 두고 커밋하지 않는다. 커밋은 파일 경로를 지정해서 올린다(`git add -A`·`git add .` 금지 — 커밋하면 안 되는 미추적 사용자 파일이 생길 수 있다).
 5. **종목표 CSV를 바꾸면 `python -m research_desk stocks set-version --as-of <자료 기준일>`로 버전 정보 파일을 같이 고치고 한 커밋에 올린다.** 안 하면 분류 명령이 종료 코드 4로 멈춘다.
@@ -68,7 +68,7 @@ telegram_report/
 - **분류 체계 값(리포트 종류·사유·발행처 종류)이나 종목표를 바꾸기 전:** `docs/business-rules.md`의 값 집합과 종목표 버전 — DB 제약과 LLM 응답 모양을 함께 바꿔야 한다.
 - **호스트·출처 검사, PDF 내주기, 비밀 값을 건드리기 전:** `docs/security.md`.
 - **`.ps1` 스크립트나 `.githooks/`를 고치기 전:** `docs/standards.md`의 스크립트 규칙(PowerShell 5.1, BOM, LF).
-- **코드 주석의 `spec §N`을 만났을 때:** 저장소에 없는 구조 개편 설계서의 절 번호다. 같은 내용은 이렇게 찾는다 — §2~§4(칸·경계·표 주인) → `docs/architecture.md`·`docs/standards.md`, §5(명령) → `docs/contracts.md`의 명령, §6(웹 API) → `docs/contracts.md`의 웹 API, §7(설정) → `docs/operations.md`의 설정 목록, §8(종목표 버전) → `docs/business-rules.md`의 종목표와 버전, §9(보존할 동작) → `docs/business-rules.md`, §10(의도한 변경) → `docs/tracking/decisions/`, §12(커밋 검사) → `docs/standards.md`의 검증 관문. 그 주석을 고칠 일이 생기면 이 문서 쪽 이름으로 바꾼다.
+- **코드 주석의 `spec §N`을 만났을 때:** 저장소에 없는 구조 개편 설계서의 절 번호다. 같은 내용은 이렇게 찾는다 — §2~§4(칸·경계·표 주인) → `docs/architecture.md`·`docs/standards.md`, §5(명령) → `docs/contracts.md`의 명령, §6(웹 API) → `docs/contracts.md`의 웹 API, §7(설정) → `docs/operations.md`의 설정 목록, §8(종목표 버전) → `docs/business-rules.md`의 종목표와 버전, §9(보존할 동작) → `docs/business-rules.md`, §10(의도한 변경) → `docs/tracking/decisions/`, §11(그대로 두는 것) → `docs/standards.md`의 데이터와 저장 값·운영 값, §12(커밋 검사)·§13(필수 검증) → `docs/standards.md`의 검증 관문과 각 폴더 `AGENTS.md`의 테스트 절. 그 주석을 고칠 일이 생기면 이 문서 쪽 이름으로 바꾼다.
 
 ## 문제가 생겼을 때
 

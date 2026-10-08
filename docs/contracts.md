@@ -107,4 +107,4 @@
 | `run-batches.ps1` | `-Iterations N`(기본 5), `-BatchSize N`(0이면 설정 기본값), `-MaxRetries N`(기본 2), `-RetrySleepS N`(기본 3), `-Python <경로>`; 환경 변수 `RESEARCH_DESK_PY` | 0 모두 완료 / 1 한 배치가 모든 시도에 실패 / 2 파이썬 못 찾음 / 3 `tag reset-worker` 실패 / 4 준비 문제(되돌리기·재시도 없이 즉시) |
 | `start-workspace.ps1` | `-SkipBuild` | 빌드·실행 실패 시 예외로 끝남 |
 
-`run-batches.ps1`은 `tag run`의 종료 코드만 본다: 0이면 다음 배치, 4면 즉시 멈춤, 그 밖이면 같은 작업자 ID로 `tag reset-worker` 후 새 작업자 ID로 재시도. 출력의 마지막 줄은 `Summary: success=<n> failed_attempts=<n>`이다.
+`run-batches.ps1`은 `tag run`의 종료 코드만 본다: 0이면 다음 배치, 4면 즉시 멈춤, 그 밖이면 같은 작업자 ID로 `tag reset-worker` 후 새 작업자 ID로 재시도. 종료 코드 0·1·4로 끝날 때 출력의 마지막 줄은 `Summary: success=<n> failed_attempts=<n>`이다(2·3은 오류 문구로 끝난다).
