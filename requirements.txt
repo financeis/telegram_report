@@ -1,7 +1,7 @@
 telethon>=1.36,<2.0
 supabase>=2.0,<3.0
 python-dotenv>=1.0,<2.0
-# langgraph_tagger (Phase 1: PDF metadata tagging via LangGraph + OpenAI or Anthropic)
+# tagger (research_desk.tagger: PDF metadata tagging via LangGraph + OpenAI or Anthropic)
 langgraph>=1.0,<2.0
 openai>=2.11
 anthropic>=0.125,<1.0
