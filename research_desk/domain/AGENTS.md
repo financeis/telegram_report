@@ -72,9 +72,9 @@
   - 같은 날짜로 다시 쓰는 것은 허용한다. 버전 이름이 "자료 기준일"이라는 뜻이기 때문이다.
   - JSON은 `ensure_ascii=False`, 들여쓰기 2, 키 순서 `version` → `content_hash`, 끝에 줄바꿈 하나다.
 - 날짜는 ASCII 숫자로 된 정확한 `YYYY-MM-DD`이면서 실제 있는 날이어야 한다. 정규식과 `date.fromisoformat`을 둘 다 쓰는 이유: Python 3.11의 `fromisoformat`은 `20260508` 같은 다른 ISO 형식도 받아 주고, 정규식만으로는 `2026-02-30`을 못 거른다. 하나로 줄이지 않는다.
-- 저장소에 함께 들어 있는 종목표(`KRX_CSV_PATH`의 기본값 `core.settings.DEFAULT_KRX_CSV_PATH`)와 그 버전 정보 파일은 늘 맞아야 한다. `test_bundled_csv_matches_its_version_file`이 지문과 버전 이름(`BUNDLED_VERSION`)까지 확인하므로 CSV만 바꾼 커밋은 커밋 검사에서 막힌다.
-  - 코드 작업 중에 이 CSV를 고치거나 다른 형식으로 다시 저장하지 않는다. 버전 정보 파일의 `content_hash`를 손으로 고치지 않는다.
-  - 사용자가 종목표를 실제로 바꿀 때는 저장소 루트에서 `python -m research_desk stocks set-version --as-of <자료 기준일>`을 실행하고, `domain/tests/test_stocks.py`의 `BUNDLED_VERSION`을 새 버전으로 고치고, CSV·버전 정보 파일·테스트를 한 커밋에 넣는다.
+- 저장소에 함께 들어 있는 종목표(`KRX_CSV_PATH`의 기본값 `core.settings.DEFAULT_KRX_CSV_PATH`)와 그 버전 정보 파일은 늘 맞아야 한다. `test_bundled_csv_matches_its_version_file`이 버전 정보 파일의 모양(`version`·`content_hash` 두 키, `KRX@<실제 날짜>`, 64자리 지문)과 지문이 CSV 내용과 같은지를 확인한다. 버전 이름은 테스트에 박지 않고 버전 정보 파일에서 읽는다. 그래서 CSV만 바꾼 커밋은 커밋 검사에서 막히고, `set-version`까지 한 커밋은 이 테스트를 고치지 않아도 통과한다.
+  - 코드 작업 중에 이 CSV를 고치거나 다른 형식으로 다시 저장하지 않는다. 버전 정보 파일의 `content_hash`를 손으로 고치지 않는다. 테스트에 버전 이름(`KRX@2026-05-08` 같은)을 다시 박지 않는다 — 종목표를 바꿀 때마다 커밋이 막힌다.
+  - 사용자가 종목표를 실제로 바꿀 때는 저장소 루트에서 `python -m research_desk stocks set-version --as-of <자료 기준일>`을 실행하고, CSV와 버전 정보 파일을 한 커밋에 넣는다.
 - 코드가 CSV를 새로 쓰게 되면(종목표 자동 갱신 같은 기능) 같은 자리에서 버전 정보 파일도 함께 쓴다. CSV만 바뀌면 다음 `tag run`·`tag escalate`가 4로 멈춘다.
 
 ## 이 칸의 방식

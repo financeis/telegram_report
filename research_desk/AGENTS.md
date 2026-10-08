@@ -59,7 +59,7 @@
   - `R8 입구`: 여러 칸을 묶는 것은 입구뿐이다(하위 모듈까지 가능하지만 기능은 공개 창구로만). 다른 파일은 입구를 import하지 않고, 패키지 뿌리 파일은 research_desk 모듈을 import하지 않는다.
   - `R9 외부 도구`: `supabase`·`asyncpg`·`openai`·`anthropic`·`dotenv`·`fitz`·`pymupdf`는 core, `telethon`은 collector, `langgraph`는 tagger에서만 import한다.
   - `R10 옛 코드`: `langgraph_tagger`와 예전 루트 모듈(최상위 이름 `collector`·`config`·`storage`·`telegram_client`·`main`)을 import하지 않는다. 테스트에도 적용한다.
-  - `R11 표 주인`: `.table('<표>')` 호출과, docstring이 아닌 문자열 속 `FROM`/`UPDATE`/`INTO`/`JOIN <표>`(대소문자 무시, 앞에 `public.`이나 큰따옴표가 붙어도)는 주인 칸에만 둔다. `reports` → collector·tagger·`features/review`·`features/reports`, `failed_attempts` → collector, `report_summaries` → `features/analysis`.
+  - `R11 표 주인`: `.table('<표>')` 호출(supabase-py 별칭 `.from_('<표>')` 포함)과, docstring이 아닌 문자열 속 `FROM`/`UPDATE`/`INTO`/`JOIN <표>`(대소문자 무시, 앞에 `public.`이나 큰따옴표가 붙어도)는 주인 칸에만 둔다. `reports` → collector·tagger·`features/review`·`features/reports`, `failed_attempts` → collector, `report_summaries` → `features/analysis`.
   - `구문 오류`: 파이썬으로 읽히지 않는 파일은 검사할 수 없어 실패로 친다.
 - 실패하면 `test_research_desk_follows_architecture_rules` 하나가 실패하고, 위반 건수를 적은 머리줄 다음에 위반마다 `<파일>:<줄> — <규칙 이름>: <설명>` 한 줄이 파일·줄 순서로 나온다. 예:
   ```

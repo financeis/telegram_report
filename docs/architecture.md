@@ -43,13 +43,13 @@ reports (pending) ──(Postgres 직접 연결 SUPABASE_DB_URL, asyncpg 풀 최
 | `tagger` | `pending` → `auto`/`review_needed` (LangGraph 행 그래프) | `core`, `domain` |
 | `features/companies` | 기업 목록·관심 기업 | `core`, `domain` |
 | `features/analysis` | 리포트 1건 재무 분석, `report_summaries` 표, 웹 AI 자리 2개 | `core`, `domain` |
-| `features/reports` | 분류가 끝난 리포트 조회, 목록·PDF·분석 실행 주소 | `analysis` |
-| `features/compare` | 두 보고서 비교 | `reports`, `analysis` |
-| `features/coverage` | 커버리지 집계, 집계용 행 캐시 | `reports` |
-| `features/review` | 수동 검토·되돌리기 | `coverage` (처리 뒤 캐시 비우기) |
+| `features/reports` | 분류가 끝난 리포트 조회, 목록·PDF·분석 실행 주소 | `core`, `domain`, 기능 `analysis` |
+| `features/compare` | 두 보고서 비교 | `core`, `domain`, 기능 `reports`·`analysis` |
+| `features/coverage` | 커버리지 집계, 집계용 행 캐시 | `core`, `domain`, 기능 `reports` |
+| `features/review` | 수동 검토·되돌리기 | `core`, `domain`, 기능 `coverage` (처리 뒤 캐시 비우기) |
 | `web` | 웹 서버 조립: 공통 보안 장치, 오류 응답, 화면 파일, 기능 등록 목록. 업무 처리를 하지 않는다 | `core`, `domain`, 기능의 공개 창구 |
 
-- 기능끼리는 상대 기능의 `__init__.py`가 내보낸 이름으로만 주고받는다. 위 표의 화살표 방향만 있고, 거꾸로나 순환은 없다.
+- 기능끼리는 상대 기능의 `__init__.py`가 내보낸 이름으로만 주고받는다. 기능 사이 의존은 위 표에 적힌 방향(`reports → analysis`, `compare → reports·analysis`, `coverage → reports`, `review → coverage`)뿐이고, 거꾸로나 순환은 없다.
 - `analysis`에 웹 주소가 없는 이유: 리포트 목록이 분석 결과를 붙이려면 `reports`가 `analysis`를 써야 한다. `analysis`가 리포트 행을 직접 읽으면 서로 물고 물린다. 그래서 `analysis`는 받은 행을 분석만 하고, 분석 주소는 `reports`가 맡는다.
 - `review`가 `coverage`를 쓰는 이유: 검토 직후 커버리지 숫자가 바로 바뀌어야 한다. 웹 조립부는 등록만 하므로 이 연결을 거기에 두지 않는다.
 - 이 칸 경계와 아래 표 주인은 `research_desk/tests/test_architecture.py`가 모든 테스트 실행(그리고 모든 커밋)에서 검사한다.

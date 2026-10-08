@@ -32,7 +32,7 @@
 | `R8 입구` | `cli.py`·`__main__.py`는 각 칸의 등록 함수와 `core`·`domain` 함수를 쓴다. 기능은 공개 창구로만 쓴다. 다른 칸은 `cli`·`__main__`을 import하지 않는다 |
 | `R9 외부 도구` | `supabase`, `asyncpg`, `openai`, `anthropic`, `dotenv`, `fitz`/`pymupdf`는 `core` 안에서만 import한다. `telethon`은 `collector`, `langgraph`는 `tagger` 안에서만 쓴다 |
 | `R10 옛 코드` | `langgraph_tagger`와 옛 루트 모듈 이름(`collector`, `config`, `storage`, `telegram_client`, `main`)을 최상위 이름으로 import하지 않는다(테스트 포함) |
-| `R11 표 주인` | `.table('<표>')` 호출과, 문서 설명문이 아닌 문자열 안의 `FROM`/`UPDATE`/`INTO`/`JOIN <표>`는 그 표의 주인 칸에만 있다. `reports` → `collector`, `tagger`, `features/review`, `features/reports` / `failed_attempts` → `collector` / `report_summaries` → `features/analysis` |
+| `R11 표 주인` | `.table('<표>')` 호출(별칭 `.from_('<표>')` 포함)과, 문서 설명문이 아닌 문자열 안의 `FROM`/`UPDATE`/`INTO`/`JOIN <표>`는 그 표의 주인 칸에만 있다. `reports` → `collector`, `tagger`, `features/review`, `features/reports` / `failed_attempts` → `collector` / `report_summaries` → `features/analysis` |
 
 - **공개 창구는 `__init__.py`가 직접 묶은 이름뿐이다.** `from .router import router`처럼 명시적으로 묶은 이름만 다른 칸이 쓸 수 있다. `from .x import *`나 `__all__`에만 적은 이름은 공개로 치지 않는다.
 - 상대 import(`from . import x`)는 실제 모듈 이름으로 풀어서 같은 규칙으로 검사한다.
@@ -43,7 +43,7 @@
 
 - 기능 하나 = `research_desk/features/<기능>/` 폴더 하나. 칸 이름은 역할이 같다: `router.py`(웹 주소), `service.py`(업무 처리), `store.py`(DB 읽기·쓰기), `logic.py`(DB·네트워크 없이 테스트할 수 있는 계산), `jobs.py`(백그라운드 명령, 필요할 때만), `settings.py`(기능 전용 설정), `tests/`. 필요 없는 칸은 만들지 않는다.
 - **새 기능 등록은 두 곳뿐이다.** 웹 주소가 있으면 `research_desk/web/app.py`의 `FEATURES` 목록에 한 줄, 명령이 있으면 그 기능의 `jobs.py`에 `register(subparsers)`를 두고 `research_desk/cli.py`의 `build_parser`에 한 줄. 웹 조립부와 명령 입구에는 업무 처리를 넣지 않는다.
-- 명령 등록 함수(`register`)와 그 모듈의 최상위 import는 가볍게 둔다. `python -m research_desk`는 명령마다 모든 등록 모듈을 import한다. 무거운 라이브러리(LangGraph, FastAPI·uvicorn, Telethon, Supabase)는 명령이 실제로 돌 때 import한다. `research_desk/tests/test_cli.py`가 인자 없는 실행에서 FastAPI·uvicorn·LangGraph가 올라오지 않는지 확인한다. 이 확인을 지우거나 느슨하게 하지 않는다.
+- 명령 등록 함수(`register`)와 그 모듈의 최상위 import는 가볍게 둔다. `python -m research_desk`는 명령마다 모든 등록 모듈(`collector.cli`, `tagger.cli`, `web.server`)을 import한다. LangGraph(분류 그래프)와 FastAPI·uvicorn(웹 서버), Telethon(텔레그램)은 그 명령이 실제로 돌 때만 import한다. `research_desk/tests/test_cli.py`가 인자 없는 실행에서 FastAPI·uvicorn·LangGraph가 올라오지 않는지 확인한다. 이 확인을 지우거나 느슨하게 하지 않는다. 반면 Supabase·asyncpg·Anthropic·OpenAI 라이브러리는 `tagger.cli`가 맨 위에서 `core.db`·`core.llm`을 불러오므로 지금 모든 명령에서 올라온다(테스트가 막지 않는다).
 - 기능의 명령을 처음 붙일 때는 위 확인과 부딪힌다. `cli.py`는 기능을 공개 창구로만 쓸 수 있는데, 지금 기능 창구(`__init__.py`)는 모두 FastAPI를 함께 불러온다(`router`나, `HTTPException`을 쓰는 `service`). 그대로 `register_jobs`를 창구에 붙이면 모든 명령이 FastAPI를 불러와 확인이 실패한다. 두 조건을 함께 지킬 방식을 사용자와 정한 뒤 진행한다.
 
 ## 기능 준비와 오류 응답
@@ -57,7 +57,7 @@
 ## 명령과 종료 코드
 
 - 모든 실행은 저장소 루트에서 `python -m research_desk <명령>`이다. `sessions/`와 `.env`의 상대 경로가 현재 폴더 기준이다.
-- 종료 코드 4는 "준비 문제"(다시 실행해도 저절로 풀리지 않는 상태: 설정 누락, 종목표 버전 불일치, codex CLI 없음, 잘못된 날짜 인자)다. `tag`·`stocks` 명령과 새로 붙는 명령이 쓴다. 분류 명령은 4로 끝날 때 어떤 행도 가져가지 않은 상태여야 한다. `collect`만 예외로 설정 누락이 1이다.
+- 종료 코드 4는 "준비 문제"(다시 실행해도 저절로 풀리지 않는 상태: 설정 누락, codex CLI 없음, 종목표를 못 읽음, 종목표 버전 불일치, 잘못된 날짜 인자)다. `tag`·`stocks` 명령과 새로 붙는 명령이 쓴다. 분류 명령은 4로 끝날 때 어떤 행도 가져가지 않은 상태여야 한다. `collect`만 예외로 설정 누락이 1이다.
 - 인자가 없거나 틀리면 사용법을 보여 주고 2, `--help`는 0이다.
 - 새로 만드는 사용자 문구는 한국어로 쓴다. 이미 있는 영어 명령 출력(`<NAME> is required`, `Config error: Missing required env var: <NAME>`, `codex CLI not found for model <모델>`, JSON 보고의 키)은 바꾸지 않는다 — 스크립트와 운영자가 그 문구를 본다.
 
@@ -86,7 +86,7 @@
 ## 커밋
 
 - 고친 것 하나에 커밋 하나. 여러 문제를 한 커밋에 묶지 않는다.
-- 커밋할 파일을 경로로 지정해서 올린다. `git add -A`·`git add .`를 쓰지 않는다 — 작업 폴더에 커밋하면 안 되는 사용자 파일(미추적 `docs/portfolio/` 등)이 있다.
+- 커밋할 파일을 경로로 지정해서 올린다. `git add -A`·`git add .`를 쓰지 않는다 — 작업 폴더에는 커밋하면 안 되는 사용자 파일(개인 메모, 내보낸 자료 같은 미추적 파일)이 생길 수 있다.
 - 커밋 메시지는 영어 conventional 형식(`feat(...)`, `fix(...)`, `docs(...)`, `refactor(...)`, `chore(...)`)이다.
 - GitHub에 올리는 것(push)은 사용자가 요청할 때만 한다.
 

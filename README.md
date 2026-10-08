@@ -122,7 +122,7 @@ powershell -File scripts\run-batches.ps1 -Iterations N -BatchSize 10
 - The scripts run on Windows PowerShell 5.1 (`powershell`); PowerShell 7 (`pwsh`) is not needed.
 - **Batch size 10 is the standard, and tagging concurrency stays at 2 (`MAX_CONCURRENT_LLM=2`).**
   Do not raise either casually: the model provider's tokens-per-minute limit is the real
-  bottleneck. The operating principles in [CLAUDE.md](CLAUDE.md) explain why.
+  bottleneck. The operating principles in [docs/operations.md](docs/operations.md) give the measurements and the procedure for raising them.
 - Each iteration is one batch with its own worker id. If a batch fails, the script puts that
   worker's rows back to `pending` (`tag reset-worker`) and retries it up to 2 more times; when
   all 3 attempts fail it stops with exit `1` (exit `3` if the reset itself fails).
