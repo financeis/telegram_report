@@ -28,5 +28,3 @@ frontend/dist/
 .playwright-cli/
 output/playwright/
 .claude/
-# Generated code-graph output (rebuild with `graphify update .`)
-graphify-out/
