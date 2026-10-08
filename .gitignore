@@ -28,3 +28,6 @@ frontend/dist/
 .playwright-cli/
 output/playwright/
 .claude/
+
+# Task workspace for design documents and worktrees
+.dryforge/
