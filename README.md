@@ -2,6 +2,9 @@
 
 PDF research-report collector for Korean securities. Listens to a single Telegram channel and downloads new PDF attachments to local disk + Supabase metadata.
 
+The same Python package, `research_desk`, then tags each report with an LLM (`tag`) and serves
+Research Desk, the local web app for reading, analyzing, comparing and reviewing the reports (`web`).
+
 See [design spec](docs/superpowers/specs/2026-05-05-telegram-report-collector-design.md) for full design rationale.
 
 ## Setup (one-time)
@@ -17,9 +20,22 @@ See [design spec](docs/superpowers/specs/2026-05-05-telegram-report-collector-de
    pip install -r requirements.txt
    ```
 
-3. **Create Supabase tables.** Open your Supabase project → SQL Editor → paste the contents of `migrations/001_init.sql` → Run.
+3. **Turn on the commit checks.** They run the test suite, so install the development
+   requirements too:
 
-4. **Configure environment.** Copy the template and fill in your secrets:
+   ```bash
+   pip install -r requirements-dev.txt
+   git config core.hooksPath .githooks
+   ```
+
+   From then on every commit and every merge commit runs the full test suite
+   (`python -m pytest`, including the architecture check) with the Python in the repository's
+   `.venv`; a failing test, or no `.venv` Python, blocks the commit. Never skip the checks:
+   committing with `--no-verify` is forbidden.
+
+4. **Create Supabase tables.** Open your Supabase project → SQL Editor → paste the contents of each file in `migrations/`, in number order starting with `001_init.sql` → Run.
+
+5. **Configure environment.** Copy the template and fill in your secrets:
 
    ```bash
    copy .env.example .env             # Windows
@@ -30,27 +46,44 @@ See [design spec](docs/superpowers/specs/2026-05-05-telegram-report-collector-de
    - `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`: from https://my.telegram.org
    - `TELEGRAM_CHANNEL`: channel username (default `sunstudy1004`)
    - `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`: from Supabase dashboard → Settings → API → `service_role` key (⚠️ secret — never commit)
+   - `SUPABASE_DB_URL`: from Supabase project settings → Database → Connection string (URI); every `tag` command needs it
+   - `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`: the key of each provider your models use (see [Analysis models](#analysis-models))
 
-5. **First run** (will prompt for SMS verification once):
+6. **First run** (will prompt for SMS verification once):
 
    ```bash
-   python main.py
+   python -m research_desk collect
    ```
 
-## Usage
+   Run every command from the repository root: `sessions/` and the relative paths in `.env`
+   are resolved from the current folder.
+
+## Commands
+
+Every command is `python -m research_desk <command>`; `--help` on any command lists its options.
 
 | Command | Effect |
 |---|---|
-| `python main.py` | Normal run: collect new PDFs since last run (parallel by default, N=4) |
-| `python main.py --dry-run` | List what would be downloaded; write nothing |
-| `python main.py --cutoff-days 7` | Override INITIAL_CUTOFF_DAYS for this run (FIRST run only) |
-| `python main.py --backfill-days 365` | One-off historical backfill: fetch from N days ago, skip already-downloaded |
-| `python main.py --dry-run --backfill-days 365` | Preview backfill: count "new" vs "already-known skipped" before committing |
-| `python main.py -v` | Verbose (DEBUG level) logging |
+| `python -m research_desk collect` | Normal run: collect new PDFs since last run (parallel by default, N=4) |
+| `python -m research_desk collect --dry-run` | List what would be downloaded; write nothing |
+| `python -m research_desk collect --cutoff-days 7` | Override INITIAL_CUTOFF_DAYS for this run (FIRST run only) |
+| `python -m research_desk collect --backfill-days 365` | One-off historical backfill: fetch from N days ago, skip already-downloaded |
+| `python -m research_desk collect --dry-run --backfill-days 365` | Preview backfill: count "new" vs "already-known skipped" before committing |
+| `python -m research_desk collect -v` | Verbose (DEBUG level) logging |
+| `python -m research_desk tag run` | Claim a batch of `pending` rows and tag them; prints a JSON report. Options: `--batch-size N` (default `TAGGER_BATCH_SIZE_DEFAULT`, 10), `--model M` (default `LLM_MODEL_DEFAULT`), `--dry-run` (calls the model, writes nothing), `--row-ids 1,2,3` (re-tag these rows whatever their status), `--max-concurrent-llm N` (default `MAX_CONCURRENT_LLM`, 2), `--worker-id W` |
+| `python -m research_desk tag inspect` | Print the queue as JSON: `pending`, `processing`, `auto`, `review_needed`, `verified`, `oos_total`, `last_24h` |
+| `python -m research_desk tag escalate --since <ISO time>` | Re-tag the `review_needed` rows tagged since that time (e.g. `2026-05-08T09:00`, read as UTC unless it has an offset such as `+09:00`) with `LLM_MODEL_ESCALATION`. Options: `--model M`, `--max-concurrent-llm N` |
+| `python -m research_desk tag reset-worker --worker-id W` | Put one worker's `processing` rows back to `pending` (cleanup after a crashed run) |
+| `python -m research_desk web` | Start Research Desk on http://127.0.0.1:8520/; `--view market` / `--view review` open the coverage / review views (default `--view reports`) |
+| `python -m research_desk stocks set-version --as-of YYYY-MM-DD` | Record the stock list's version after replacing it (see [Stock list update](#stock-list-update)) |
 
 Mutually exclusive: `--cutoff-days` and `--backfill-days` cannot be used together.
 
-### Concurrency tuning
+`tag inspect` and `tag reset-worker` need only `SUPABASE_DB_URL`; `tag run` and `tag escalate`
+also check the model's API key (or, for a `codex:` model, the codex CLI) and the stock list
+before they take any row.
+
+### Download concurrency (`collect`)
 
 `MAX_CONCURRENT_DOWNLOADS` env var (default `4`) controls how many PDFs
 download in parallel. Bump to `8` for faster backfill if FloodWait
@@ -60,9 +93,67 @@ so total in-flight downloads stay bounded.
 
 ### Exit codes
 
+`collect`:
+
 - `0` Complete success
 - `1` Total failure (config / auth / network)
 - `2` Partial failure — some messages added to `failed_attempts` table; will be auto-retried next run
+
+`tag` (every subcommand) and `stocks set-version`:
+
+- `0` Done
+- `4` Preparation problem — a missing setting (`<NAME> is required`), no codex CLI for a
+  `codex:` model, a stock list that cannot be read or does not match its version file, or a bad
+  `--as-of` date. The reason is printed on stderr; `tag` stops before it takes any row, and
+  `stocks set-version` leaves the version file as it was. Fix the cause, then run again —
+  retrying alone does not help.
+- `1` Any other error
+
+Every command: missing or wrong arguments print the usage and exit `2`; `--help` exits `0`.
+
+## Tagging backfill
+
+To work through many `pending` rows, run consecutive `tag run` batches with the wrapper script:
+
+```powershell
+powershell -File scripts\run-batches.ps1 -Iterations N -BatchSize 10
+```
+
+- The scripts run on Windows PowerShell 5.1 (`powershell`); PowerShell 7 (`pwsh`) is not needed.
+- **Batch size 10 is the standard, and tagging concurrency stays at 2 (`MAX_CONCURRENT_LLM=2`).**
+  Do not raise either casually: the model provider's tokens-per-minute limit is the real
+  bottleneck. The operating principles in [CLAUDE.md](CLAUDE.md) explain why.
+- Each iteration is one batch with its own worker id. If a batch fails, the script puts that
+  worker's rows back to `pending` (`tag reset-worker`) and retries it up to 2 more times; when
+  all 3 attempts fail it stops with exit `1` (exit `3` if the reset itself fails).
+- A preparation problem (`tag run` exit `4`, see [Exit codes](#exit-codes)) stops the script at
+  once with exit `4`, without reset or retry. Follow the message, then start it again.
+- Ctrl+C is safe; starting it again continues with the remaining `pending` rows.
+- The script finds the repository's `.venv` Python itself; `-Python <path>` or
+  `$env:RESEARCH_DESK_PY` override it.
+
+## Stock list update
+
+Tagging matches company codes and names against the stock list
+`docs/stock_data/KRX_stocks_data.csv` (`KRX_CSV_PATH`). The version file next to it,
+`KRX_stocks_data.version.json`, records the list's version `KRX@<as-of date of the data>` with a
+hash of its content, and every tagged row stores that version in `taxonomy_version`.
+
+After replacing the CSV, record its version:
+
+```bash
+python -m research_desk stocks set-version --as-of <as-of date of the data, YYYY-MM-DD>
+```
+
+It checks the date and the CSV header, writes the version file and prints the new version. On a
+failure it prints the reason, exits `4` and leaves the version file as it was; writing the same
+date again is allowed. Until you run it, `tag run` and `tag escalate` stop with exit `4` and tell
+you to run it, while Research Desk only logs a warning and keeps working. Commit the CSV together
+with its version file: a test checks that they match, so the commit checks block a CSV change
+without its version.
+
+Rows already sent to review because a stock was missing from the old list are not re-tagged by
+themselves: re-tag them with `tag escalate --since <ISO time>` or the review screen's retag.
 
 ## Research Desk (React workspace)
 
@@ -71,12 +162,13 @@ existing Supabase reports, financial summaries, PDF files and favorites.
 
 ```powershell
 .venv/Scripts/python.exe -m pip install -r requirements-workspace.txt
-pwsh -File scripts/start-workspace.ps1
+powershell -File scripts\start-workspace.ps1
 ```
 
 Node.js 22.12+ (or 20.19+) is needed to build the frontend. The launcher installs
 frontend dependencies on first use, builds the UI and runs the local server.
-After building, `python -m langgraph_tagger.workspace` starts it directly.
+After building, `python -m research_desk web` starts it directly; `--view market`
+and `--view review` open the coverage and review views.
 For frontend development, run `npm --prefix frontend run dev` alongside the
 Python server; Vite proxies `/api` to port 8520.
 
@@ -103,10 +195,15 @@ uncompared. A new comparison narrative runs only through the explicit button
 for the selected two reports; viewing or selecting reports never starts an LLM.
 
 This is a **local, single-user application** bound to `127.0.0.1`; Supabase and
-LLM API credentials remain on the Python server. All former Streamlit dashboard
-and review functionality now lives here. The old `python -m langgraph_tagger.analytics`
-and `python -m langgraph_tagger.review_viewer` commands also launch Research Desk
-(coverage and review entry views, respectively).
+LLM API credentials remain on the Python server.
+
+Each feature prepares itself on first use. If one cannot — for example without the DB settings
+(`SUPABASE_URL`, `SUPABASE_SERVICE_KEY`), with an unreadable stock list, or without the analysis
+model's API key or codex CLI when an analysis or a comparison narrative is about to call the
+model — only that feature's screens answer with the reason
+(`<기능> 기능을 지금 쓸 수 없습니다: <이유>`); the rest keeps working. After you fix the cause,
+the next request tries again: a restored file or a value newly added to `.env` needs no restart,
+but a changed existing `.env` value does.
 
 ## Analysis models
 
@@ -125,7 +222,7 @@ change only (e.g. `LLM_MODEL_PHASE2=gpt-6-luna` for the API). The
 legacy `OPENAI_MODEL_*` names are still read when the `LLM_MODEL_*` ones are unset.
 Claude thinking depth is set by `ANTHROPIC_EFFORT` (default `medium`).
 Measurements behind these choices: [docs/llm-models.md](docs/llm-models.md).
-Restart running workers and the dashboard after changing these environment
+Restart running workers and Research Desk after changing these environment
 variables. Saved analyses keep their original model metadata and are reused;
 changing models does not trigger a bulk reanalysis.
 
@@ -157,18 +254,44 @@ empty, and source evidence remains available for review. Comparisons use previou
 saved analyses; they do not claim complete market consensus. OCR, collection,
 tagging, market data and backtesting are outside this feature.
 
+## Code layout
+
+All Python code is one package, `research_desk/`:
+
+| Part | Role |
+|---|---|
+| `__main__.py`, `cli.py` | Command entry (`python -m research_desk`) and the one command list |
+| `core/` | Shared infrastructure: `.env` settings, Supabase / Postgres connections, LLM providers, PDF files; knows no business concept |
+| `domain/` | Shared rules and reference data: report vocabulary, the in-scope rule, the stock list and its version |
+| `collector/` | Telegram channel → PDF files + `pending` rows in `reports` (`collect`) |
+| `tagger/` | `pending` rows → `auto` / `review_needed` with the LangGraph row graph (`tag`) |
+| `features/` | Research Desk features, one folder each: `companies` (company list, favorites), `reports` (company reports, PDF, analyze), `analysis` (one report's financial analysis), `compare` (two reports side by side), `coverage` (research coverage counts), `review` (manual review queue) |
+| `web/` | Web server assembly: security checks, error answers, screen files, the feature list (`web`) |
+| `tests/` | The architecture check |
+
+A feature exposes only the names its `__init__.py` binds: other parts import
+`research_desk.features.<name>` or those names, never its inner modules. A new feature is a new
+folder under `features/` plus one line in the feature list in `web/app.py` (and one in `cli.py`
+if it adds a command). The architecture check (`research_desk/tests/test_architecture.py`)
+enforces these boundaries, so the tests and the commit checks fail when code crosses them.
+
 ## Development tests
 
 Run tests:
 
 ```bash
 pip install -r requirements-dev.txt
-pytest -v
+python -m pytest
 ```
+
+This collects the tests under `research_desk/` only (each part keeps its tests in its own
+`tests/` folder) and includes the architecture check. The tests mock every DB, AI and Telegram
+call and do not read your `.env`. The commit checks run the same suite.
 
 ## Troubleshooting
 
-- **"Missing required env var: X"** — Add the key to `.env`.
+- **"Missing required env var: X"** (`collect`) or **"X is required"** (`tag`, exit `4`) — Add the key to `.env`.
+- **"종목표 파일 내용이 버전 정보와 다릅니다…"** (`tag run` / `tag escalate`, exit `4`) — The stock list changed without a new version; see [Stock list update](#stock-list-update).
 - **SMS code prompt every run** — The `sessions/samstudy.session` file is missing or got deleted. Telethon re-authenticates each time.
 - **Persistent failures in `failed_attempts`** — Check the `error_message` and `attempt_count` columns. If `attempt_count > 10` for a row, the message is likely permanently broken; manually inspect or DELETE the row to stop retrying.
 
