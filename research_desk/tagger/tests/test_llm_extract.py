@@ -8,13 +8,15 @@ the suspect mark the file name's tag gives (``filename_mismatch`` / ``unknown`` 
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 
 import anthropic
 import httpx
 import pytest
 from openai import APITimeoutError, InternalServerError, RateLimitError
 
-from research_desk.core.llm import StructuredResult
+from research_desk.core.llm import ImageInputUnsupported, StructuredResult
+from research_desk.tagger import prompts
 from research_desk.tagger.llm_schemas import LLMExtraction
 from research_desk.tagger.nodes.llm_extract import LLMTransientError, llm_extract, publisher_checks
 from research_desk.tagger.prompts import SYSTEM_PROMPT
@@ -213,3 +215,194 @@ async def test_no_publisher_checks_without_an_ai_result(mock_llm_client):
                                    client=mock_llm_client)
     assert not PUBLISHER_KEYS & set(refused)
     assert not PUBLISHER_KEYS & set(unreadable)
+
+
+# ── rows read from the page picture (no text on pages 1–3) ───────────────────
+
+PNG = b"\x89PNG\r\n\x1a\n-page-1"
+SENT_AT = datetime(2026, 5, 1, 9, 0, tzinfo=timezone.utc)
+
+
+def _picture_state(model: str = "gpt-5.4-mini", file_name: str = "삼성전자_1Q26.pdf",
+                   caption: str | None = "오늘의 리포트") -> dict:
+    """extract_pdf's output for a PDF with no text on pages 1–3 whose page 1 was drawn."""
+    return {
+        "model": model, "file_name": file_name, "caption": caption, "sent_at": SENT_AT,
+        "pdf_text": "", "pages_used": [1], "pdf_unreadable": True, "page_images": [PNG],
+    }
+
+
+def test_the_page_image_phrase_is_fixed():
+    """It stands where the PDF text goes; changing it changes every picture request."""
+    assert prompts.PAGE_IMAGE_NOTE == (
+        "(글자를 읽을 수 없는 PDF라 페이지를 그림으로 첨부했다. 첨부한 그림을 보고 추출한다.)")
+
+
+def test_user_message_for_a_picture_row():
+    assert prompts.user_message(file_name="a.pdf", caption=None,
+                                sent_at_iso="2026-05-01T09:00:00+00:00", page_image=True) == (
+        "파일명: a.pdf\n"
+        "caption: (없음)\n"
+        "sent_at (UTC): 2026-05-01T09:00:00+00:00\n"
+        "PDF 첫 페이지(들):\n"
+        "---\n"
+        f"{prompts.PAGE_IMAGE_NOTE}\n"
+        "---"
+    )
+
+
+def test_user_message_for_a_text_row_is_unchanged():
+    assert prompts.user_message(file_name="a.pdf", caption="캡션",
+                                sent_at_iso="2026-05-01T09:00:00", pdf_text="본문") == (
+        "파일명: a.pdf\ncaption: 캡션\nsent_at (UTC): 2026-05-01T09:00:00\n"
+        "PDF 첫 페이지(들):\n---\n본문\n---"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_picture_row_asks_the_ai_with_the_page_png(mock_llm_client):
+    extraction = make_llm_extraction()
+    mock_llm_client.set_response(extraction)
+
+    out = await llm_extract(_picture_state(), client=mock_llm_client)
+
+    mock_llm_client.parse.assert_awaited_once()
+    kwargs = mock_llm_client.parse.call_args.kwargs
+    assert list(kwargs["images"]) == [PNG]
+    assert kwargs["model"] == "gpt-5.4-mini"
+    assert kwargs["system"] is SYSTEM_PROMPT            # same system prompt as text rows
+    assert kwargs["schema"] is LLMExtraction
+    assert kwargs["temperature"] == 0
+    assert kwargs["user"] == (
+        "파일명: 삼성전자_1Q26.pdf\n"
+        "caption: 오늘의 리포트\n"
+        "sent_at (UTC): 2026-05-01T09:00:00+00:00\n"
+        "PDF 첫 페이지(들):\n"
+        "---\n"
+        f"{prompts.PAGE_IMAGE_NOTE}\n"
+        "---"
+    )
+    assert out["llm_raw"] == extraction
+    assert out["page_image"] is True
+    assert out["pdf_unreadable"] is False      # read after all → the normal branches
+    assert "page_image_unsupported" not in out
+    assert out["page_images"] == []            # the PNG is not carried further
+    assert PUBLISHER_KEYS <= set(out)
+
+
+@pytest.mark.asyncio
+async def test_luna_picture_rows_omit_temperature(mock_llm_client):
+    mock_llm_client.set_response(make_llm_extraction())
+    await llm_extract(_picture_state(model="gpt-5.6-luna"), client=mock_llm_client)
+    assert mock_llm_client.parse.call_args.kwargs["temperature"] is None
+
+
+@pytest.mark.asyncio
+async def test_text_rows_send_no_pictures(mock_llm_client):
+    mock_llm_client.set_response(make_llm_extraction())
+
+    out = await llm_extract({**_state(), "caption": "캡션"}, client=mock_llm_client)
+
+    kwargs = mock_llm_client.parse.call_args.kwargs
+    assert set(kwargs) == {"model", "system", "user", "schema", "temperature"}
+    assert kwargs["user"] == (
+        "파일명: 삼성전자_1Q26.pdf\ncaption: 캡션\nsent_at (UTC): 2026-05-01T09:00:00\n"
+        "PDF 첫 페이지(들):\n---\n샘플 텍스트\n---"
+    )
+    assert not {"page_image", "page_image_unsupported", "pdf_unreadable", "page_images"} & set(out)
+
+
+@pytest.mark.asyncio
+async def test_the_system_prompt_is_the_same_for_text_and_picture_rows(mock_llm_client):
+    mock_llm_client.set_response(make_llm_extraction())
+    await llm_extract(_state(), client=mock_llm_client)
+    await llm_extract(_picture_state(file_name="다른파일.pdf", caption="다른 캡션"), client=mock_llm_client)
+
+    (text_call, picture_call) = mock_llm_client.parse.call_args_list
+    assert text_call.kwargs["system"] == picture_call.kwargs["system"] == SYSTEM_PROMPT
+    assert "다른파일.pdf" not in SYSTEM_PROMPT
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("images", [[], None])
+async def test_no_picture_means_no_ai_call(mock_llm_client, images):
+    state = _picture_state()
+    if images is None:
+        del state["page_images"]
+    else:
+        state["page_images"] = images
+
+    out = await llm_extract(state, client=mock_llm_client)
+
+    mock_llm_client.parse.assert_not_called()
+    assert out == {"llm_raw": None}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model", ["gpt-4", "gpt-3.5-turbo", "codex:o3-mini"])
+async def test_a_model_that_cannot_take_pictures_leaves_the_row_unreadable(mock_llm_client, model):
+    out = await llm_extract(_picture_state(model=model), client=mock_llm_client)
+
+    mock_llm_client.parse.assert_not_called()
+    # pdf_unreadable stays True (not in the update) → status_unreadable / first_page_unreadable
+    assert out == {"llm_raw": None, "page_image_unsupported": True, "page_images": []}
+
+
+@pytest.mark.asyncio
+async def test_parse_refusing_pictures_is_handled_the_same(mock_llm_client):
+    """If parse still says the model cannot take images, the row is unreadable — not an error
+    that would send it back to pending."""
+    mock_llm_client.set_exception(ImageInputUnsupported("model gpt-5.4-mini cannot take page images"))
+
+    out = await llm_extract(_picture_state(), client=mock_llm_client)
+
+    assert out == {"llm_raw": None, "page_image_unsupported": True, "page_images": []}
+
+
+@pytest.mark.asyncio
+async def test_a_refused_picture_row_is_a_refusal(mock_llm_client):
+    mock_llm_client.set_refusal("cannot read this")
+
+    out = await llm_extract(_picture_state(), client=mock_llm_client)
+
+    assert out["llm_raw"] is None
+    assert out["llm_refusal"] == "cannot read this"
+    assert out["pdf_unreadable"] is False      # the AI was asked: llm_refusal, not unreadable
+    assert out["page_image"] is True
+    assert not PUBLISHER_KEYS & set(out)
+
+
+@pytest.mark.asyncio
+async def test_a_picture_row_without_a_parsed_answer(mock_llm_client):
+    mock_llm_client.parse.return_value = StructuredResult(parsed=None)
+
+    out = await llm_extract(_picture_state(), client=mock_llm_client)
+
+    assert out["llm_raw"] is None
+    assert out["pdf_unreadable"] is False
+    assert out["page_image"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exc_factory", [
+    lambda: RateLimitError("429", response=_httpx_response(429), body=None),
+    lambda: anthropic.OverloadedError("529", response=_httpx_response(529), body=None),
+])
+async def test_picture_row_transient_errors_raise_LLMTransientError(mock_llm_client, exc_factory):
+    mock_llm_client.set_exception(exc_factory())
+    with pytest.raises(LLMTransientError):
+        await llm_extract(_picture_state(), client=mock_llm_client)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("answer,file_name,expected", [
+    ("키움증권", "삼성전자_1Q26.pdf", ("키움증권", "broker", None)),
+    ("키움증권", "삼성전자_20260511_MERITZ_1096333.pdf", ("키움증권", "broker", "filename_mismatch")),
+    ("Eugene", "삼성전자_1Q26.pdf", (None, None, "unknown")),
+])
+async def test_picture_rows_get_the_publisher_checks(mock_llm_client, answer, file_name, expected):
+    _validating_parse(mock_llm_client, _reply_json(publisher_canon=answer))
+
+    out = await llm_extract(_picture_state(file_name=file_name), client=mock_llm_client)
+
+    assert (out["publisher_final"], out["publisher_type_final"], out["publisher_suspect"]) == expected
