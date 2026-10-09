@@ -1,4 +1,4 @@
-"""core.llm: provider routing and the transient-retry helper (SDK clients mocked, no network).
+"""core.llm: provider routing, embeddings and the transient-retry helper (SDK clients mocked, no network).
 
 Ported from langgraph_tagger/tests/test_llm_provider.py (all of it) and the
 generic retry/timeout part of analytics/llm_summary/tests/test_llm.py.
@@ -613,3 +613,115 @@ async def test_call_with_retry_does_not_retry_validation_errors(sleeps):
         await call_with_retry(invalid)
     assert calls == [1]
     assert sleeps == []
+
+
+# ── embeddings ───────────────────────────────────────────────────────────────
+
+def _embedding_response(items, *, prompt_tokens=42):
+    """The shape of openai's CreateEmbeddingResponse; ``items`` are (index, vector) pairs."""
+    return SimpleNamespace(
+        data=[SimpleNamespace(object="embedding", index=index, embedding=vector) for index, vector in items],
+        usage=SimpleNamespace(prompt_tokens=prompt_tokens, total_tokens=prompt_tokens),
+    )
+
+
+def _client_with_embeddings(response) -> tuple[LLMClient, AsyncMock]:
+    client = LLMClient(openai_api_key="sk-test")
+    create = AsyncMock(return_value=response)
+    client._openai = MagicMock()
+    client._openai.embeddings.create = create
+    return client, create
+
+
+async def test_embed_request_shape_and_vectors_in_input_order():
+    # The API may list the vectors out of index order; they come back in input order.
+    response = _embedding_response([(2, [0.0, 0.0, 1.0]), (0, [1.0, 0.0, 0.0]), (1, [0.0, 1.0, 0.0])],
+                                   prompt_tokens=42)
+    client, create = _client_with_embeddings(response)
+
+    result = await client.embed(model="text-embedding-3-large", texts=["삼성전자", "SK하이닉스", "LG화학"],
+                                dimensions=1536)
+
+    assert result == llm.EmbeddingResult(vectors=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                                         input_tokens=42)
+    create.assert_awaited_once_with(model="text-embedding-3-large",
+                                    input=["삼성전자", "SK하이닉스", "LG화학"], dimensions=1536)
+
+
+async def test_embed_sends_dimensions_only_when_given():
+    client, create = _client_with_embeddings(_embedding_response([(0, [0.6, 0.8])], prompt_tokens=2))
+    result = await client.embed(model="text-embedding-3-small", texts=("one text",))
+    assert create.call_args.kwargs == {"model": "text-embedding-3-small", "input": ["one text"]}
+    assert result == llm.EmbeddingResult(vectors=[[0.6, 0.8]], input_tokens=2)
+
+
+@pytest.mark.parametrize("model", ["claude-haiku-5-5", "codex:gpt-6-luna"])
+async def test_embed_rejects_claude_and_codex_models(model):
+    client, create = _client_with_embeddings(_embedding_response([(0, [1.0])]))
+    with pytest.raises(ValueError) as exc:
+        await client.embed(model=model, texts=["a"])
+    assert model in str(exc.value)
+    create.assert_not_awaited()
+
+
+async def test_embed_takes_a_list_of_texts_not_one_string():
+    # One string would otherwise be sent as a list of its characters.
+    client, create = _client_with_embeddings(_embedding_response([(0, [1.0])]))
+    with pytest.raises(TypeError):
+        await client.embed(model="text-embedding-3-large", texts="삼성전자")
+    create.assert_not_awaited()
+
+
+async def test_embed_of_no_texts_makes_no_call():
+    client, create = _client_with_embeddings(_embedding_response([]))
+    result = await client.embed(model="text-embedding-3-large", texts=[], dimensions=1536)
+    assert result == llm.EmbeddingResult(vectors=[], input_tokens=0)
+    create.assert_not_awaited()
+
+
+@pytest.mark.parametrize("indexes", [[0, 2], [0, 1, 1], [0, 1, 2, 3]])
+async def test_embed_fails_when_the_vectors_do_not_match_the_texts(indexes):
+    client, _ = _client_with_embeddings(_embedding_response([(i, [float(i)]) for i in indexes]))
+    with pytest.raises(RuntimeError, match="3 texts"):
+        await client.embed(model="text-embedding-3-large", texts=["a", "b", "c"])
+
+
+async def test_embed_needs_the_openai_key(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="^OPENAI_API_KEY is required for model text-embedding-3-large$"):
+        await LLMClient().embed(model="text-embedding-3-large", texts=["a"])
+
+
+async def test_embed_goes_through_the_shared_openai_client(monkeypatch, no_tracing):
+    made = []
+
+    class FakeAsyncOpenAI:
+        def __init__(self, **kwargs):
+            made.append(kwargs)
+            self.embeddings = SimpleNamespace(
+                create=AsyncMock(return_value=_embedding_response([(0, [1.0])])))
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(llm.openai, "AsyncOpenAI", FakeAsyncOpenAI)
+    client = LLMClient(openai_api_key="sk-test", timeout=30.0, max_retries=1)
+    await client.embed(model="text-embedding-3-large", texts=["a"])
+    await client.embed(model="text-embedding-3-large", texts=["b"])
+    await client.close()
+    # One SDK client with the caller's key, retries and timeout, made on first use and reused.
+    assert made == [{"api_key": "sk-test", "max_retries": 1, "timeout": 30.0}]
+
+
+async def test_embed_errors_are_the_shared_transient_ones(sleeps):
+    # A 429 from the embeddings endpoint is one of TRANSIENT_ERRORS, so call_with_retry retries it.
+    client, create = _client_with_embeddings(_embedding_response([(0, [1.0])]))
+    rate_limited = _status(openai.RateLimitError, 429)
+    assert isinstance(rate_limited, llm.TRANSIENT_ERRORS)
+    create.side_effect = [rate_limited, _embedding_response([(0, [0.25])], prompt_tokens=3)]
+
+    result = await call_with_retry(lambda: client.embed(model="text-embedding-3-large", texts=["a"]))
+
+    assert result == llm.EmbeddingResult(vectors=[[0.25]], input_tokens=3)
+    assert create.await_count == 2
+    assert sleeps == [5.0]

@@ -6,7 +6,8 @@
 |---|---|---|
 | Pydantic serializer warning (`LLMExtraction` 직렬화 시) | 분류기의 LLM 응답 모델(`LLMExtraction`)을 직렬화할 때 Pydantic이 내는 경고 | 기능 영향 없음(분류 결과와 저장 값이 같다). 무시한다 |
 | 반복 실행 중 `exit=-1073741569` (Windows native crash) | 윈도우에서 파이썬 프로세스가 비정상 종료된 경우 | `run-batches.ps1`이 그 작업자의 행을 되돌리고 재시도해서 자동 복구한다. 3회 반복 테스트 중 1회 발생했고, 5건이 자동으로 `pending`으로 돌아간 뒤 재시도에서 성공해 데이터 손실이 없었다 |
-| `LangChainPendingDeprecationWarning: The default value of allowed_objects will change…` | LangGraph가 import될 때 내는 예고 경고. `tag run`·`tag escalate`가 그래프를 불러올 때와, 테스트 실행 끝의 "1 warning"이 이것이다 | 무시한다. `collect`·`web`·`stocks`·`tag inspect`·`tag reset-worker`·`--help`에서 이 경고가 보이면 그쪽은 무해한 것이 아니다 — 누가 명령 입구에서 그래프를 일찍 import하게 만든 것이니 그 import를 함수 안으로 옮긴다 |
+| `LangChainPendingDeprecationWarning: The default value of allowed_objects will change…` | LangGraph가 import될 때 내는 예고 경고. `tag run`·`tag escalate`가 그래프를 불러올 때와, 테스트 실행 끝의 "1 warning"이 이것이다 | 무시한다. `collect`·`web`·`stocks`·`prices`·`peers`·`tag inspect`·`tag reset-worker`·`--help`에서 이 경고가 보이면 그쪽은 무해한 것이 아니다 — 누가 명령 입구에서 그래프를 일찍 import하게 만든 것이니 그 import를 함수 안으로 옮긴다 |
+| `KIS … retry 1/3 in 1s` (`prices update` 중 경고) | KIS가 한도 초과(429·`EGW00201`)·5xx를 돌려주거나 시간 초과가 나서 1·2·4초 간격으로 다시 묻는 중 | 가끔이면 무시한다. 같은 실행에서 계속 나오면 같은 앱키를 쓰는 masterdb 수집이 돌고 있는지, `PRICES_MAX_CALLS_PER_SEC`가 너무 높지 않은지 본다 |
 
 ## 함정
 
@@ -29,15 +30,38 @@
 - **숫자 설정 값이 숫자가 아니면 "사용 불가"가 아니라 일반 오류다.** `PHASE2_PER_REPORT_TIMEOUT_S`·`PHASE2_MAX_INPUT_TOKENS`에 숫자가 아닌 값이 있으면 분석·비교 버튼이 일반 503("데이터를 불러오거나 분석하지 못했습니다…")으로 끝나고, `MAX_CONCURRENT_LLM` 같은 분류 숫자 설정이면 `tag run`이 종료 코드 1로 끝난다(준비 문제 4가 아니다). 이유 문구가 없으므로 이런 실패를 보면 `.env`의 숫자 값부터 본다.
 - **분석 입력의 쪽 표시 `--- Page N ---`를 바꾸면 숫자 근거 확인이 깨진다.** 근거 확인이 이 표시로 글자를 쪽별로 나눠서, 지표가 인용한 쪽에 그 숫자가 있는지 본다.
 - **옛 경로의 git 이력.** `research_desk/`의 파일들은 옛 `langgraph_tagger/`·루트 모듈에서 옮겨 오면서 새 경로에서 이력이 새로 시작했다. 옛 이력은 옛 경로로 본다: `git log -- langgraph_tagger/<파일>` 또는 `git log -- collector.py`.
+- **postgrest-py의 `range()`는 offset·limit을 바꾸지 않고 덧붙인다.** 같은 쿼리 객체에 쪽마다 `.range()`를 다시 부르면 두 번째 쪽부터 요청 주소에 `offset`·`limit`이 두 번 이상 실린다. 새 쪽 나누기 읽기는 쪽마다 쿼리를 새로 만든다(주가 저장 코드 `features/prices/store.py`의 `read_all_returns`, 유사 기업 저장 코드 `features/peers/store.py`의 `_paged`처럼). 주가 기능의 가짜 DB는 같은 쿼리의 두 번째 `range()`를 거절해 이것을 잡는다. 유사 기업 기능의 가짜 DB는 postgrest-py처럼 offset·limit을 덧붙이고 첫 쌍으로 답하며, 같은 쿼리를 10번 넘게 보내면 실패한다.
+- **pgvector 값은 REST로 글자로 돌아온다.** `embedding` 열을 select하면 숫자 목록이 아니라 `"[0.1,0.2,…]"` 글자가 온다. 숫자로 쓰려면 `features/peers/store.py`의 `parse_vector`로 푼다. 쓸 때는 숫자 목록을 그대로 보낸다. 1536개 숫자의 글자라 행이 커서, 벡터 읽기를 1000행씩 하면 응답 하나가 수십 MB가 된다 — 200행씩 읽는다.
+- **임베딩 차원은 마이그레이션이 고정한다.** 임베딩 열이 `vector(1536)`이고 `peer_builds.embed_dims`는 1536만 받는다. `PEERS_EMBED_MODEL`을 `dimensions=1536`을 받지 않는 모델로 바꾸면 빌드의 임베딩 단계가 오류로 끝난다(API가 `dimensions`를 거절하거나, 1536개가 아닌 벡터를 빌드 코드가 거절한다). 빌드는 `failed`로 닫힌다. OpenAI의 `text-embedding-3-small`·`-large`만 쓰고, 차원을 바꾸려면 새 마이그레이션과 전체 재임베딩이 먼저다.
+- **DB 함수 호출(RPC)에도 1000행 한도가 걸린다.** Supabase REST의 한 응답 1000행 제한은 `.rpc(…)`에도 똑같이 걸린다. `match_company_profiles`·`match_company_segments`는 최대 200행이라 괜찮지만, 함수의 상한을 1000보다 크게 고치면 오류 없이 1000행에서 잘린다.
+- **pgvector가 `public` 스키마에 이미 있으면 마이그레이션 008이 실패한다.** 008은 `create extension if not exists vector with schema extensions`로 시작하고 표·함수가 `extensions.vector` 타입을 쓴다. 확장이 이미 `public`에 있으면 첫 문장은 아무것도 하지 않고, 표 만들기가 `extensions.vector` 타입이 없다는 오류로 실패한다(뒤는 한 트랜잭션이라 표는 하나도 안 생긴다). 적용 전에 `select extnamespace::regnamespace from pg_extension where extname = 'vector';`로 확인한다.
+- **KIS 접근 토큰은 1분에 한 번쯤만 발급되고, 실패는 그 실행 동안 기억된다.** `prices update`가 종목을 하나도 묻지 않고 곧바로 `KIS 접근 토큰을 받지 못했습니다(…)`로 1이면, 같은 앱키로 1분 안에 토큰을 받은 곳(같은 키를 쓰는 masterdb 수집, 방금 돌린 다른 실행)이 있거나 키·시크릿이 틀린 것이다. 한 클라이언트는 토큰 요청이 한 번 실패하면 KIS에 다시 묻지 않으므로(재시도는 그 한 요청 안의 1·2·4초뿐) 같은 실행 안에서는 풀리지 않는다. 1분 이상 기다렸다 다시 돌리고, 계속 실패하면 KIS 개발자 센터에서 키를 확인한다. 실행마다 클라이언트를 하나만 만든다 — 종목마다 새로 만들면 토큰을 매번 요청해 곧바로 막힌다.
+- **`peers.web_router()`를 한 번 부르면 `peers.router`는 라우터가 아니다.** 파이썬은 하위 모듈을 import할 때 그 이름을 패키지 속성으로 붙인다. `web_router()`가 `.router`를 import한 뒤에는 `research_desk.features.peers.router`가 `router.py` 모듈이고, 그 전에는 속성이 아예 없다. 그래서 웹 조립부의 `feature_router`는 `web_router`가 있으면 그것을 먼저 쓴다. 명령이 있는 기능에 `include_router(feature.router)`를 쓰면 어떤 순서로 불렸는지에 따라 다른 오류로 앱 생성이 깨진다.
+- **프로필을 교체하면 그 회사의 모든 임베딩이 지워진다.** 회사를 다시 추출하면 옛 프로필 행을 먼저 지우고 새로 넣는다. 지울 때 사업부문과 모든 임베딩 모델의 임베딩이 연쇄로 지워지고, 새 임베딩은 그 빌드의 임베딩 단계(모든 회사의 추출이 끝난 뒤)에 만들어진다. 그래서 같은 (회계연도, 프로필 버전)으로 빌드가 도는 동안 다시 추출된 회사는 지금 공개된 빌드의 화면에서 404(`이 종목은 유사 기업 자료가 없습니다.`)가 나고 다른 회사의 목록에서도 빠진다. 다른 임베딩 모델의 공개 빌드가 쓰던 그 회사 임베딩은 그 모델로 다시 빌드할 때까지 돌아오지 않는다. `ok` 프로필은 상태 없이 넣은 뒤 부문을 넣고 마지막에 `ok`로 바꾸므로, 도중에 끊긴 행은 상태가 비어 재사용도 화면 노출도 되지 않고 다음 빌드가 다시 추출한다. 추출이 실패하면 교체하지 않으므로 이전 `ok` 프로필은 남는다.
+- **공개 빌드의 용어 열 다시 쓰기는 UPDATE로만 한다.** `terms`만 바꾸는 쓰기를 upsert로 바꾸면, 그사이 지워진 회사(다시 추출 중이거나 보존 정리로 지워진 행)가 키와 `terms`만 있는 상태 없는 행으로 다시 생긴다. UPDATE는 없는 행을 만들지 않는다.
+- **웹은 공개 빌드의 표와 동의어표를 빌드 번호마다 한 번만 읽는다.** 백분위표·용어표(수 MB)와 테마 검색이 쓰는 `synonyms.yaml`은 공개 빌드 번호가 바뀔 때만 다시 읽는다. 그래서 공개된 빌드 행의 표를 SQL로 고치거나 `synonyms.yaml`만 고치면 화면이 바뀌지 않는다. 동의어표를 고친 뒤에는 새 공개 빌드를 만든다 — 그래야 프로필의 용어 열·용어표와 질의 정규화가 같은 표를 쓴다. 다른 표로 만든 빌드를 쓰는 동안에는 웹 로그에 동의어표 지문이 다르다는 경고가 남는다.
+- **화면이 유사 기업 주소의 404·422를 문장으로 구분한다.** 유사 기업 탭(`frontend/src/peers/Peers.jsx`)은 `detail`이 `이 종목은 유사 기업 자료가 없습니다.`이면 빈 안내 화면을, `그 사업부문이 없습니다.`이면 "기본 부문으로 보기" 버튼을 보여 준다. 서버 쪽 문장(`features/peers/service.py`)만 고치면 오류 없이 일반 오류 화면으로 바뀐다. 두 곳을 같이 고친다.
+- **분류 진행 확인은 지금 가져간 행만 본다.** `peers build`는 최근 30분 안에 잠긴 `processing` 행이 있으면 시작하지 않는데, 반복 분류 스크립트의 배치 사이(다음 `tag run` 프로세스가 뜨는 몇 초), `tag escalate`, `tag run --row-ids`, `--dry-run`은 행을 `processing`으로 바꾸지 않아 이 확인을 통과한다. 백필 창이 열려 있으면 확인만 믿지 말고 빌드를 시작하지 않는다. 분류기의 가져가기 방식(상태 이름, `tagging_locked_at` 찍는 방식)을 바꾸면 리포트 기능의 `tagging_in_progress`도 함께 고친다.
+- **`peers build`가 `ModuleNotFoundError: No module named 'fastapi'`로 1이면** 웹 패키지가 없는 것이다. 분류 진행 확인이 리포트 기능 창구를 거치고, 그 창구가 FastAPI를 불러온다. `requirements-workspace.txt`를 설치한다. `prices update`·`peers inspect`·`collect`·`tag`는 웹 패키지 없이 돈다.
 
 ## 반복 작업 점검표
 
 ### 새 기능 붙이기
 1. `research_desk/features/<기능>/` 폴더와 `__init__.py`(다른 칸이 쓸 이름만 명시적으로 묶음), 필요한 칸(`router.py`·`service.py`·`store.py`·`logic.py`·`settings.py`·`jobs.py`), `tests/__init__.py`.
 2. 준비 실패를 `NotReady("<고정 한국어 기능 이름>", "<고정 이유>")`로 낸다. 실패를 기억하지 않는다.
-3. 웹 주소가 있으면 `research_desk/web/app.py`의 `FEATURES`에 한 줄. 명령이 있으면 `jobs.py`의 `register(subparsers)` + `research_desk/cli.py`의 `build_parser`에 한 줄(종료 코드: 준비 문제 4).
-4. 새 표가 있으면 마이그레이션 파일 + 구조 검사 규칙의 표 주인 목록.
-5. 확인: `PYTHONIOENCODING=utf-8 .venv\Scripts\python.exe -m pytest -q -p no:cacheprovider`가 통과하고, 구조 검사에 위반이 없고, 그 기능만 준비에 실패시켰을 때 다른 주소와 `/api/health`가 200인지 테스트로 본다.
+3. 웹 주소가 있으면 `research_desk/web/app.py`의 `FEATURES`에 한 줄. 명령이 있으면 `jobs.py`의 `register(subparsers)`를 창구에서 `register_jobs`로 묶고, `research_desk/cli.py`에 창구 import 한 줄과 `build_parser` 등록 한 줄(종료 코드: 준비 문제 4). 명령이 있는 기능은 창구 최상위에 FastAPI를 부르지 않는 이름만 두고, 웹 주소도 있으면 라우터 대신 `web_router()`를 둔다.
+4. 새 표가 있으면 마이그레이션 파일 + 구조 검사 규칙의 표 주인 목록. 새 외부 라이브러리는 `core`에 두고 외부 도구 목록에 더한다.
+5. 확인: `PYTHONIOENCODING=utf-8 .venv\Scripts\python.exe -m pytest -q -p no:cacheprovider`가 통과하고, 구조 검사에 위반이 없고, 그 기능만 준비에 실패시켰을 때 다른 주소와 `/api/health`가 200인지 테스트로 본다. 명령을 붙였으면 `research_desk/tests/test_cli.py`의 "명령 없는 실행은 무거운 패키지를 불러오지 않는다" 확인이 통과하는지 보고, 그 명령이 새로 끌어오는 무거운 패키지가 있으면 그 목록(`NOT_LOADED_WITHOUT_A_COMMAND`)에 더한다.
+
+### 유사 기업 동의어표 고치기
+1. `research_desk/features/peers/synonyms.yaml`에 `표준 표기: [다른 표기, …]`를 더한다. 한 표기는 표준 하나에만 속해야 하고, 다른 항목의 표준 표기를 다른 표기로 적으면 안 된다(어기면 `peers build`가 준비 문제 4로 멈춘다).
+2. 낱말 안의 일부는 바뀌지 않는다(`시디램프`는 DRAM이 아니다). 여러 낱말로 된 표기는 용어 전체가 그 표기일 때만 바뀐다.
+3. 전체 테스트 → `peers build --pilot`으로 이웃 목록을 확인 → 공개 빌드(`peers build`)를 다시 만든다. AI 추출은 다시 하지 않고(재사용), 공개 빌드가 용어 열·용어표를 새로 쓴다. 새 빌드가 공개되기 전에는 웹의 공통 키워드·테마 검색이 바뀌지 않는다.
+
+### 유사 기업 임베딩 모델 바꾸기
+1. `.env`의 `PEERS_EMBED_MODEL`만 바꾼다(1536차원을 낼 수 있는 OpenAI 모델만).
+2. `peers build`(또는 `--pilot`)를 돌리면 그 모델의 임베딩이 없는 프로필·부문만 새로 임베딩한다. AI 추출은 다시 하지 않는다. 다른 모델의 임베딩은 남는다.
+3. 확인: 요약 JSON의 `"embed_model"`과 `"embedded"` 수, `peers inspect`의 최근 빌드. 웹은 다음 요청부터 새 공개 빌드에 기록된 모델로 질의를 임베딩한다.
 
 ### 종목표 바꾸기
 1. `docs/stock_data/KRX_stocks_data.csv`를 새 파일로 바꾼다(머리줄은 `종목코드, 종목명, 시장, 산업명(대), 산업명(중), 주요제품`).

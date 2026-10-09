@@ -1,9 +1,10 @@
-"""AI calls: provider routing for structured-output LLM calls, plus a retry helper.
+"""AI calls: provider routing for structured-output LLM calls, embeddings, plus a retry helper.
 
 The model name picks the provider: ``claude-*`` → Anthropic API,
 ``codex:<model>`` → the local Codex CLI (``codex exec``, billed to the ChatGPT
 plan it is logged in with), anything else → OpenAI API. Switching (or rolling
-back) is a .env change to ``LLM_MODEL_*`` only.
+back) is a .env change to ``LLM_MODEL_*`` only. Embeddings (``embed``) exist on
+the OpenAI route only.
 """
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ import sys
 import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Awaitable, Callable, Generic, Optional, TypeVar
+from typing import Awaitable, Callable, Generic, Optional, Sequence, TypeVar
 
 import anthropic
 import openai
@@ -113,6 +114,13 @@ class StructuredResult(Generic[T]):
     refusal: Optional[str] = None
     input_tokens: int = 0
     output_tokens: int = 0
+
+
+@dataclass(frozen=True)
+class EmbeddingResult:
+    """One vector per text sent, in the order sent, and the tokens the call used."""
+    vectors: list[list[float]]
+    input_tokens: int = 0
 
 
 class LLMClient:
@@ -321,6 +329,42 @@ class LLMClient:
             parsed=schema.model_validate_json(text),
             input_tokens=usage.get("input_tokens", 0),
             output_tokens=usage.get("output_tokens", 0),
+        )
+
+    async def embed(
+        self,
+        *,
+        model: str,
+        texts: Sequence[str],
+        dimensions: Optional[int] = None,
+    ) -> EmbeddingResult:
+        """One embeddings call; the vectors come back in the order of ``texts``.
+
+        OpenAI models only: ``claude-*`` and ``codex:`` models raise ValueError.
+        ``dimensions`` is sent only when given (text-embedding-3 models shorten
+        their vectors to it). The vectors are the API's own — normalizing them
+        is the caller's job, and so is keeping a batch within the API's
+        per-request limits. Errors are the OpenAI SDK's, so ``TRANSIENT_ERRORS``
+        and ``call_with_retry`` apply as they do to ``parse``.
+        """
+        if is_anthropic(model) or is_codex(model):
+            raise ValueError(f"embed() needs an OpenAI embedding model, got {model}")
+        if isinstance(texts, str):
+            raise TypeError("embed() takes a list of texts, not one string")
+        if not texts:
+            return EmbeddingResult(vectors=[])
+        response = await self._openai_client(model).embeddings.create(
+            model=model,
+            input=list(texts),
+            **({} if dimensions is None else {"dimensions": dimensions}),
+        )
+        # Order by the index the API gives each vector, never by list position.
+        data = sorted(response.data, key=lambda item: item.index)
+        if [item.index for item in data] != list(range(len(texts))):
+            raise RuntimeError(f"embedding response does not match the {len(texts)} texts sent")
+        return EmbeddingResult(
+            vectors=[list(item.embedding) for item in data],
+            input_tokens=getattr(response.usage, "prompt_tokens", 0) or 0,
         )
 
     async def close(self) -> None:

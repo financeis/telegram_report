@@ -16,7 +16,13 @@ happens in the features. The common devices are the old app's (langgraph_tagger/
 - Any other unexpected error → logged with its traceback, 503 with a fixed sentence.
 
 ``GET /api/health`` → ``{"status": "ok"}``, whatever feature is broken. ``FEATURES`` is the one
-place features are wired: each one's ``router``, in this order.
+place features are wired, in this order, each by ``feature_router(feature)`` (spec §13): the
+window's ``web_router()`` when it has one, else its ``router``. A window that also binds a command
+(``register_jobs``, imported by ``cli.py`` for every command) cannot bind its router, since that
+loads FastAPI; it has ``web_router()``, which imports its router when called — so FastAPI and that
+feature's web side load when the app is made, never when the window is imported. (Once called,
+such a package also has an attribute ``router``: its router submodule, not a router. That is why
+``web_router`` is looked at first.)
 
 Screen files come from ``dist`` (default ``DEFAULT_DIST`` = ``<repository>/frontend/dist``). When
 that folder exists as the app is made, ``/assets`` serves ``dist/assets``. ``GET /`` serves
@@ -31,21 +37,22 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from types import ModuleType
 from typing import Optional, Union
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from research_desk.core.settings import NotReady
-from research_desk.features import companies, compare, coverage, reports, review
+from research_desk.features import companies, compare, coverage, freshness, peers, reports, review
 
 logger = logging.getLogger(__name__)
 
-# The feature registration list (spec §2): a feature with web addresses is one more name here.
-FEATURES = [companies, reports, compare, coverage, review]
+# The feature registration list (spec §2, §13): a feature with web addresses is one more name here.
+FEATURES = [companies, reports, compare, coverage, review, peers, freshness]
 
 TITLE = 'Research Desk'
 ALLOWED_HOSTS = ['127.0.0.1', 'localhost', 'testserver']
@@ -88,9 +95,19 @@ def health():
     return {'status': 'ok'}
 
 
+def feature_router(feature: ModuleType) -> APIRouter:
+    """The router of a feature window: ``feature.web_router()`` when the window has
+    ``web_router``, else ``feature.router``."""
+    web_router = getattr(feature, 'web_router', None)
+    if web_router is not None:
+        return web_router()
+    return feature.router
+
+
 def create_app(dist: Optional[PathLike] = None) -> FastAPI:
     """The web app: common devices, error answers, ``/api/health``, the features in ``FEATURES``
-    order, then the screen files from ``dist`` (default ``DEFAULT_DIST``)."""
+    order (each by ``feature_router``), then the screen files from ``dist`` (default
+    ``DEFAULT_DIST``)."""
     dist = Path(dist) if dist is not None else DEFAULT_DIST
     app = FastAPI(title=TITLE, docs_url=None, redoc_url=None)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
@@ -99,7 +116,7 @@ def create_app(dist: Optional[PathLike] = None) -> FastAPI:
     app.exception_handler(Exception)(unexpected_error)
     app.get('/api/health')(health)
     for feature in FEATURES:
-        app.include_router(feature.router)
+        app.include_router(feature_router(feature))
     _add_screen_files(app, dist)
     return app
 

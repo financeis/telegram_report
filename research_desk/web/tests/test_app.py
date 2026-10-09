@@ -11,20 +11,23 @@ Ported from langgraph_tagger/workspace/tests/test_migration.py:
   days are 422, the review action without a reason and an unknown action are 422 (all before
   anything is read), then verify and its undo go through, on the old MemoryDB
 
-New: the route table is exactly spec §6's (with /assets, / and /openapi.json) and in the feature
-order; the screen files and their default folder; /openapi.json on, the docs pages off; the host
-and origin checks and their nesting; the 503 answers (NotReady: the feature's text and one
-warning line; anything else: the fixed sentence and its traceback in the log); making the app
-reads no setting and prepares no feature.
+New: the route table is exactly spec §6's (with /assets, / and /openapi.json, and the peers and
+freshness addresses) and in the feature order; ``feature_router``: a window's ``web_router()``
+when it has one, else its ``router`` (spec §13), which is how ``create_app`` mounts every feature;
+the screen files and their default folder; /openapi.json on, the docs pages off; the host and
+origin checks and their nesting; the 503 answers (NotReady: the feature's text and one warning
+line; anything else: the fixed sentence and its traceback in the log); the assembled app reaches
+peers and freshness; making the app reads no setting and prepares no feature.
 """
 from __future__ import annotations
 
 import logging
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 from starlette.staticfiles import StaticFiles
 
@@ -32,9 +35,12 @@ import research_desk
 from research_desk.core import db as core_db
 from research_desk.core import settings
 from research_desk.core.settings import NotReady
-from research_desk.features import companies, compare, coverage, reports, review
+from research_desk.features import companies, compare, coverage, freshness, peers, reports, review
 from research_desk.features.companies import service as companies_service
 from research_desk.features.coverage import service as coverage_service
+from research_desk.features.freshness import service as freshness_service
+from research_desk.features.peers import service as peers_service
+from research_desk.features.prices import service as prices_service
 from research_desk.features.reports import service as reports_service
 from research_desk.features.review import service as review_service
 from research_desk.features.review.tests.fakes import KEY, URL, MemoryDB
@@ -57,6 +63,8 @@ from .fakes import (
     UNEXPECTED,
     FakeCompanies,
     FakeCoverage,
+    FakeFreshness,
+    FakePeers,
     FakeReports,
     FakeReview,
     is_mount,
@@ -93,7 +101,7 @@ def test_the_route_table_is_exactly_spec_section_6(app, dist):
 
 
 def test_the_features_are_registered_in_the_list_order(app):
-    assert FEATURES == [companies, reports, compare, coverage, review]
+    assert FEATURES == [companies, reports, compare, coverage, review, peers, freshness]
     assert [route.path for route in served_routes(app)] == [
         '/openapi.json',
         '/api/health',
@@ -103,9 +111,77 @@ def test_the_features_are_registered_in_the_list_order(app):
         '/api/market', '/api/stocks/{code}/activity',                                           # coverage
         '/api/review', '/api/review/{rid}/pdf', '/api/review/{rid}/preview',                    # review
         '/api/review/{rid}/pages/{page}', '/api/review/{rid}/action', '/api/review/undo/{token}',
+        '/api/stocks/{code}/peers', '/api/peers/search',                                        # peers
+        '/api/freshness',                                                                       # freshness
         '/assets',
         '/',
     ]
+
+
+# ── how a feature is mounted (spec §13) ──────────────────────────────────────
+
+def test_feature_router_calls_the_windows_web_router_when_it_has_one():
+    router = APIRouter()
+    calls = []
+
+    def web_router():
+        calls.append('web_router')
+        return router
+
+    window = SimpleNamespace(web_router=web_router)
+    assert calls == []
+    assert app_module.feature_router(window) is router
+    assert calls == ['web_router']   # asked when the app is made, not when the window is imported
+
+
+def test_feature_router_takes_the_router_of_a_window_without_web_router():
+    router = APIRouter()
+    assert app_module.feature_router(SimpleNamespace(router=router)) is router
+
+
+def test_feature_router_prefers_web_router_to_router():
+    from_web_router, plain = APIRouter(), APIRouter()
+    window = SimpleNamespace(web_router=lambda: from_web_router, router=plain)
+    assert app_module.feature_router(window) is from_web_router
+
+
+def test_feature_router_of_the_real_windows():
+    # peers binds a command, so its window hands its router out through web_router(). Once that
+    # has run, the package also has an attribute `router`: the submodule, not a router - which is
+    # why web_router is looked at first.
+    router = app_module.feature_router(peers)
+    assert isinstance(router, APIRouter)
+    assert router is peers.web_router()
+    for window in (companies, reports, compare, coverage, review, freshness):
+        assert app_module.feature_router(window) is window.router, window.__name__
+
+
+def test_create_app_mounts_every_feature_through_feature_router(monkeypatch, dist):
+    with_web_router, with_router = APIRouter(), APIRouter()
+
+    @with_web_router.get('/api/probe/web-router')
+    def probe_web_router():
+        return {'mounted': 'web_router'}
+
+    @with_router.get('/api/probe/router')
+    def probe_router():
+        return {'mounted': 'router'}
+
+    calls = []
+
+    def web_router():
+        calls.append('web_router')
+        return with_web_router
+
+    monkeypatch.setattr(app_module, 'FEATURES', [SimpleNamespace(web_router=web_router),
+                                                 SimpleNamespace(router=with_router)])
+    app = create_app(dist=dist)
+    assert calls == ['web_router']
+    assert [route.path for route in served_routes(app)] == [
+        '/openapi.json', '/api/health', '/api/probe/web-router', '/api/probe/router', '/assets', '/']
+    with TestClient(app) as client:
+        assert client.get('/api/probe/web-router').json() == {'mounted': 'web_router'}
+        assert client.get('/api/probe/router').json() == {'mounted': 'router'}
 
 
 def test_openapi_json_stays_on_and_the_docs_pages_are_off(app):
@@ -127,7 +203,8 @@ def test_openapi_json_stays_on_and_the_docs_pages_are_off(app):
                  for method in operations}
     assert described == SPEC_ROUTES - {('GET', '/assets/*'), ('GET', '/openapi.json')}
     assert set(spec['components']['schemas']) == {
-        'FavoriteBody', 'ComparisonBody', 'ReviewAction', 'HTTPValidationError', 'ValidationError'}
+        'FavoriteBody', 'ComparisonBody', 'ReviewAction', 'PeerSearchBody', 'HTTPValidationError',
+        'ValidationError'}
 
 
 # ── the screen files ─────────────────────────────────────────────────────────
@@ -359,6 +436,27 @@ def test_routes_and_explicit_analysis(app, tmp_path, monkeypatch):
         assert client.post('/api/review/undo/oos-fund').json() == {'report_id': 1, 'token': 'oos-fund'}
 
 
+def test_the_assembled_app_reaches_peers_and_freshness(app):
+    app.dependency_overrides[peers_service.get_service] = FakePeers
+    app.dependency_overrides[freshness_service.get_service] = FakeFreshness
+    with TestClient(app) as client:
+        # peers, mounted through its window's web_router()
+        assert client.get('/api/stocks/080220/peers?window=3m&segment=1').json() == {
+            'code': '080220', 'window': '3m', 'segment': 1}
+        assert client.get('/api/stocks/080220/peers').json() == {'code': '080220', 'window': '1m',
+                                                                 'segment': None}
+        assert client.get('/api/stocks/80220/peers').status_code == 422
+        assert client.post('/api/peers/search', json={'q': ' 레거시 DRAM ', 'window': '1w', 'limit': 5}).json() == {
+            'query': '레거시 DRAM', 'window': '1w', 'limit': 5}
+        assert client.post('/api/peers/search', json={'q': 'x'}).status_code == 422
+        # the theme search is a write method: another origin is refused before anything runs
+        refused = client.post('/api/peers/search', json={'q': '레거시 DRAM'},
+                              headers={'origin': 'https://example.com'})
+        assert (refused.status_code, refused.json()) == (403, FORBIDDEN)
+        # freshness
+        assert client.get('/api/freshness').json() == FakeFreshness.ANSWER
+
+
 def test_new_routes_validate_before_mutating(app, monkeypatch):
     memory = MemoryDB()
     made = []
@@ -390,7 +488,8 @@ def test_making_the_app_reads_no_setting_and_prepares_no_feature(dist, monkeypat
     monkeypatch.setattr(settings, 'load_env', no_reading)
     first, second = create_app(dist=dist), create_app(dist=dist)
     assert isinstance(first, FastAPI) and first is not second
-    for module in (companies_service, reports_service, coverage_service, review_service):
+    for module in (companies_service, reports_service, coverage_service, review_service, prices_service,
+                   peers_service, freshness_service):
         assert module._service is None, module.__name__
     # and the module makes no app when it is imported (the web command makes one)
     assert not [value for value in vars(app_module).values() if isinstance(value, FastAPI)]

@@ -25,8 +25,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -64,6 +66,7 @@ STOCKS_NOT_READY = {'detail': f'리포트 기능을 지금 쓸 수 없습니다:
 NOT_IN_STORAGE = 'PDF를 찾을 수 없습니다.'
 FILE_MISSING = '로컬 PDF 파일이 없습니다. 수집 상태를 확인해 주세요.'
 LOGGER = 'research_desk.features.reports.service'
+KST = ZoneInfo('Asia/Seoul')
 
 # The first header cell has a line break inside quotes, like the real file.
 HEADER_LINE = '"종목\n코드",종목명,시장,산업명(대),산업명(중),주요제품\n'
@@ -83,7 +86,8 @@ def tagged(rid, *, published='2026-05-11', codes=('016360',), report_type='단�
             'company_names': ['삼성증권'], 'sectors_major': ['금융'], 'sectors_minor': ['증권'],
             'products': ['증권'], 'tagging_status': status, 'out_of_scope_reason': reason,
             'file_path': f'2026/{rid}.pdf', 'file_name': f'{rid}_report.pdf', 'title': f'report {rid}',
-            'caption': 'internal caption', 'file_hash_sha256': 'ab' * 32, **extra}
+            'publisher_type': 'broker', 'caption': 'internal caption', 'file_hash_sha256': 'ab' * 32,
+            **extra}
 
 
 def report(rid, published, publisher='KB', code='016360', summary=None):
@@ -219,7 +223,8 @@ def window(monkeypatch):
 
 def test_window_exposes_the_public_names():
     assert isinstance(reports.router, APIRouter)
-    for name in ('report_row', 'get_report', 'public_report', 'period_rows', 'stock_rows'):
+    for name in ('report_row', 'get_report', 'public_report', 'period_rows', 'stock_rows',
+                 'rows_for_stocks', 'latest_report_sent_at', 'tagging_in_progress'):
         assert callable(getattr(reports, name)), name
 
 
@@ -263,6 +268,18 @@ def test_public_report_has_exactly_the_contract_keys_in_order():
 
 def test_public_report_shows_missing_columns_as_null():
     assert public_report({'id': 5}, None) == dict.fromkeys(PUBLIC_KEYS[:-1]) | {'id': 5, 'pdf_url': '/api/reports/5/pdf'}
+
+
+def test_the_public_shape_stays_13_keys_without_publisher_type(client, db, stock_csv, summaries, analyze):
+    # the rows read now carry publisher_type (16 columns); the browser shape does not change
+    row = tagged(1, publisher_type='data_provider')
+    assert 'publisher_type' in row and list(public_report(row, None)) == PUBLIC_KEYS
+    db.tables['reports'] = [row]
+    listed = client.get('/api/stocks/016360/reports').json()['reports']
+    analyzed = client.post('/api/reports/1/analyze').json()
+    assert [list(r) for r in listed] == [PUBLIC_KEYS]
+    assert list(analyzed) == PUBLIC_KEYS + ['analysis_reused']
+    assert len(PUBLIC_KEYS) == 13
 
 
 def test_browser_responses_never_carry_paths_or_keys(client, db, stock_csv, storage, summaries, analyze):
@@ -521,6 +538,10 @@ WINDOW_CALLS = {
     'period_rows': lambda: reports.period_rows('2026-01-01', False),
     'period_rows with oos': lambda: reports.period_rows('2026-01-01', True),
     'stock_rows': lambda: reports.stock_rows('016360', '2026-01-01'),
+    'rows_for_stocks': lambda: reports.rows_for_stocks(['016360', '005930'], '2026-01-01'),
+    'rows_for_stocks without codes': lambda: reports.rows_for_stocks([], '2026-01-01'),
+    'latest_report_sent_at': lambda: reports.latest_report_sent_at(),
+    'tagging_in_progress': lambda: reports.tagging_in_progress(),
 }
 
 
@@ -695,11 +716,12 @@ def test_get_report_is_the_public_shape_with_that_reports_summary(window, db, su
     assert summaries.calls == [[1]]   # no summary read for a report that is not there
 
 
-def test_period_rows_and_stock_rows_are_frames_of_the_fifteen_columns(window, db):
+def test_period_rows_and_stock_rows_are_frames_of_the_sixteen_columns(window, db):
     db.tables['reports'] = [
         tagged(1, published='2026-04-01'),
-        tagged(2, published='2026-05-11', codes=('005930',)),
-        tagged(3, status='verified', reason='ir_self', published=None),   # sent_at KST 2026-05-11
+        tagged(2, published='2026-05-11', codes=('005930',), publisher_type=None),
+        tagged(3, status='verified', reason='ir_self', published=None,   # sent_at KST 2026-05-11
+               publisher_type='other'),
         tagged(4, status='review_needed'),
     ]
     assert list(reports.period_rows('2026-05-01', False)['id']) == [2]
@@ -709,6 +731,10 @@ def test_period_rows_and_stock_rows_are_frames_of_the_fifteen_columns(window, db
     assert list(reports.stock_rows('16360', '2026-01-01')['id']) == []   # no zero-padding for the DB
     for frame in (reports.period_rows('2026-05-01', True), reports.stock_rows('999999', '2026-01-01')):
         assert list(frame.columns) == list(EXPECTED_COLS)
+    assert len(EXPECTED_COLS) == 16 and EXPECTED_COLS[-1] == 'publisher_type'
+    # publisher_type comes through as stored, empty included
+    assert list(reports.period_rows('2026-01-01', True)['publisher_type']) == ['broker', None, 'other']
+    assert reports.report_row(1)['publisher_type'] == 'broker'
 
 
 def test_the_window_needs_no_stock_list(window, db, summaries, tmp_path, monkeypatch):
@@ -718,6 +744,9 @@ def test_the_window_needs_no_stock_list(window, db, summaries, tmp_path, monkeyp
     assert reports.get_report(1)['id'] == 1
     assert list(reports.period_rows('2026-01-01', True)['id']) == [1]
     assert list(reports.stock_rows('016360', '2026-01-01')['id']) == [1]
+    assert list(reports.rows_for_stocks(['016360'], '2026-01-01')['id']) == [1]
+    assert reports.latest_report_sent_at() == datetime(2026, 5, 11, 1, tzinfo=timezone.utc)
+    assert reports.tagging_in_progress() is False
 
 
 def test_the_window_uses_one_service_prepared_once(window, db):
@@ -725,8 +754,114 @@ def test_the_window_uses_one_service_prepared_once(window, db):
     reports.report_row(1)
     reports.period_rows('2026-01-01', False)
     reports.stock_rows('016360', '2026-01-01')
+    reports.rows_for_stocks(['016360'], '2026-01-01')
+    reports.latest_report_sent_at()
+    reports.tagging_in_progress()
     assert db.made == [(URL, KEY)]
     assert get_service() is get_service()
+
+
+def test_latest_report_sent_at_is_when_the_newest_in_scope_report_arrived(window, db):
+    assert reports.latest_report_sent_at() is None   # no in-scope row yet
+    db.tables['reports'] = [
+        tagged(1, sent_at='2026-05-10T01:00:00+00:00'),
+        tagged(2, sent_at='2026-05-11T15:30:00.123456+00:00'),
+        tagged(3, status='verified', reason='foreign', sent_at='2026-05-12T00:00:00+00:00'),
+        tagged(4, status='processing', sent_at='2026-05-13T00:00:00+00:00'),
+    ]
+    latest = reports.latest_report_sent_at()
+    assert latest == datetime(2026, 5, 11, 15, 30, 0, 123456, tzinfo=timezone.utc)
+    assert latest.astimezone(KST).isoformat() == '2026-05-12T00:30:00.123456+09:00'
+    for query in db.queries('reports'):   # one row each time, with the 16 columns
+        assert (query.limit_size, query.columns) == (1, ', '.join(EXPECTED_COLS))
+
+
+@pytest.mark.parametrize('stored, expected', [
+    ('2026-05-11T01:00:00+00:00', datetime(2026, 5, 11, 1, tzinfo=timezone.utc)),
+    ('2026-05-11T01:00:00Z', datetime(2026, 5, 11, 1, tzinfo=timezone.utc)),
+    ('2026-05-11T10:00:00+09:00', datetime(2026, 5, 11, 1, tzinfo=timezone.utc)),
+    ('2026-05-11T01:00:00.5+00:00', datetime(2026, 5, 11, 1, 0, 0, 500000, tzinfo=timezone.utc)),
+    ('2026-05-11T01:00:00', datetime(2026, 5, 11, 1, tzinfo=timezone.utc)),   # no zone given: UTC
+])
+def test_latest_report_sent_at_is_an_aware_datetime_in_utc(window, db, stored, expected):
+    db.tables['reports'] = [tagged(1, sent_at=stored)]
+    latest = reports.latest_report_sent_at()
+    assert latest == expected
+    assert latest.tzinfo == timezone.utc   # whatever offset the DB writes the time with
+
+
+# ── is the tagger working? ───────────────────────────────────────────────────
+
+NOW = datetime(2026, 10, 9, 3, 0, tzinfo=timezone.utc)
+
+
+def locked(rid, at, status='processing'):
+    """A row a tagger took at ``at`` (an ISO time in UTC, or None)."""
+    return tagged(rid, status=status, published=None, codes=(), tagging_locked_at=at)
+
+
+@pytest.mark.parametrize('at, expected', [
+    ('2026-10-09T02:59:59+00:00', True),
+    ('2026-10-09T02:30:00+00:00', True),    # exactly 30 minutes before now
+    ('2026-10-09T02:29:59+00:00', False),   # 30 minutes and 1 second
+    (None, False),                          # no lock time
+], ids=['just now', '30 min', '30 min 1 s', 'no lock time'])
+def test_tagging_in_progress_looks_back_30_minutes_by_default(service, db, at, expected):
+    db.tables['reports'] = [locked(1, at)]
+    assert service.tagging_in_progress(now=NOW) is expected
+
+
+def test_tagging_in_progress_ignores_rows_that_are_not_processing(service, db):
+    fresh = '2026-10-09T02:59:00+00:00'
+    db.tables['reports'] = [locked(n, fresh, status=status)
+                            for n, status in enumerate(('pending', 'auto', 'review_needed', 'verified'), 1)]
+    assert service.tagging_in_progress(now=NOW) is False
+    db.tables['reports'].append(locked(9, fresh))
+    assert service.tagging_in_progress(now=NOW) is True
+
+
+def test_tagging_in_progress_takes_the_minutes_and_any_time_zone(service, db):
+    db.tables['reports'] = [locked(1, '2026-10-09T02:55:00+00:00')]
+    assert service.tagging_in_progress(5, now=NOW) is True
+    assert service.tagging_in_progress(4, now=NOW) is False
+    assert service.tagging_in_progress(5, now=NOW.astimezone(KST)) is True   # the same instant
+    # the cutoff goes to the DB in UTC, like the stored lock times
+    assert [q.filter_values('gte', 'tagging_locked_at') for q in db.queries('reports')] == [
+        ['2026-10-09T02:55:00+00:00'], ['2026-10-09T02:56:00+00:00'], ['2026-10-09T02:55:00+00:00']]
+
+
+def test_tagging_in_progress_counts_without_reading_rows(service, db):
+    db.tables['reports'] = [locked(1, '2026-10-09T02:59:00+00:00'), locked(2, '2026-10-09T02:58:00+00:00')]
+    assert service.tagging_in_progress(now=NOW) is True
+    (query,) = db.queries('reports')
+    assert (query.columns, query.count, query.head) == ('id', 'exact', True)
+
+
+def test_tagging_in_progress_through_the_window(window, db):
+    assert reports.tagging_in_progress() is False   # no rows at all
+    now = datetime.now(timezone.utc)
+    db.tables['reports'] = [locked(1, (now - timedelta(hours=2)).isoformat())]
+    assert reports.tagging_in_progress() is False   # a lock older than 30 minutes
+    assert reports.tagging_in_progress(minutes=180) is True
+    db.tables['reports'].append(locked(2, (now - timedelta(minutes=1)).isoformat()))
+    assert reports.tagging_in_progress() is True
+
+
+def test_rows_for_stocks_is_a_frame_of_the_sixteen_columns(window, db):
+    db.tables['reports'] = [
+        tagged(1, publisher_type=None),
+        tagged(2, codes=('005930', '000660')),
+        tagged(3, codes=('000660',), published='2025-12-31'),            # before the start day
+        tagged(4, codes=('000660',), status='verified', reason='foreign'),
+        tagged(5, codes=('035420',)),
+    ]
+    df = reports.rows_for_stocks(['016360', '000660'], '2026-01-01')
+    assert list(df.columns) == list(EXPECTED_COLS)
+    assert list(df['id']) == [1, 2]
+    assert list(df['publisher_type']) == [None, 'broker']
+    assert list(reports.rows_for_stocks(['16360'], '2026-01-01')['id']) == []   # no zero-padding
+    for empty in (reports.rows_for_stocks(['999999'], '2026-01-01'), reports.rows_for_stocks([], '2026-01-01')):
+        assert list(empty.columns) == list(EXPECTED_COLS) and len(empty) == 0
 
 
 # ── with the real analysis window (same DB stand-in) ─────────────────────────

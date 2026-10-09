@@ -4,7 +4,7 @@
 
 - `report_summaries` 표의 유일한 주인. 분석 결과 저장, 현재 버전 결과 조회, 두 보고서 비교 결과(비교 칸 네 개) 저장을 모두 여기서 한다. 다른 기능은 공개 창구로만 이 표에 닿는다.
 - 리포트 1건 분석 `analyze_report(row)`: reports가 읽어 넘긴 행 → PDF 글자 → AI 추출 → 후처리(목표주가 방향, 숫자 근거 확인) → 저장.
-- 웹 서버 전체의 AI 동시 호출 한도 2개(`ai_slot()`). compare의 해석문 호출도 이 한도를 나눠 쓴다.
+- 웹 서버 전체의 AI 동시 호출 한도 2개(`ai_slot()`). compare의 해석문 호출도 이 한도를 나눠 쓴다. 예외는 peers의 테마 검색 질의 임베딩 하나로, 그것은 peers 자체 자리(2개)를 쓰고 이 한도를 나눠 쓰지 않는다.
 - 분석·비교의 AI 연결 준비 `phase2_llm()` → `(client, model, timeout_s)`. 모델 키·codex CLI 확인과 그 실패 `NotReady("분석", …)`도 여기서 낸다.
 - Phase 2 설정: `LLM_MODEL_PHASE2`(옛 이름 `OPENAI_MODEL_PHASE2`, 기본 `gpt-6-luna`), `PHASE2_PER_REPORT_TIMEOUT_S`(180), `PHASE2_MAX_INPUT_TOKENS`(30000), `PHASE2_SUMMARY_VERSION`(`llm-summary@1.0`).
 - 재무 추출 프롬프트(`prompts.py`)와 응답 모양(`ExtractionResult`, `FinancialDetails`).
@@ -14,7 +14,7 @@
 
 - 웹 주소. analysis에는 `router`가 없고 웹 조립부 기능 목록(`FEATURES`)에도 넣지 않는다. `POST /api/reports/{rid}/analyze`는 `research_desk.features.reports`가 받아 행을 읽고(404) `analyze_report`를 부른다. 리포트 목록이 분석 결과를 붙이려면 reports가 analysis에 기대야 하는데, analysis가 행까지 직접 읽으면 둘이 서로 물리기 때문이다.
 - `reports` 표. 읽지도 쓰지도 않는다(`R11 표 주인`). 필요한 값은 넘겨받은 행에서 꺼낸다: `id`, `report_type`, `file_path`, 메타데이터 4개(`publisher`, `stock_codes`, `published_at`, `title`).
-- 다른 기능 import. reports·compare는 analysis에 직접, coverage·review는 reports를 거쳐 기대므로 하나라도 import하면 `R6 순환 금지`에 걸린다. analysis는 기능 의존이 없는 칸이다.
+- 다른 기능 import. reports·compare는 analysis에 직접, coverage·review·peers·freshness는 reports를 거쳐 기대므로 하나라도 import하면 `R6 순환 금지`에 걸린다. analysis는 기능 의존이 없는 칸이다.
 - 비교 판단. 짝 규칙, 수치 대조, 해석문 프롬프트와 `DiffResult`는 `research_desk.features.compare` 몫이다. analysis는 받은 값을 비교 칸에 저장만 한다.
 - 외부 도구 직접 import(`R9 외부 도구`). PDF는 `core.pdf`, AI는 `core.llm`, DB는 `core.db`, `.env`는 `core.settings`로만 닿는다. `collector`·`tagger`·`web`·`cli`와 옛 코드(`langgraph_tagger` 등)도 import하지 않는다.
 - `SUPABASE_DB_URL`과 `PHASE2_MAX_CONCURRENT`. 분석은 Supabase REST만 쓰고 동시 호출 수는 고정값이라, 두 변수는 값이 있어도 읽지 않는다.

@@ -1,0 +1,503 @@
+/* Peers screens: the company page's 유사 기업 tab and 테마로 기업 찾기 (spec §12.5). */
+
+.peers-section {
+  min-width: 0;
+}
+.peers-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.peers-heading h2 {
+  font-size: 19px;
+  font-weight: 500;
+  letter-spacing: -0.6px;
+  margin: 9px 0 8px;
+}
+.peers-seed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  font-size: 13px;
+  color: var(--text-body);
+}
+.peers-seed strong {
+  font-weight: 600;
+  color: var(--ink);
+}
+.peers-seed > span:not(.badge)::before {
+  content: "·";
+  margin-right: 8px;
+  color: #a1a8b1;
+}
+.peers-basis {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.peers-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.peers-chips > span {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-right: 2px;
+}
+.peers-chips button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: white;
+  font-size: 12px;
+  color: var(--text-body);
+}
+.peers-chips button small {
+  color: var(--text-secondary);
+}
+.peers-chips button:hover {
+  background: #f4f6f8;
+}
+.peers-chips button.active {
+  background: #e5f0e9;
+  border-color: #b9d3c3;
+  color: var(--text-green);
+  font-weight: 500;
+}
+.peers-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+  padding: 11px 16px;
+  margin-bottom: 14px;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.peers-filters label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.peers-filters input[type="checkbox"] {
+  accent-color: #356c56;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+}
+.peers-min-value input {
+  width: 66px;
+  padding: 5px 7px;
+  border: 1px solid #dde2e9;
+  border-radius: 5px;
+  font-size: 12px;
+  color: var(--text-body);
+  text-align: right;
+}
+.peers-count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.peers-seed-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 18px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  color: var(--text-body);
+}
+.peers-seed-line strong {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.peers-seed-line small {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.peers-not-judged {
+  color: var(--text-amber);
+}
+.peers-panel {
+  min-width: 0;
+}
+.peers-empty {
+  text-align: center;
+  padding: 48px 22px;
+  color: var(--text-secondary);
+}
+.peers-empty > svg {
+  color: #c1c9d2;
+  margin-bottom: 12px;
+}
+.peers-empty h3 {
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+.peers-empty p {
+  max-width: 440px;
+  margin: auto;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.peers-footnote {
+  margin-top: 16px;
+  font-size: 11px;
+  line-height: 1.9;
+  color: var(--text-secondary);
+}
+
+/* The peers and theme result tables. The wrapper is positioned so it also clips the
+   visually hidden header label (position: absolute), which would otherwise widen the page,
+   and it is a size container so an opened row's comparison fits its visible width. */
+.peer-table-wrap {
+  position: relative;
+  overflow-x: auto;
+  container-type: inline-size;
+}
+.peer-table {
+  width: 100%;
+  min-width: 1060px;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 12px;
+  color: var(--text-body);
+  font-variant-numeric: tabular-nums;
+}
+.peer-table th {
+  padding: 11px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: #fbfcfd;
+  border-bottom: 1px solid #f0f2f5;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+.peer-table th small {
+  display: block;
+  margin-top: 2px;
+  font-size: 10px;
+  font-weight: 400;
+}
+.peer-table td {
+  padding: 14px 10px;
+  border-bottom: 1px solid #eff1f5;
+  vertical-align: top;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+.peer-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.peer-table th:first-child,
+.peer-table td:first-child {
+  padding-left: 18px;
+}
+.peer-table .num {
+  text-align: right;
+  white-space: nowrap;
+}
+.peer-table td.num strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+}
+.peer-row {
+  cursor: pointer;
+}
+.peer-row:hover {
+  background: #fbfcfd;
+}
+.peer-row.candidate {
+  background: #f3f8f5;
+}
+.peer-row.candidate:hover {
+  background: #edf5f0;
+}
+.peer-row.candidate > td:first-child {
+  box-shadow: inset 3px 0 0 #3b7458;
+}
+.peer-rank {
+  width: 54px;
+  color: var(--text-secondary);
+}
+.peer-company {
+  min-width: 190px;
+}
+.peer-name {
+  padding: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  text-align: left;
+}
+.peer-name:hover {
+  color: #216b52;
+}
+.peer-company > small,
+.peer-sub {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+.peer-sub.up {
+  color: var(--text-amber);
+}
+.peer-sub.down {
+  color: var(--text-blue);
+}
+.peer-marks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+.peer-marks:empty {
+  display: none;
+}
+.badge.peer-candidate {
+  background: #dcefe3;
+  color: var(--text-green);
+  font-weight: 600;
+}
+.badge.peer-mark {
+  background: #fbf1e6;
+  color: var(--text-amber);
+}
+.peer-reasons {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: #8a96a3;
+}
+.badge.peer-tier.very_high,
+.badge.peer-coverage.none {
+  background: #dcefe3;
+  color: var(--text-green);
+}
+.badge.peer-tier.high {
+  background: #edf6ef;
+  color: var(--text-green);
+}
+.badge.peer-tier.related,
+.badge.peer-coverage.few {
+  background: #edf2fa;
+  color: var(--text-blue);
+}
+.peer-terms {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.peer-terms span {
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: #f0f2f5;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-body);
+}
+.peer-terms small {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+.peer-none {
+  font-size: 11px;
+  color: #8a96a3;
+}
+.peer-reaction {
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.peer-reaction.none {
+  color: var(--text-green);
+  font-weight: 600;
+}
+.peer-reaction.partial {
+  color: var(--text-blue);
+}
+.peer-reaction.reacted {
+  color: var(--text-secondary);
+}
+.peer-reaction.undetermined {
+  color: #8a96a3;
+}
+.peer-toggle-col {
+  width: 46px;
+  text-align: center;
+}
+.peer-table td.peer-toggle-col {
+  padding-top: 9px;
+}
+.peer-detail td {
+  padding: 16px 18px 18px;
+  background: #f8faf9;
+  cursor: default;
+}
+.peer-compare {
+  position: sticky;
+  left: 18px;
+  width: calc(100cqw - 36px);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.peer-compare section {
+  padding: 14px 16px;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.peer-compare h4 {
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.peer-compare p {
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--text-body);
+}
+.peer-compare ul {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+}
+.peer-compare li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+  border-top: 1px solid #f0f2f5;
+  font-size: 12px;
+}
+.peer-compare li small {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.peer-compare li.active span {
+  color: var(--text-green);
+  font-weight: 600;
+}
+.peer-one-line {
+  max-width: 380px;
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-body);
+}
+
+/* 테마로 기업 찾기 */
+.themes-page .page-heading h1 {
+  margin-top: 9px;
+}
+.themes-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.themes-input {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 1 1 340px;
+  max-width: 560px;
+  min-height: 40px;
+  padding: 0 12px;
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-secondary);
+}
+.themes-input:focus-within {
+  border-color: #166044;
+  box-shadow: 0 0 0 2px #1660441f;
+}
+.themes-input input {
+  flex: 1;
+  border: 0;
+  background: none;
+  font-size: 13px;
+  color: var(--ink);
+}
+.themes-input input:focus-visible {
+  outline: none;
+}
+.themes-input input::placeholder {
+  color: #7d8a98;
+}
+.themes-toolbar .segmented {
+  margin-left: auto;
+}
+.themes-hint {
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--text-amber);
+}
+.themes-summary {
+  margin: 6px 0 14px;
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--text-secondary);
+}
+.themes-summary strong {
+  font-weight: 600;
+  color: var(--ink);
+}
+.peer-table.theme-table {
+  min-width: 900px;
+}
+
+@media (max-width: 900px) {
+  .peers-heading {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+  .peer-compare {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 650px) {
+  .peers-heading h2 {
+    font-size: 17px;
+  }
+  .peers-seed {
+    font-size: 12px;
+  }
+  .peers-filters {
+    gap: 8px 14px;
+    padding: 11px 12px;
+  }
+  .peers-count {
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+  .themes-input {
+    flex-basis: 100%;
+    max-width: none;
+  }
+  .themes-toolbar .segmented {
+    margin-left: 0;
+  }
+}
