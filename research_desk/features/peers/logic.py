@@ -295,9 +295,11 @@ def assemble_input(sections: Mapping[str, Section]) -> AssembledInput:
     """The AI input for one company (spec §5.1).
 
     Blocks in this order, each with its label and cut at its cap: overview; products text and
-    product tables (or, for the financial format — a ``020800`` section — its business section,
-    text then tables); other notes and sales only when the overview is under 800 characters.
-    Empty blocks are left out. The whole input is cut at ``INPUT_CAP``.
+    product tables; other notes and sales only when the overview is under 800 characters; last,
+    a ``020800`` section's business text then tables. The financial format (a ``020800``
+    section and no ``020200``) has no product blocks; a company with both businesses (겸영)
+    has both sections and keeps them all. Empty blocks are left out. The whole input is cut
+    at ``INPUT_CAP``.
     """
     def text(code: str, part: str) -> str:
         section = sections.get(code)
@@ -305,8 +307,9 @@ def assemble_input(sections: Mapping[str, Section]) -> AssembledInput:
 
     overview = text(OVERVIEW, "prose")
     financial = FINANCIAL in sections
+    financial_only = financial and PRODUCTS not in sections
     candidates: list[tuple[str, str, str, int]] = [("overview", OVERVIEW, overview, OVERVIEW_CAP)]
-    if not financial:
+    if not financial_only:
         candidates += [("products", PRODUCTS, text(PRODUCTS, "prose"), PRODUCTS_CAP),
                        ("product_tables", PRODUCTS, product_tables(text(PRODUCTS, "tables")),
                         PRODUCT_TABLES_CAP)]

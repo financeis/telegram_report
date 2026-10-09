@@ -11,7 +11,7 @@ def test_defaults_when_nothing_is_set():
     cfg = settings.load_settings()
     assert cfg.profile_model == 'claude-haiku-5-5'
     assert cfg.escalation_model == 'gpt-5.4'
-    assert cfg.profile_version == 'peer-profile@1.0'
+    assert cfg.profile_version == 'peer-profile@1.1'
     assert cfg.embed_model == 'text-embedding-3-large'
     assert cfg.fiscal_year == 2025
     assert cfg.max_concurrent_llm == 2          # the operating ceiling
@@ -24,7 +24,7 @@ def test_defaults_when_nothing_is_set():
 def test_every_value_comes_from_its_variable(monkeypatch):
     values = {
         'LLM_MODEL_PEERS': 'gpt-5.4-mini', 'LLM_MODEL_PEERS_ESCALATION': 'claude-sonnet-5',
-        'PEERS_PROFILE_VERSION': 'peer-profile@1.1', 'PEERS_EMBED_MODEL': 'text-embedding-3-small',
+        'PEERS_PROFILE_VERSION': 'peer-profile@2.0-try', 'PEERS_EMBED_MODEL': 'text-embedding-3-small',
         'PEERS_FISCAL_YEAR': '2026', 'PEERS_MAX_CONCURRENT_LLM': '1',
         'PEERS_PER_COMPANY_TIMEOUT_S': '90', 'DART_MONGO_URL': 'mongodb://db.local:27018/',
         'DART_MONGO_DB': 'DART', 'DART_MONGO_COLLECTION': 'A001_v3',
@@ -33,7 +33,7 @@ def test_every_value_comes_from_its_variable(monkeypatch):
         monkeypatch.setenv(name, value)
     cfg = settings.load_settings()
     assert (cfg.profile_model, cfg.escalation_model) == ('gpt-5.4-mini', 'claude-sonnet-5')
-    assert (cfg.profile_version, cfg.embed_model) == ('peer-profile@1.1', 'text-embedding-3-small')
+    assert (cfg.profile_version, cfg.embed_model) == ('peer-profile@2.0-try', 'text-embedding-3-small')
     assert (cfg.fiscal_year, cfg.max_concurrent_llm, cfg.per_company_timeout_s) == (2026, 1, 90)
     assert (cfg.mongo_url, cfg.mongo_db, cfg.mongo_collection) == (
         'mongodb://db.local:27018/', 'DART', 'A001_v3')

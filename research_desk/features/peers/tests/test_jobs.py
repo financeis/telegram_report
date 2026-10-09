@@ -299,10 +299,11 @@ def test_inspect_reports_profile_counts_tokens_and_recent_builds(ready, capsys):
     capsys.readouterr()
     assert run('inspect') == 0
     report = json.loads(capsys.readouterr().out)
+    pv = peers_settings.DEFAULT_PROFILE_VERSION
     assert report['profiles'] == [
-        {'fiscal_year': 2025, 'profile_version': 'peer-profile@1.0', 'status': 'failed', 'count': 1,
+        {'fiscal_year': 2025, 'profile_version': pv, 'status': 'failed', 'count': 1,
          'input_tokens': 0, 'output_tokens': 0},
-        {'fiscal_year': 2025, 'profile_version': 'peer-profile@1.0', 'status': 'ok', 'count': 1,
+        {'fiscal_year': 2025, 'profile_version': pv, 'status': 'ok', 'count': 1,
          'input_tokens': 100, 'output_tokens': 10},
     ]
     assert report['tokens'] == {'input': 100, 'output': 10}

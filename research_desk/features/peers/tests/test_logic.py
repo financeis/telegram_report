@@ -228,14 +228,25 @@ def test_a_missing_overview_counts_as_short():
     assert out.text == '[주요 제품 및 서비스]\n제품\n\n[기타 참고사항]\n기타'
 
 
-def test_the_financial_format_replaces_the_product_blocks_with_its_business_section():
+def test_the_financial_format_has_its_business_section_instead_of_product_blocks():
     out = logic.assemble_input({
         '020100': Section(prose='개' * 900),
-        '020200': Section(prose='쓰지 않음', tables=TABLE_KEEP),
         '020800': Section(prose='영업 현황', tables='구분 | 잔액\n대출 | 100'),
     })
     assert out.text == '[사업의 개요]\n' + '개' * 900 + '\n\n[영업의 현황]\n영업 현황\n\n구분 | 잔액\n대출 | 100'
     assert out.sections == ('020100', '020800')
+
+
+def test_a_company_with_both_businesses_keeps_its_products_and_adds_the_business_section_last():
+    out = logic.assemble_input({
+        '020100': Section(prose='개' * 900),
+        '020200': Section(prose='승용차', tables=TABLE_KEEP),
+        '020800': Section(prose='할부 금융', tables='구분 | 잔액\n할부 | 100'),
+    })
+    assert out.text == ('[사업의 개요]\n' + '개' * 900 + '\n\n[주요 제품 및 서비스]\n승용차'
+                        + f'\n\n[주요 제품 표]\n{TABLE_KEEP}'
+                        + '\n\n[영업의 현황]\n할부 금융\n\n구분 | 잔액\n할부 | 100')
+    assert out.sections == ('020100', '020200', '020800')
 
 
 def test_the_financial_block_is_capped_at_six_thousand_and_the_whole_input_at_twelve():

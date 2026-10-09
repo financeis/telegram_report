@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 DEFAULT_PROFILE_MODEL = "claude-haiku-5-5"        # LLM_MODEL_PEERS (provisional: chosen after pilots)
 DEFAULT_ESCALATION_MODEL = "gpt-5.4"               # LLM_MODEL_PEERS_ESCALATION
-DEFAULT_PROFILE_VERSION = "peer-profile@1.0"       # PEERS_PROFILE_VERSION: profiles are keyed by it
+DEFAULT_PROFILE_VERSION = "peer-profile@1.1"       # PEERS_PROFILE_VERSION: profiles are keyed by it
 DEFAULT_EMBED_MODEL = "text-embedding-3-large"     # PEERS_EMBED_MODEL, sent with dimensions=1536
 DEFAULT_FISCAL_YEAR = 2025                         # PEERS_FISCAL_YEAR
 # Operating ceiling, like tagging: the providers' tokens-per-minute limit is the bottleneck.
