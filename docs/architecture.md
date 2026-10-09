@@ -36,7 +36,7 @@ reports (pending) ──(Postgres 직접 연결 SUPABASE_DB_URL, asyncpg 풀 최
   - 유사도 계산(`peers build`): 회사마다 사업 요약 카드 추출(동시 2개)과 임베딩(100개씩).
   - 웹앱의 테마 검색: 새 질의마다 임베딩 하나(같은 질의는 캐시, 유사 기업 기능의 동시 2개 자리).
   - 목록 보기·선택·커버리지·검토·유사 기업 탭·상태 줄은 AI를 부르지 않는다. 유사 기업 탭은 저장된 임베딩으로 DB 함수가 계산한다.
-- **바깥 데이터는 각자 한 명령만 가져온다.** KIS는 `prices update`만, MongoDB는 `peers build`만 부른다. 웹앱은 둘 다 부르지 않고 저장된 표만 읽는다. MongoDB의 사업보고서 텍스트는 이 저장소 밖의 DART 수집 프로그램이 채우고, 이 앱은 쓰지 않는다.
+- **바깥 데이터마다 가져오는 명령은 하나뿐이다.** KIS는 `prices update`만, MongoDB는 `peers build`만 부른다. 웹앱은 둘 다 부르지 않고 저장된 표만 읽는다. MongoDB의 사업보고서 텍스트는 이 저장소 밖의 DART 수집 프로그램이 채우고, 이 앱은 쓰지 않는다.
 - **PDF 파일은 로컬 디스크에만 있다.** DB에는 저장 폴더 기준 상대 경로(`file_path`)만 있다. 그래서 분류기와 웹앱은 수집기와 같은 PC, 같은 `STORAGE_BASE_DIR`에서 돌아야 한다.
 - **화면(`frontend/`, React + Vite)** 은 빌드 결과(`frontend/dist`)를 웹 서버가 `/`와 `/assets`로 내준다. 개발 중에는 Vite 개발 서버(5173)가 `/api`를 8520으로 넘긴다. 화면은 `/api/*` 주소와 응답 모양에만 의존하고 파이썬 코드를 모른다. 유사 기업 탭·테마 검색은 `frontend/src/peers/`, 상태 줄은 `frontend/src/freshness/`에 있다.
 
