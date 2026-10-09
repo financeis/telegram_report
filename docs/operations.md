@@ -76,7 +76,7 @@
 준비(모두 갖춘 뒤 시작한다):
 - 마이그레이션 008 적용, `python -m research_desk peers inspect`가 0으로 끝남(표가 보인다).
 - 로컬 MongoDB가 켜져 있고 `FS.A001_v2`(`DART_MONGO_*`)에 그 회계연도 사업보고서가 `parser_version` 0.2.0 이상으로 들어 있음 — 별도 저장소의 DART 수집 프로그램이 채운다.
-- `.env`: 프로필 모델과 재처리 모델의 키(기본 `claude-haiku-5-5` → `ANTHROPIC_API_KEY`, `gpt-5.4` → `OPENAI_API_KEY`), 임베딩용 `OPENAI_API_KEY`.
+- `.env`: 프로필 모델과 재처리 모델의 키(기본 `claude-sonnet-5-5` → `ANTHROPIC_API_KEY`, `gpt-5.4` → `OPENAI_API_KEY`), 임베딩용 `OPENAI_API_KEY`.
 - 웹 패키지 설치(`requirements-workspace.txt`). 없으면 분류 진행 확인에서 `ModuleNotFoundError`로 1.
 - 종목표가 버전 정보와 맞음(아니면 4, 분류와 같은 안내).
 - 텔레그램 수집·분류가 따라잡혀 있음 — 리포트 수가 그만큼 정확하다(빌드가 막지는 않지만 화면의 "리포트 없음"이 틀린다).
@@ -85,7 +85,7 @@
 순서:
 1. 시험 실행: `python -m research_desk peers build --pilot --codes 080220,032580,005930`처럼 몇 곳(또는 `--limit 50`). 화면에는 나오지 않고, 대상 회사마다 회사·부문 유사도 상위 10 표와 요약 JSON이 찍힌다. 이웃 목록이 그럴듯한지, `failed`·`kept_previous`가 없는지 본다. 시험 실행의 프로필은 저장되어 다음 실행이 재사용한다(AI를 다시 부르지 않음).
    - 동의어는 `research_desk/features/peers/synonyms.yaml`에 더한다(AI를 다시 부르지 않고, 다음 공개 빌드가 반영한다). 프롬프트·응답 모양을 고치는 것은 코드 변경이고, 프로필 버전 기본값(`PEERS_PROFILE_VERSION`)을 함께 올려야 한다 — 다음 빌드가 모든 회사를 다시 추출한다.
-   - 프로필 모델(`LLM_MODEL_PEERS`)은 임시 기본값이다. 모델끼리 비교할 때는 모델마다 `.env`의 `PEERS_PROFILE_VERSION`을 다른 시험용 값(예: `peer-profile@1.1-try-gpt`)으로 두고 같은 회사로 시험 실행한다 — 같은 프로필 버전이면 모델을 바꿔도 저장된 프로필을 재사용해 새 모델이 불리지 않는다. 고른 뒤에는 시험용 값을 지우고 사용자와 정한 모델로 본 실행을 한다.
+   - 프로필 모델(`LLM_MODEL_PEERS`)은 2026-10-10 시험 실행 뒤 사용자가 정한 `claude-sonnet-5-5`다(`docs/llm-models.md`). 다른 모델과 비교할 때는 모델마다 `.env`의 `PEERS_PROFILE_VERSION`을 다른 시험용 값(예: `peer-profile@1.2-try-gpt`)으로 두고 같은 회사로 시험 실행한다 — 같은 프로필 버전이면 모델을 바꿔도 저장된 프로필을 재사용해 새 모델이 불리지 않는다. 고른 뒤에는 시험용 값을 지우고 사용자와 정한 모델로 본 실행을 한다.
 2. 비용·시간 보고: 요약 JSON의 `tokens`(입력·출력·임베딩)와 `peers inspect`의 상태별 토큰 합계를 회사 수로 나눠, 전체 대상 회사 수만큼의 토큰·비용·시간을 어림해 사용자에게 보고하고 승인받는다.
 3. 전체 실행: `python -m research_desk peers build`. 회사 수와 모델에 따라 몇 시간이 걸릴 수 있다. 끝에 요약 JSON:
    - `"status": "done"`(0): 공개됨. 웹앱을 다시 켜지 않아도 다음 요청부터 쓴다.
@@ -186,7 +186,7 @@ python -m research_desk peers inspect
 | 태깅 | `LLM_MODEL_DEFAULT` | `claude-haiku-5-5` | Anthropic (`ANTHROPIC_API_KEY`) |
 | 태깅 재처리(`tag escalate`) | `LLM_MODEL_ESCALATION` | `gpt-5.4` | OpenAI (`OPENAI_API_KEY`) |
 | 재무 분석·리포트 비교(웹앱) | `LLM_MODEL_PHASE2` | `gpt-6-luna` (운영 `.env`는 `codex:gpt-6-luna`) | `codex:` 접두사 → 로컬 `codex exec` |
-| 유사 기업 프로필 추출(`peers build`) | `LLM_MODEL_PEERS` | `claude-haiku-5-5` (임시 — 시험 실행 뒤 사용자와 정함) | 모델 이름이 정함 |
+| 유사 기업 프로필 추출(`peers build`) | `LLM_MODEL_PEERS` | `claude-sonnet-5-5` (2026-10-10 시험 실행 뒤 사용자가 정함) | 모델 이름이 정함 |
 | 프로필 재추출(근거율 0.8 미만일 때 한 번) | `LLM_MODEL_PEERS_ESCALATION` | `gpt-5.4` | 모델 이름이 정함 |
 | 임베딩(`peers build`, 웹 테마 검색) | `PEERS_EMBED_MODEL` | `text-embedding-3-large` (1536차원으로 받음) | OpenAI (`OPENAI_API_KEY`) |
 
@@ -230,9 +230,9 @@ python -m research_desk peers inspect
 | `KIS_APP_KEY`, `KIS_APP_SECRET` | prices update | 필수(없으면 4) | 한국투자증권 Open API 실전 계정의 앱키·시크릿. 사용자의 masterdb 프로젝트와 같은 키다(위 운영 원칙 7) |
 | `KIS_BASE_URL` | prices update | `https://openapi.koreainvestment.com:9443` | KIS 실전 서비스 주소 |
 | `PRICES_MAX_CALLS_PER_SEC` | prices update | 10 | KIS 호출을 1초에 몇 번까지 시작할지(토큰 요청 포함). 0보다 큰 수가 아니면 파이썬 오류로 1 |
-| `LLM_MODEL_PEERS` / `LLM_MODEL_PEERS_ESCALATION` | peers build | `claude-haiku-5-5` / `gpt-5.4` | 프로필 추출 모델 / 근거율 0.8 미만일 때 한 번 더 추출할 모델(위 모델 표). 옛 이름 `OPENAI_MODEL_PEERS*`도 읽음 |
+| `LLM_MODEL_PEERS` / `LLM_MODEL_PEERS_ESCALATION` | peers build | `claude-sonnet-5-5` / `gpt-5.4` | 프로필 추출 모델 / 근거율 0.8 미만일 때 한 번 더 추출할 모델(위 모델 표). 옛 이름 `OPENAI_MODEL_PEERS*`도 읽음 |
 | `PEERS_EMBED_MODEL` | peers build | `text-embedding-3-large` | 임베딩 모델. 1536차원을 낼 수 있는 OpenAI 모델만. 웹 테마 검색은 이 값이 아니라 공개 빌드에 기록된 모델을 쓴다 |
-| `PEERS_PROFILE_VERSION` | peers build | `peer-profile@1.1` | 프로필의 키. 바꾸면 다음 빌드가 모든 회사를 새로 추출한다(AI 비용). 화면은 공개 빌드의 버전을 따른다 |
+| `PEERS_PROFILE_VERSION` | peers build | `peer-profile@1.2` | 프로필의 키. 바꾸면 다음 빌드가 모든 회사를 새로 추출한다(AI 비용). 화면은 공개 빌드의 버전을 따른다 |
 | `PEERS_FISCAL_YEAR` | peers build | 2025 | `--fiscal-year`가 없을 때의 회계연도 |
 | `PEERS_MAX_CONCURRENT_LLM` | peers build | **2** | 빌드 중 AI 동시 호출. 위 운영 원칙 6 |
 | `PEERS_PER_COMPANY_TIMEOUT_S` | peers build | 120 | 회사 하나의 추출(재추출 포함) 시간 한도(초). 넘으면 그 회사는 실패 |

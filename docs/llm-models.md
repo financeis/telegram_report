@@ -7,6 +7,9 @@
 | 태깅 | `LLM_MODEL_DEFAULT` | `claude-haiku-5-5` | Anthropic API (`ANTHROPIC_API_KEY`) |
 | 태깅 재처리 (escalate) | `LLM_MODEL_ESCALATION` | `gpt-5.4` | OpenAI API (`OPENAI_API_KEY`) |
 | 재무 분석·리포트 비교 | `LLM_MODEL_PHASE2` | `gpt-6-luna` (운영 `.env`는 `codex:gpt-6-luna`) | `codex:` 접두사 → 로컬 `codex exec` |
+| 유사 기업 프로필(사업 요약 카드) | `LLM_MODEL_PEERS` | `claude-sonnet-5-5` | Anthropic API (`ANTHROPIC_API_KEY`) |
+| 프로필 재추출(근거율 0.8 미만) | `LLM_MODEL_PEERS_ESCALATION` | `gpt-5.4` | OpenAI API (`OPENAI_API_KEY`) |
+| 프로필·테마 검색 임베딩 | `PEERS_EMBED_MODEL` | `text-embedding-3-large` (1536차원) | OpenAI API (`OPENAI_API_KEY`) |
 
 모델 이름이 실행 경로를 정한다 ([core/llm.py](../research_desk/core/llm.py)):
 `claude-*` → Anthropic API, `codex:<model>` → Codex CLI, 그 외 → OpenAI API.
@@ -34,6 +37,15 @@ too large"). 필드를 전부 required로 바꾸거나 nullable을 줄여도 넘
 기존 태그가 있는 35건(유형별 층화 표본)을 재태깅.
 - 오류 0, 행당 2~11초, 행당 약 6K 입력 / 0.4K 출력 토큰.
 - report_type 일치 27/35. 차이는 주로 산업↔섹터 경계. 기존 review_needed 3건이 auto로 해소.
+
+### 유사 기업 프로필: Sonnet 5.5 (2026-10-10, 사용자 결정)
+FY2024 사업보고서(로컬 원본 940곳)로 34곳 시험 실행(`peers build --pilot`), Haiku 5.5.
+- 34/34 성공, 정보 부족 3곳, 근거율 0.8 미만으로 `gpt-5.4` 재추출 6곳(18%).
+- 회사당 입력 약 9.6K / 출력 약 1.7K 토큰, 회사당 약 5초(동시 2).
+- 한 줄 요약과 이웃은 그럴듯했다(피델릭스 "레거시 DRAM·NOR Flash·MCP 메모리 팹리스" → DB하이텍·파두·삼성전자).
+
+카드 품질이 유사도 전체를 정하므로 사용자가 비교 실행 없이 Sonnet 5.5로 정했다. 930곳 전체 비용 어림은
+약 35~60달러(Haiku 약 5~11달러), 가격은 외부 가격 사이트 기준이다.
 
 ### 재무 분석: Haiku 5.5 대신 luna
 단일종목 12건, 같은 입력·같은 파이프라인.

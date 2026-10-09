@@ -9,9 +9,9 @@ from research_desk.features.peers.logic import Synonyms
 
 def test_defaults_when_nothing_is_set():
     cfg = settings.load_settings()
-    assert cfg.profile_model == 'claude-haiku-5-5'
+    assert cfg.profile_model == 'claude-sonnet-5-5'
     assert cfg.escalation_model == 'gpt-5.4'
-    assert cfg.profile_version == 'peer-profile@1.1'
+    assert cfg.profile_version == 'peer-profile@1.2'
     assert cfg.embed_model == 'text-embedding-3-large'
     assert cfg.fiscal_year == 2025
     assert cfg.max_concurrent_llm == 2          # the operating ceiling

@@ -376,7 +376,7 @@
 | `company_profiles.status` | `ok`, `failed` (쓰는 도중에만 비어 있음) |
 | `company_profiles.info_quality` | `충분`, `부족` |
 | 프로필 역할(`roles`) | `소재`, `부품`, `장비`, `설계(팹리스)`, `완제품 제조`, `위탁생산(OEM/ODM/CDMO)`, `패키징·테스트`, `유통`, `서비스·플랫폼`, `건설·EPC`, `금융`, `지주·투자`, `기타` |
-| `company_profiles.profile_version` | `PEERS_PROFILE_VERSION` (기본 `peer-profile@1.1`) |
+| `company_profiles.profile_version` | `PEERS_PROFILE_VERSION` (기본 `peer-profile@1.2`) |
 | `peer_builds.status` | `running`, `done`, `incomplete`, `failed`, `pilot` |
 | `peer_builds.embed_dims`, 임베딩 열 | 1536 |
 | 유사 기업 응답의 등급 / 반응 / 리포트 수 라벨 | `very_high`·`high`·`related` / `none`·`partial`·`reacted`·`undetermined` / `none`·`few`·`covered` |
