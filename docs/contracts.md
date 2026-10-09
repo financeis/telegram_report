@@ -102,7 +102,7 @@
 - `tier`: `very_high`|`high`|`related`. `reaction`: `none`|`partial`|`reacted`|`undetermined`. `not_candidate_reasons`: `has_reports`, `reacted`, `undetermined`, `not_traded`, `low_liquidity`, `holding`, `weak_similarity` 중 해당하는 것을 이 순서로, 후보면 `[]`.
 - `revenue_share_pct`가 -1이면 비중 미상. `one_line`은 틈새 업종, 없으면 요약(둘 다 없으면 `""`). `same_industry`는 종목표 `산업명(중)`이 같으면 true, 다르면 false, 한쪽이 비면 null. 피어의 `segments`는 그 피어의 사업부문 전체(매출 비중 순). `shared_terms`는 최대 5개.
 - `segment`는 고른 시드 부문이고, 시드에 부문이 없으면 null이다(그때 모든 `segment_match`도 null).
-- `price_as_of`는 시드 스냅샷의 기준일, `seed_excess_pct`는 고른 기간의 시드 초과수익률(%p)이고 없으면 각각 null. `judgeable`은 `seed_excess_pct`가 10 이상일 때만 true다. false면 모든 피어의 `reaction`이 `undetermined`이고, 화면은 `시드가 시장보다 10%p 이상 오르지 않아 반응을 판정하지 않습니다`를 보여 준다.
+- `price_as_of`는 시드 스냅샷의 기준일, `seed_excess_pct`는 고른 기간의 시드 초과수익률(%p)이고 없으면 각각 null. `judgeable`은 `seed_excess_pct`가 10 이상일 때만 true다. false면 모든 피어의 `reaction`이 `undetermined`이고, 화면은 `seed_excess_pct`가 있으면 `시드가 시장보다 10%p 이상 오르지 않아 반응을 판정하지 않습니다`를, null이면 `기준 회사의 주가 자료가 없어 반응을 판정하지 않습니다`를 보여 준다.
 - `basis`: 응답에 쓴 공개 빌드. `built_at`은 그 빌드의 끝 시각, `companies_eligible`·`companies_profiled`는 그 빌드의 대상·성공 회사 수.
 - `peers`는 순위 순 최대 50개이고 비어 있을 수 있다. 새 빌드가 공개되면 서버를 다시 켜지 않아도 다음 요청부터 그 빌드를 쓴다.
 - AI를 부르지 않는다.

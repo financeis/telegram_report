@@ -22,6 +22,7 @@ const NO_PEER_DATA = "이 종목은 유사 기업 자료가 없습니다.";
 const NO_SEGMENT = "그 사업부문이 없습니다.";
 const NOT_JUDGED =
   "시드가 시장보다 10%p 이상 오르지 않아 반응을 판정하지 않습니다";
+const NO_SEED_PRICE = "기준 회사의 주가 자료가 없어 반응을 판정하지 않습니다";
 
 // Row filters, all off at first (spec §12.5): [key, label, a row kept when on].
 const FILTERS = [
@@ -243,7 +244,9 @@ export default function Peers({ code, onStock }) {
               {seedReturn != null && <small> · 단순 {pct(seedReturn)}</small>}
             </p>
             {!data.judgeable && (
-              <p className="peers-not-judged">{NOT_JUDGED}</p>
+              <p className="peers-not-judged">
+                {data.seed_excess_pct == null ? NO_SEED_PRICE : NOT_JUDGED}
+              </p>
             )}
           </div>
           <div className="panel peers-panel">
