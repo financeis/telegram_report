@@ -783,10 +783,11 @@ def test_latest_report_sent_at_is_when_the_newest_in_scope_report_arrived(window
     ('2026-05-11T01:00:00.5+00:00', datetime(2026, 5, 11, 1, 0, 0, 500000, tzinfo=timezone.utc)),
     ('2026-05-11T01:00:00', datetime(2026, 5, 11, 1, tzinfo=timezone.utc)),   # no zone given: UTC
 ])
-def test_latest_report_sent_at_is_an_aware_datetime(window, db, stored, expected):
+def test_latest_report_sent_at_is_an_aware_datetime_in_utc(window, db, stored, expected):
     db.tables['reports'] = [tagged(1, sent_at=stored)]
     latest = reports.latest_report_sent_at()
-    assert latest == expected and latest.utcoffset() is not None
+    assert latest == expected
+    assert latest.tzinfo == timezone.utc   # whatever offset the DB writes the time with
 
 
 # ── is the tagger working? ───────────────────────────────────────────────────

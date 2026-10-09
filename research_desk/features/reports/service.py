@@ -83,9 +83,12 @@ def public_report(row: Mapping[str, Any], summary: Optional[dict]) -> dict:
 
 
 def _instant(value: str) -> datetime:
-    """A timestamp the DB gave as ISO text, as an aware datetime (UTC when it names no zone)."""
+    """A timestamp the DB gave as ISO text, as an aware datetime in UTC (a time without an offset
+    is taken as UTC)."""
     moment = datetime.fromisoformat(value)
-    return moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc)
 
 
 class ReportsService:
@@ -278,8 +281,8 @@ def rows_for_stocks(codes: Iterable[str], since: str) -> pd.DataFrame:
 
 def latest_report_sent_at() -> Optional[datetime]:
     """When the newest in-scope report arrived: the latest sent_at among in-scope rows, as an
-    aware datetime (the zone the DB gives, UTC), or None when there is no in-scope row. Reads one
-    row with the 16 columns. NotReady without DB settings."""
+    aware datetime in UTC, or None when there is no in-scope row. Reads one row with the 16
+    columns. NotReady without DB settings."""
     return get_service().latest_report_sent_at()
 
 
