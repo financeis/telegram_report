@@ -12,6 +12,9 @@ auth_helper.py
 # Downloaded data
 /reports/
 
+# Local backups written by commands (tag requeue --apply)
+/backups/
+
 # Python
 __pycache__/
 *.pyc
