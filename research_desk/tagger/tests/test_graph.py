@@ -85,6 +85,8 @@ async def test_unreadable_pdf_routes_to_status_unreadable(krx, mock_llm_client, 
     assert final["tagging_notes"] == "first_page_unreadable"
     # llm_extract should NOT have been called for an unreadable PDF
     mock_llm_client.parse.assert_not_called()
+    # no AI result → no publisher checks
+    assert not {"publisher_final", "publisher_type_final", "publisher_suspect"} & set(final)
 
 
 @pytest.mark.asyncio
@@ -154,3 +156,91 @@ def test_graph_has_8_nodes():
         "status_oos", "status_unreadable", "resolve_krx",
         "decide_status", "write",
     }
+
+
+# ── publisher checks through the whole graph ─────────────────────────────────
+
+def _pdf(tmp_path, monkeypatch, name: str) -> None:
+    import fitz
+    doc = fitz.open()
+    doc.new_page().insert_text((72, 72), "리서치센터 분석가 홍길동 투자의견 매수", fontname="korea", fontsize=11)
+    doc.save(tmp_path / name)
+    doc.close()
+    monkeypatch.setenv("STORAGE_BASE_DIR", str(tmp_path))
+
+
+def _init(id_: int, file_name: str) -> dict:
+    return {
+        "id": id_, "file_path": file_name, "file_name": file_name,
+        "sent_at": datetime(2026, 5, 1, 9, 0, tzinfo=timezone.utc),
+        "caption": None, "chat_username": "x", "worker_id": "test", "model": "gpt-5.4-mini",
+    }
+
+
+@pytest.mark.asyncio
+async def test_an_alias_answer_is_written_as_null_without_an_error(krx, mock_llm_client, mock_supabase,
+                                                                   tmp_path, monkeypatch):
+    """The model's JSON says "Eugene" (an alias): validation keeps the row going, and the
+    row is written with a null publisher and type — no exception, so no revert."""
+    import json
+
+    from research_desk.core.llm import StructuredResult
+
+    name = "samsung_005930_20260511_Eugene_1096333.pdf"
+    _pdf(tmp_path, monkeypatch, name)
+    reply = json.loads(make_llm_extraction().model_dump_json())
+    reply.update(publisher_canon="Eugene", publisher_type="broker")
+    text = json.dumps(reply, ensure_ascii=False)
+
+    async def parse(*, schema, **_):
+        return StructuredResult(parsed=schema.model_validate_json(text))
+    mock_llm_client.parse.side_effect = parse
+
+    app = build_graph(mock_llm_client, mock_supabase, krx=krx,
+                      dry_run=False, taxonomy_version="KRX@2026-05-08")
+    final = await app.ainvoke(_init(5, name))
+
+    assert (final["publisher_final"], final["publisher_type_final"], final["publisher_suspect"]) == (
+        None, None, "filename_mismatch")
+    (_, args), = mock_supabase.executed
+    assert (args[3], args[4]) == (None, None)
+    assert args[2] == "단일종목"
+
+
+@pytest.mark.asyncio
+async def test_oos_rows_get_the_same_publisher_checks(krx, mock_llm_client, mock_supabase,
+                                                      tmp_path, monkeypatch):
+    """An IR자료 file tagged with a broker: the stored publisher stays the AI's 해당기업
+    (type other from the dictionary); the tag only marks a filename mismatch."""
+    name = "ecopro_ir_20260511_MERITZ_1096333.pdf"
+    _pdf(tmp_path, monkeypatch, name)
+    mock_llm_client.set_response(make_llm_extraction(
+        report_type="IR자료", publisher_canon="해당기업", stock_codes_raw=[], company_names_raw=["에코프로"],
+    ))
+
+    app = build_graph(mock_llm_client, mock_supabase, krx=krx,
+                      dry_run=False, taxonomy_version="KRX@2026-05-08")
+    final = await app.ainvoke(_init(6, name))
+
+    assert final["oos_reason"] == "ir_self"
+    assert (final["publisher_final"], final["publisher_type_final"], final["publisher_suspect"]) == (
+        "해당기업", "other", "filename_mismatch")
+    (_, args), = mock_supabase.executed
+    assert (args[3], args[4], args[14]) == ("해당기업", "other", "ir_self")
+
+
+@pytest.mark.asyncio
+async def test_in_scope_rows_keep_the_ai_publisher_against_the_filename_tag(krx, mock_llm_client,
+                                                                            mock_supabase, tmp_path,
+                                                                            monkeypatch):
+    name = "samsung_005930_20260511_MERITZ_1096333.pdf"
+    _pdf(tmp_path, monkeypatch, name)
+    mock_llm_client.set_response(make_llm_extraction(publisher_canon="키움증권"))
+
+    app = build_graph(mock_llm_client, mock_supabase, krx=krx,
+                      dry_run=False, taxonomy_version="KRX@2026-05-08")
+    final = await app.ainvoke(_init(7, name))
+
+    assert final["publisher_suspect"] == "filename_mismatch"
+    (_, args), = mock_supabase.executed
+    assert (args[3], args[4]) == ("키움증권", "broker")    # not 메리츠증권

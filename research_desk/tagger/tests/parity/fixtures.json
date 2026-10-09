@@ -489,5 +489,126 @@
       "tagging_confidence": "high",
       "tagging_notes": null
     }
+  },
+  {
+    "case": "publisher_filename_mismatch",
+    "input": {
+      "file_name": "samsung_005930_20260513_MERITZ_1096333.pdf",
+      "caption": null,
+      "sent_at": "2026-05-13T05:00:00+00:00",
+      "pdf_text": "삼성전자 005930 2Q26 Preview\n분석가: 홍길동\n키움증권 리서치센터\n2026-05-13"
+    },
+    "llm_mock": {
+      "report_type": "단일종목",
+      "title": "삼성전자 2Q26 Preview",
+      "published_at": "2026-05-13",
+      "stock_codes_raw": ["005930"],
+      "company_names_raw": ["삼성전자"],
+      "publisher_canon": "키움증권",
+      "publisher_type": "data_provider",
+      "analysts": ["홍길동"],
+      "oos_signals": {
+        "foreign_primary_coverage": false,
+        "etf_or_fund": false,
+        "digital_asset": false,
+        "private_company_likely": false
+      },
+      "self_confidence": "high",
+      "notes": null
+    },
+    "expected": {
+      "publisher": "키움증권",
+      "publisher_type": "broker"
+    }
+  },
+  {
+    "case": "publisher_alias_answer_null",
+    "input": {
+      "file_name": "samsung_005930_20260514_Eugene_1096334.pdf",
+      "caption": null,
+      "sent_at": "2026-05-14T05:00:00+00:00",
+      "pdf_text": "삼성전자 005930 2Q26 Review\n분석가: 이영희\nEugene Investment & Securities\n2026-05-14"
+    },
+    "llm_mock": {
+      "report_type": "단일종목",
+      "title": "삼성전자 2Q26 Review",
+      "published_at": "2026-05-14",
+      "stock_codes_raw": ["005930"],
+      "company_names_raw": ["삼성전자"],
+      "publisher_canon": "Eugene",
+      "analysts": ["이영희"],
+      "oos_signals": {
+        "foreign_primary_coverage": false,
+        "etf_or_fund": false,
+        "digital_asset": false,
+        "private_company_likely": false
+      },
+      "self_confidence": "high",
+      "notes": null
+    },
+    "expected": {
+      "publisher": null,
+      "publisher_type": null
+    }
+  },
+  {
+    "case": "publisher_unknown_null",
+    "input": {
+      "file_name": "unknown_house_005930_note.pdf",
+      "caption": null,
+      "sent_at": "2026-05-15T05:00:00+00:00",
+      "pdf_text": "삼성전자 005930 Note\n분석가: 최민호\n미등록리서치 리서치센터\n2026-05-15"
+    },
+    "llm_mock": {
+      "report_type": "단일종목",
+      "title": "삼성전자 Note",
+      "published_at": "2026-05-15",
+      "stock_codes_raw": ["005930"],
+      "company_names_raw": ["삼성전자"],
+      "publisher_canon": null,
+      "analysts": ["최민호"],
+      "oos_signals": {
+        "foreign_primary_coverage": false,
+        "etf_or_fund": false,
+        "digital_asset": false,
+        "private_company_likely": false
+      },
+      "self_confidence": "high",
+      "notes": null
+    },
+    "expected": {
+      "publisher": null,
+      "publisher_type": null
+    }
+  },
+  {
+    "case": "oos_ir_self_broker_filename_tag",
+    "input": {
+      "file_name": "company_self_ir_20260516_MERITZ_1096335.pdf",
+      "caption": null,
+      "sent_at": "2026-05-16T05:00:00+00:00",
+      "pdf_text": "Investor Relations Material\nIR자료 3분기 실적 발표\nSelfIRCo\n2026-05-16"
+    },
+    "llm_mock": {
+      "report_type": "IR자료",
+      "title": "Company Self IR Material 3Q26",
+      "published_at": "2026-05-16",
+      "stock_codes_raw": [],
+      "company_names_raw": ["SelfIRCo"],
+      "publisher_canon": "해당기업",
+      "analysts": [],
+      "oos_signals": {
+        "foreign_primary_coverage": false,
+        "etf_or_fund": false,
+        "digital_asset": false,
+        "private_company_likely": false
+      },
+      "self_confidence": "high",
+      "notes": null
+    },
+    "expected": {
+      "publisher": "해당기업",
+      "publisher_type": "other"
+    }
   }
 ]
