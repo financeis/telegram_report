@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import pandas as pd
 
-# The 15 columns of every frame the reports window returns (period_rows / stock_rows).
+# The 16 columns of every frame the reports window returns (period_rows / stock_rows /
+# rows_for_stocks).
 REPORT_COLUMNS: tuple[str, ...] = (
     'id', 'published_at', 'sent_at', 'report_type', 'publisher',
     'stock_codes', 'company_names', 'sectors_major', 'sectors_minor',
     'products', 'tagging_status', 'out_of_scope_reason', 'file_path',
-    'file_name', 'title',
+    'file_name', 'title', 'publisher_type',
 )
 
 

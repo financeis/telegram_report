@@ -5,7 +5,7 @@ features read reports only through the names below. Public names:
 
 - ``router``: ``GET /api/stocks/{code}/reports``, ``GET /api/reports/{rid}/pdf``,
   ``POST /api/reports/{rid}/analyze`` (spec §6).
-- ``report_row(rid)`` → the in-scope DB row (15 columns, file_path included: never send it to
+- ``report_row(rid)`` → the in-scope DB row (16 columns, file_path included: never send it to
   the browser); 404 ``기업 보고서를 찾을 수 없습니다.`` when there is none.
 - ``get_report(rid)`` → ``public_report`` of that row with its saved summary.
 - ``public_report(row, summary)`` → the browser shape: id, title, file_name, published_at,
@@ -14,6 +14,10 @@ features read reports only through the names below. Public names:
 - ``period_rows(since, include_oos)`` → DataFrame of the period's rows (with out-of-scope rows
   kept by their effective date when ``include_oos``).
 - ``stock_rows(code, since)`` → DataFrame of the in-scope rows holding ``code``.
+
+Every DataFrame (and ``report_row``) has the 16 columns: id, published_at, sent_at, report_type,
+publisher, stock_codes, company_names, sectors_major, sectors_minor, products, tagging_status,
+out_of_scope_reason, file_path, file_name, title, publisher_type — even when it has no rows.
 
 Without DB settings every read raises ``NotReady("리포트", …)``; an unreadable stock list stops
 only the report list (spec §9.9).

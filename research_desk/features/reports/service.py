@@ -213,7 +213,7 @@ def get_service() -> ReportsService:
 
 
 def report_row(rid: int) -> dict:
-    """The in-scope reports row ``rid`` with its 15 columns, file_path included: for other
+    """The in-scope reports row ``rid`` with its 16 columns, file_path included: for other
     features' work, never for the browser. 404 ``기업 보고서를 찾을 수 없습니다.`` when there is
     none; NotReady("리포트", …) without the DB settings."""
     return get_service().report_row(rid)
@@ -226,7 +226,7 @@ def get_report(rid: int) -> dict:
 
 
 def period_rows(since: str, include_oos: bool) -> pd.DataFrame:
-    """Rows for a period starting on ``since`` (YYYY-MM-DD), the 15 columns.
+    """Rows for a period starting on ``since`` (YYYY-MM-DD), the 16 columns.
 
     In-scope rows published since then; with ``include_oos``, every final row whose effective
     date (published_at, else the KST date of sent_at) is since then. NotReady without DB settings.
@@ -236,5 +236,5 @@ def period_rows(since: str, include_oos: bool) -> pd.DataFrame:
 
 def stock_rows(code: str, since: str) -> pd.DataFrame:
     """In-scope rows whose stock_codes hold ``code`` (as given), published since ``since``, the
-    15 columns. NotReady without DB settings."""
+    16 columns. NotReady without DB settings."""
     return get_service().stock_rows(code, since)

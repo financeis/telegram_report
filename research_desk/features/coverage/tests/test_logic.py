@@ -27,6 +27,13 @@ from research_desk.features.coverage.logic import (
     stock_monthly,
 )
 from research_desk.features.coverage.tests.rows import REPORT_COLUMNS, frame, wider_frame
+from research_desk.features.reports.store import EXPECTED_COLS
+
+
+def test_the_test_frames_have_the_columns_of_the_reports_window():
+    # the frames here stand in for what the reports window returns: the same 16 columns, in order
+    assert REPORT_COLUMNS == EXPECTED_COLS
+    assert list(frame().columns) == list(wider_frame().columns) == list(REPORT_COLUMNS)
 
 
 # === sector_timeseries ===

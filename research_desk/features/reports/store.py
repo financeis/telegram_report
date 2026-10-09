@@ -4,7 +4,8 @@ This feature owns the reads of finished classifications in the reports table (sp
 material for the report list, the detail, the PDF and coverage. Ported from
 langgraph_tagger/analytics/db.py with the same queries:
 
-- every read selects the 15 ``EXPECTED_COLS``; the list reads page through ``.range()``
+- every read selects the 16 ``EXPECTED_COLS``: the old 15 columns, then ``publisher_type`` (to
+  count broker reports apart from other research); the list reads page through ``.range()``
   ``PAGE`` (1000) rows at a time until a short page;
 - the in-scope filter is the shared rule of ``domain.reports``: ``tagging_status`` in
   ``IN_SCOPE_STATUSES`` and ``out_of_scope_reason`` IS NULL;
@@ -34,7 +35,7 @@ EXPECTED_COLS: tuple[str, ...] = (
     'id', 'published_at', 'sent_at', 'report_type', 'publisher',
     'stock_codes', 'company_names', 'sectors_major', 'sectors_minor',
     'products', 'tagging_status', 'out_of_scope_reason', 'file_path',
-    'file_name', 'title',
+    'file_name', 'title', 'publisher_type',
 )
 
 SELECT_COLS = ', '.join(EXPECTED_COLS)
@@ -132,6 +133,6 @@ class ReportStore:
         return _to_frame(rows)
 
     def fetch_report_row(self, rid: int) -> Optional[dict]:
-        """The in-scope row with this id (the 15 columns), or None."""
+        """The in-scope row with this id (the 16 columns), or None."""
         result = _in_scope(self._select().eq('id', rid)).execute()
         return result.data[0] if result.data else None

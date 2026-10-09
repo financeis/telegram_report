@@ -1,7 +1,7 @@
 """Coverage calculations: pandas aggregation of report rows and the two response payloads.
 
 No DB, network, settings or files here: every function takes a DataFrame of report rows (the
-reports window's 15 columns) and returns a DataFrame for a chart, or a payload dict. Ported
+reports window's 16 columns) and returns a DataFrame for a chart, or a payload dict. Ported
 unchanged in behaviour from langgraph_tagger/analytics/aggregate.py (the aggregations) and
 langgraph_tagger/workspace/coverage.py (``records``, ``market_payload``,
 ``stock_activity_payload``), plus ``period_start`` from the old web app.

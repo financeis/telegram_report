@@ -5,9 +5,10 @@ chains): paging by 1000 until a short page, the in-scope filter, the server-side
 the include-OOS read that skips both server filters and keeps rows by effective date on the
 client, and the 15 expected columns even for an empty result.
 
-New: the 15 columns and the page size pinned, the stock-rows query (not tested before), the
-single-row lookup that moved here from workspace/service.py, and checks on an in-memory
-PostgREST stand-in that every read's in-scope filter is the shared rule in domain.reports.
+New: the 16 columns (the old 15, then publisher_type) and the page size pinned, the stock-rows
+query (not tested before), the single-row lookup that moved here from workspace/service.py, and
+checks on an in-memory PostgREST stand-in that every read's in-scope filter is the shared rule in
+domain.reports.
 """
 from __future__ import annotations
 
@@ -27,6 +28,8 @@ OLD_COLUMNS = (
     'products', 'tagging_status', 'out_of_scope_reason', 'file_path',
     'file_name', 'title',
 )
+# Every read now: the old columns in their order, then publisher_type (to count broker reports).
+COLUMNS = OLD_COLUMNS + ('publisher_type',)
 
 
 def _make_supabase_with_pages(pages: list[list[dict]]) -> MagicMock:
@@ -64,7 +67,8 @@ def tagged(rid, *, status='auto', reason=None, published='2026-05-11',
             'publisher': 'KB', 'stock_codes': list(codes), 'company_names': ['삼성증권'],
             'sectors_major': ['금융'], 'sectors_minor': ['증권'], 'products': ['증권'],
             'tagging_status': status, 'out_of_scope_reason': reason,
-            'file_path': f'{rid}.pdf', 'file_name': f'{rid}.pdf', 'title': f'report {rid}', **extra}
+            'file_path': f'{rid}.pdf', 'file_name': f'{rid}.pdf', 'title': f'report {rid}',
+            'publisher_type': 'broker', **extra}
 
 
 def ids(df: pd.DataFrame) -> list[int]:
@@ -188,9 +192,11 @@ def test_fetch_returns_dataframe_with_expected_columns():
 
 # ── columns, table, paging ───────────────────────────────────────────────────
 
-def test_the_fifteen_columns_and_the_page_size_are_unchanged():
-    assert EXPECTED_COLS == OLD_COLUMNS
-    assert SELECT_COLS == ', '.join(OLD_COLUMNS)
+def test_the_sixteen_columns_are_the_old_fifteen_then_publisher_type_and_the_page_size_is_unchanged():
+    assert EXPECTED_COLS == COLUMNS
+    assert len(EXPECTED_COLS) == 16 and EXPECTED_COLS[:15] == OLD_COLUMNS
+    assert EXPECTED_COLS[-1] == 'publisher_type'
+    assert SELECT_COLS == ', '.join(COLUMNS)
     assert PAGE == 1000
 
 
@@ -204,13 +210,26 @@ READS = {
 
 
 @pytest.mark.parametrize('read', list(READS.values()), ids=list(READS))
-def test_every_read_selects_the_fifteen_columns_from_reports(read):
+def test_every_read_selects_the_sixteen_columns_from_reports(read):
     db = FakeSupabase(reports=[tagged(1, caption='internal', file_hash_sha256='ab' * 32)])
     result = read(ReportStore(db))
     assert [q.table for q in db.executed] == ['reports']
     assert db.executed[0].columns == SELECT_COLS
     rows = [result] if isinstance(result, dict) else result.to_dict('records')
     assert rows and all(set(r) == set(EXPECTED_COLS) for r in rows)   # no caption, no hash
+    assert all(r['publisher_type'] == 'broker' for r in rows)
+
+
+FRAME_READS = {name: read for name, read in READS.items() if name != 'one row'}
+
+
+@pytest.mark.parametrize('rows', [[], [tagged(1, status='pending', codes=('005930',), published='2000-01-01')]],
+                         ids=['empty table', 'nothing matches'])
+@pytest.mark.parametrize('read', list(FRAME_READS.values()), ids=list(FRAME_READS))
+def test_every_frame_has_the_sixteen_columns_in_order_even_when_empty(read, rows):
+    df = read(ReportStore(FakeSupabase(reports=rows)))
+    assert list(df.columns) == list(COLUMNS)
+    assert len(df) == 0
 
 
 @pytest.mark.parametrize('count, windows', [

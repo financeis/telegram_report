@@ -83,7 +83,8 @@ def tagged(rid, *, published='2026-05-11', codes=('016360',), report_type='단�
             'company_names': ['삼성증권'], 'sectors_major': ['금융'], 'sectors_minor': ['증권'],
             'products': ['증권'], 'tagging_status': status, 'out_of_scope_reason': reason,
             'file_path': f'2026/{rid}.pdf', 'file_name': f'{rid}_report.pdf', 'title': f'report {rid}',
-            'caption': 'internal caption', 'file_hash_sha256': 'ab' * 32, **extra}
+            'publisher_type': 'broker', 'caption': 'internal caption', 'file_hash_sha256': 'ab' * 32,
+            **extra}
 
 
 def report(rid, published, publisher='KB', code='016360', summary=None):
@@ -263,6 +264,18 @@ def test_public_report_has_exactly_the_contract_keys_in_order():
 
 def test_public_report_shows_missing_columns_as_null():
     assert public_report({'id': 5}, None) == dict.fromkeys(PUBLIC_KEYS[:-1]) | {'id': 5, 'pdf_url': '/api/reports/5/pdf'}
+
+
+def test_the_public_shape_stays_13_keys_without_publisher_type(client, db, stock_csv, summaries, analyze):
+    # the rows read now carry publisher_type (16 columns); the browser shape does not change
+    row = tagged(1, publisher_type='data_provider')
+    assert 'publisher_type' in row and list(public_report(row, None)) == PUBLIC_KEYS
+    db.tables['reports'] = [row]
+    listed = client.get('/api/stocks/016360/reports').json()['reports']
+    analyzed = client.post('/api/reports/1/analyze').json()
+    assert [list(r) for r in listed] == [PUBLIC_KEYS]
+    assert list(analyzed) == PUBLIC_KEYS + ['analysis_reused']
+    assert len(PUBLIC_KEYS) == 13
 
 
 def test_browser_responses_never_carry_paths_or_keys(client, db, stock_csv, storage, summaries, analyze):
@@ -695,11 +708,12 @@ def test_get_report_is_the_public_shape_with_that_reports_summary(window, db, su
     assert summaries.calls == [[1]]   # no summary read for a report that is not there
 
 
-def test_period_rows_and_stock_rows_are_frames_of_the_fifteen_columns(window, db):
+def test_period_rows_and_stock_rows_are_frames_of_the_sixteen_columns(window, db):
     db.tables['reports'] = [
         tagged(1, published='2026-04-01'),
-        tagged(2, published='2026-05-11', codes=('005930',)),
-        tagged(3, status='verified', reason='ir_self', published=None),   # sent_at KST 2026-05-11
+        tagged(2, published='2026-05-11', codes=('005930',), publisher_type=None),
+        tagged(3, status='verified', reason='ir_self', published=None,   # sent_at KST 2026-05-11
+               publisher_type='other'),
         tagged(4, status='review_needed'),
     ]
     assert list(reports.period_rows('2026-05-01', False)['id']) == [2]
@@ -709,6 +723,10 @@ def test_period_rows_and_stock_rows_are_frames_of_the_fifteen_columns(window, db
     assert list(reports.stock_rows('16360', '2026-01-01')['id']) == []   # no zero-padding for the DB
     for frame in (reports.period_rows('2026-05-01', True), reports.stock_rows('999999', '2026-01-01')):
         assert list(frame.columns) == list(EXPECTED_COLS)
+    assert len(EXPECTED_COLS) == 16 and EXPECTED_COLS[-1] == 'publisher_type'
+    # publisher_type comes through as stored, empty included
+    assert list(reports.period_rows('2026-01-01', True)['publisher_type']) == ['broker', None, 'other']
+    assert reports.report_row(1)['publisher_type'] == 'broker'
 
 
 def test_the_window_needs_no_stock_list(window, db, summaries, tmp_path, monkeypatch):
