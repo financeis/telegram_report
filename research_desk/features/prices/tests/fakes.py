@@ -23,7 +23,7 @@ Each execution is kept in ``executed``; ``writes()`` lists the inserts, upserts 
 ``fail_next(kind)`` makes the next query of that kind ('select', 'insert', 'upsert', 'update')
 raise FakeDBError (a DB outage).
 
-``FakeKis`` is the KIS client of one run (``KisClient.daily_prices`` / ``quote``).
+``FakeKis`` is the KIS client of one run (``KisClient.ensure_token`` / ``daily_prices`` / ``quote``).
 """
 from __future__ import annotations
 
@@ -348,7 +348,9 @@ def trading_rows(closes: list, *, last_day: date = AS_OF, values: Optional[list]
 class FakeKis:
     """The KIS client of one run: ``daily`` rows and ``quotes`` per code, or an exception from
     ``daily_errors`` / ``quote_errors``. Every call is kept in ``calls``; ``during(call)`` runs
-    inside each call (to interrupt a run). ``closed`` after ``close()``."""
+    inside each call (to interrupt a run). ``ensure_token()`` (the run's access token) is counted
+    in ``token_asked``, not in ``calls``: it runs ``token_during()``, then raises ``token_error``
+    when one is set. ``closed`` after ``close()``."""
 
     def __init__(self) -> None:
         self.daily: dict[str, list[dict]] = {}
@@ -357,12 +359,23 @@ class FakeKis:
         self.quote_errors: dict[str, BaseException] = {}
         self.calls: list[tuple] = []
         self.during: Optional[Callable[[tuple], None]] = None
+        self.token_asked = 0
+        self.token_error: Optional[BaseException] = None
+        self.token_during: Optional[Callable[[], None]] = None
         self.closed = False
 
     def add(self, code: str, closes: list, *, last_day: date = AS_OF, values: Optional[list] = None,
             **quote: Any) -> None:
         self.daily[code] = trading_rows(closes, last_day=last_day, values=values)
         self.quotes[code] = QUOTE | quote
+
+    def ensure_token(self) -> None:
+        assert not self.closed, "the KIS client was used after close()"
+        self.token_asked += 1
+        if self.token_during is not None:
+            self.token_during()
+        if self.token_error is not None:
+            raise self.token_error
 
     def daily_prices(self, code: str, start: date, end: date) -> list[dict]:
         self._called(("daily_prices", code, start, end))

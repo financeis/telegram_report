@@ -14,6 +14,12 @@ Checked:
   (more than 20 %) leaves every snapshot as it was and stops asking KIS once that is certain;
   a crash or an interrupt closes the run as failed; the exit code is 0 for ok / partial, 1 for
   failed; one summary line;
+- the KIS access token (spec §8: once a run): asked once, up front — while the run record is
+  running and before any stock; first in ``--codes``. Without it nothing else is asked: the run
+  is failed at once (snapshot unchanged, the reason in the run record and the stderr line, exit
+  1) and ``--codes`` writes nothing and exits 1. Also run with the real KIS client against a KIS
+  stand-in whose token request is refused (403) or fails (5xx): one token attempt (with its
+  retries), no stock request;
 - ``--codes``: prints the results, writes nothing (no snapshot, no run record), excess from the
   stored snapshots' market medians or blank; exit 0 only when every code was received;
 - the KIS client gets the keys, the address and the call rate from the settings; values added to
@@ -22,11 +28,13 @@ Checked:
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from research_desk.core import db as core_db
@@ -460,6 +468,165 @@ def test_a_run_that_cannot_be_closed_still_shows_the_first_error(world):
     with pytest.raises(FakeDBError, match="upsert"):
         update()
     assert world.db.runs()[0]["status"] == "running"
+
+
+# ── the access token: once a run, before any stock ───────────────────────────
+
+TOKEN_REASON = "KisError: KIS access token failed: HTTP 403 EGW00133 접근토큰 발급 잠시 후 다시 시도하세요(1분당 1회)"
+
+
+def run_without_token(reason: str) -> str:
+    return f"KIS 접근 토큰을 받지 못했습니다 ({reason}). 아무 종목도 받지 않았고 스냅샷을 바꾸지 않았습니다"
+
+
+def check_without_token(reason: str) -> str:
+    return f"확인용 실행이라 아무것도 저장하지 않았습니다: KIS 접근 토큰을 받지 못했습니다 ({reason}). 아무 종목도 받지 않았습니다"
+
+
+@pytest.mark.parametrize("argv,runs,asked", [
+    ([], ["running"], ["005930", "080220", "0126Z0"]),
+    (["--codes", "005930,080220"], [], ["005930", "080220"]),
+], ids=["all", "codes"])
+def test_the_token_is_asked_once_before_any_stock(world, argv, runs, asked):
+    full_world(world)
+    seen = []
+    world.kis.token_during = lambda: seen.append((list(world.kis.calls), [run["status"] for run in world.db.runs()]))
+    assert update(*argv) == 0
+    assert world.kis.token_asked == 1
+    assert seen == [([], runs)]   # no stock asked yet; a full run's record is already running
+    assert world.kis.codes("daily_prices") == asked
+
+
+def test_without_the_token_a_run_asks_no_stock_and_fails_at_once(world, capsys):
+    full_world(world, TEN)
+    for code, _ in TEN[:5]:
+        world.db.add_snapshot(OLD | {"stock_code": code})
+    before = deepcopy(world.db.tables[SNAPSHOT])
+    world.kis.token_error = KisError(TOKEN_REASON.removeprefix("KisError: "), code="EGW00133", status=403)
+    assert update() == 1
+    assert world.kis.token_asked == 1 and world.kis.calls == [] and world.kis.closed
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert lines(err) == [f"주가 갱신 실패(failed): 기준일 없음, 성공 0종목, 실패 10종목. {run_without_token(TOKEN_REASON)}"]
+    [run] = world.db.runs()
+    assert run == {"run_id": 1, "started_at": NOW.isoformat(), "finished_at": NOW.isoformat(), "status": "failed",
+                   "as_of": None, "stocks_total": 10, "stocks_ok": 0, "stocks_failed": 10,
+                   "message": run_without_token(TOKEN_REASON)}
+    assert world.db.tables[SNAPSHOT] == before and world.db.queries(SNAPSHOT) == []
+
+
+def test_without_the_token_codes_ask_nothing_and_write_nothing(world, capsys):
+    full_world(world)
+    world.kis.token_error = KisError(TOKEN_REASON.removeprefix("KisError: "), code="EGW00133", status=403)
+    assert update("--codes", "005930,080220") == 1
+    assert world.kis.token_asked == 1 and world.kis.calls == [] and world.kis.closed
+    assert capsys.readouterr() == ("", check_without_token(TOKEN_REASON) + "\n")
+    assert world.db.executed == []   # stopped before anything: no read, nothing written
+
+
+def test_an_interrupt_while_the_token_is_asked_closes_the_run_as_failed(world):
+    full_world(world)
+    world.kis.token_error = KeyboardInterrupt()
+    with pytest.raises(KeyboardInterrupt):
+        update()
+    [run] = world.db.runs()
+    assert run["status"] == "failed" and run["message"] == "실행 중 오류로 멈췄습니다: KeyboardInterrupt"
+    assert world.kis.calls == [] and world.db.tables[SNAPSHOT] == []
+
+
+class KisServer:
+    """The KIS server behind a real ``KisClient`` (an httpx MockTransport: nothing leaves this PC).
+
+    The token request gets ``token_answer()``; any other request an empty KIS answer. ``paths``
+    lists every request. ``clock`` and ``sleep`` are the client's: sleeping moves the clock
+    (nothing waits) and ``sleeps`` keeps each wait.
+    """
+
+    def __init__(self) -> None:
+        self.token_answer = lambda: httpx.Response(200, json={"access_token": "fake-access-token"})
+        self.paths: list[str] = []
+        self.now = 0.0
+        self.sleeps: list[float] = []
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        self.paths.append(request.url.path)
+        if request.url.path == core_kis.TOKEN_PATH:
+            return self.token_answer()
+        return httpx.Response(200, json={"rt_cd": "0", "msg_cd": "MCA00000", "output2": [], "output": {}})
+
+    def clock(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+@pytest.fixture
+def kis_server(world, monkeypatch):
+    """``jobs.kis_client`` makes the real KIS client again, talking to a KisServer."""
+    server = KisServer()
+    monkeypatch.setenv("KIS_BASE_URL", "https://kis.example.invalid")   # never the real service
+    monkeypatch.setattr(core_kis, "KisClient", functools.partial(
+        core_kis.KisClient, transport=httpx.MockTransport(server.handle), sleep=server.sleep, clock=server.clock))
+    monkeypatch.setattr(jobs, "kis_client", REAL_KIS_CLIENT)
+    return server
+
+
+HUNDRED = [(f"{i:06d}", "KOSPI") for i in range(100)]
+TOKEN_FAILURES = {   # the token answer, then one attempt's token requests (the try and its retries) and waits
+    "403": (lambda: httpx.Response(403, json={"error_code": "EGW00133",
+                                              "error_description": "접근토큰 발급 잠시 후 다시 시도하세요(1분당 1회)"}),
+            1, [], TOKEN_REASON),
+    "5xx": (lambda: httpx.Response(503, text="Service Unavailable"), 1 + core_kis.MAX_RETRIES, [1.0, 2.0, 4.0],
+            "KisError: KIS access token failed after 3 retries: HTTP 503"),
+}
+
+
+@pytest.mark.parametrize("answer,requests,waits,reason", list(TOKEN_FAILURES.values()), ids=list(TOKEN_FAILURES))
+def test_a_run_with_the_real_client_asks_kis_for_one_token_and_no_stock(world, kis_server, capsys, answer,
+                                                                        requests, waits, reason):
+    world.stocks(HUNDRED)
+    for code, _ in HUNDRED[:5]:
+        world.db.add_snapshot(OLD | {"stock_code": code})
+    before = deepcopy(world.db.tables[SNAPSHOT])
+    kis_server.token_answer = answer
+    assert update() == 1
+    assert kis_server.paths.count(core_kis.TOKEN_PATH) == requests   # one attempt for the whole run
+    assert kis_server.paths == [core_kis.TOKEN_PATH] * requests      # and no stock asked
+    assert kis_server.sleeps == pytest.approx(waits)
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert lines(err) == [f"주가 갱신 실패(failed): 기준일 없음, 성공 0종목, 실패 100종목. {run_without_token(reason)}"]
+    [run] = world.db.runs()
+    assert (run["status"], run["stocks_ok"], run["stocks_failed"], run["as_of"], run["message"]) == (
+        "failed", 0, 100, None, run_without_token(reason))
+    assert world.db.tables[SNAPSHOT] == before and world.db.queries(SNAPSHOT) == []
+
+
+@pytest.mark.parametrize("answer,requests,waits,reason", list(TOKEN_FAILURES.values()), ids=list(TOKEN_FAILURES))
+def test_codes_with_the_real_client_ask_kis_for_one_token_and_no_stock(world, kis_server, capsys, answer,
+                                                                       requests, waits, reason):
+    world.stocks(STOCKS)
+    kis_server.token_answer = answer
+    assert update("--codes", "005930,080220,0126Z0") == 1
+    assert kis_server.paths.count(core_kis.TOKEN_PATH) == requests
+    assert kis_server.paths == [core_kis.TOKEN_PATH] * requests
+    assert capsys.readouterr() == ("", check_without_token(reason) + "\n")
+    assert world.db.writes() == [] and world.db.runs() == []
+
+
+def test_a_refused_token_that_repeats_the_keys_shows_and_stores_no_key(world, kis_server, capsys):
+    world.stocks(STOCKS)
+    kis_server.token_answer = lambda: httpx.Response(403, json={
+        "error_code": "EGW00103", "error_description": f"유효하지 않은 AppKey입니다 {APP_KEY} {APP_SECRET}"})
+    assert update() == 1
+    assert update("--codes", "005930") == 1
+    out, err = capsys.readouterr()
+    shown = out + err + str(world.db.runs())
+    assert "EGW00103" in shown
+    for secret in (APP_KEY, APP_SECRET, KEY):
+        assert secret not in shown
 
 
 # ── --codes: a check that writes nothing ─────────────────────────────────────

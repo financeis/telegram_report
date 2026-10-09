@@ -8,26 +8,35 @@
   (KRX_CSV_PATH) loads. One Korean line on stderr; no DB or KIS call, nothing written. A
   PRICES_MAX_CALLS_PER_SEC that is not a number above 0 is a ValueError (exit 1), also before any
   call.
+- The KIS access token is asked for once a run, before any stock (spec §8: KIS issues about one
+  a minute, and the app key is shared with another project). Without it nothing else is asked
+  (the full run's step 2, ``--codes``), and the KIS client does not ask for it again.
 - A full run (no ``--codes``) covers every stock of the stock list (each valid code once, in
   file order):
   1. a run record ``running`` (started_at, stocks_total);
-  2. per stock, one after another, paced by the KIS client at PRICES_MAX_CALLS_PER_SEC: the
+  2. the access token. When it cannot be had (a KIS error or a strange answer) the run is failed
+     at once: no stock is asked and no snapshot changes; the run record is closed with no stock
+     received, every stock counted as failed and the message ``KIS 접근 토큰을 받지 못했습니다
+     (<reason>). …``, which also ends the summary line on stderr; exit 1;
+  3. per stock, one after another, paced by the KIS client at PRICES_MAX_CALLS_PER_SEC: the
      adjusted daily prices of the ``LOOKBACK_DAYS`` calendar days up to today (KST), then the
      quote. A KIS error, a strange answer or no usable row is that stock's failure (one warning
      line each). Once more than 20 % of the stocks have failed the run is failed whatever comes
      next, so the rest are not asked;
-  3. the status (``logic.run_status``). ok / partial: the received stocks are upserted with the
+  4. the status (``logic.run_status``). ok / partial: the received stocks are upserted with the
      excess against this run's market medians, and the stocks not received keep their stored
      values and get the ``no_data`` flag (a stock without a stored row gets none). failed: no
      snapshot changes;
-  4. the run record is closed with the status, as_of (the latest day received), the counts and a
+  5. the run record is closed with the status, as_of (the latest day received), the counts and a
      message;
-  5. one summary line: stdout for ok / partial (exit 0), stderr for failed (exit 1).
+  6. one summary line: stdout for ok / partial (exit 0), stderr for failed (exit 1).
   An exception or Ctrl+C on the way closes the run record as failed and goes up (exit 1).
-- ``--codes`` is a check: only those codes are asked and their computed rows printed as JSON,
-  then one summary line. Nothing is written (no snapshot, no run record). Excess uses the market
-  medians of every stored snapshot, blank when there is none. A code not in the stock list is not
-  asked. Exit 0 when every code was received, else 1 (summary on stderr).
+- ``--codes`` is a check. The access token comes first: without it nothing is asked or read and
+  nothing goes to stdout (one line on stderr, exit 1). Then only those codes are asked and their
+  computed rows printed as JSON, then one summary line. Nothing is written (no snapshot, no run
+  record). Excess uses the market medians of every stored snapshot, blank when there is none. A
+  code not in the stock list is not asked. Exit 0 when every code was received, else 1 (summary
+  on stderr).
 
 Heavy imports (the KIS client with its HTTP library, supabase-py) happen when the command runs:
 ``cli.py`` imports this module for every command. Output holds no key: KIS errors are masked by
@@ -64,6 +73,9 @@ KIS_NOT_CONFIGURED = "KIS 접속 설정(KIS_APP_KEY, KIS_APP_SECRET)이 없습�
 STOCK_LIST_UNREADABLE = "종목표 파일을 읽을 수 없습니다 ({cause})"
 NO_PRICES = "받은 시세가 없습니다"
 NOT_LISTED = "종목표에 없는 종목코드입니다"
+TOKEN_FAILED = "KIS 접근 토큰을 받지 못했습니다 ({reason})"
+RUN_WITHOUT_TOKEN = TOKEN_FAILED + ". 아무 종목도 받지 않았고 스냅샷을 바꾸지 않았습니다"
+CHECK_WITHOUT_TOKEN = "확인용 실행이라 아무것도 저장하지 않았습니다: " + TOKEN_FAILED + ". 아무 종목도 받지 않았습니다"
 CRASHED = "실행 중 오류로 멈췄습니다: {error}"
 STATUS_WORDS = {logic.OK: "완료", logic.PARTIAL: "일부 완료", logic.FAILED: "실패"}
 MESSAGE_CODES = 20    # codes named in a run record's message
@@ -156,6 +168,16 @@ def _targets(stocks: StockList) -> list[StockEntry]:
     return [entry for entry in stocks.by_code.values() if stocks.validate_code(entry.code)]
 
 
+def _token_problem(kis: Any) -> Optional[str]:
+    """Get the run's KIS access token before any stock is asked: None when the client has it,
+    else the reason (a KisError's text holds no key: the client masks it)."""
+    try:
+        kis.ensure_token()
+    except Exception as exc:   # a KIS error or a strange answer: no stock can be asked without it
+        return _reason(exc)
+    return None
+
+
 def _fetch(kis: Any, entry: StockEntry, start: date, end: date) -> tuple[Optional[dict], Optional[str]]:
     """``(snapshot row, None)`` for a received stock, ``(None, reason)`` for one not received."""
     try:
@@ -179,21 +201,25 @@ def _run(sb: Any, kis: Any, entries: Sequence[StockEntry], window: tuple[date, d
     total = len(entries)
     run_id = store.start_run(sb, started_at=utc_now().isoformat(), total=total)
     try:
-        received, failures, skipped = _collect(kis, entries, window)
+        problem = _token_problem(kis)
+        if problem is not None:   # no stock is asked without the token, so no snapshot changes
+            received, status, as_of = [], logic.FAILED, None
+            outcome = message = RUN_WITHOUT_TOKEN.format(reason=problem)
+        else:
+            received, failures, skipped = _collect(kis, entries, window)
+            status = logic.run_status(total, total - len(received))
+            as_of = max((row["as_of"] for row in received), default=None)
+            if status != logic.FAILED:
+                _save(sb, received, list(failures))
+            outcome, message = _outcome(status, skipped), _run_message(status, failures, skipped)
         failed = total - len(received)
-        status = logic.run_status(total, failed)
-        as_of = max((row["as_of"] for row in received), default=None)
-        if status != logic.FAILED:
-            _save(sb, received, list(failures))
         store.finish_run(sb, run_id, status=status, finished_at=utc_now().isoformat(), as_of=as_of,
-                         stocks_ok=len(received), stocks_failed=failed,
-                         message=_run_message(status, failures, skipped))
+                         stocks_ok=len(received), stocks_failed=failed, message=message)
     except BaseException as exc:
         _close_crashed(sb, run_id, exc)
         raise
     line = (f"주가 갱신 {STATUS_WORDS[status]}({status}): 기준일 {as_of or '없음'}, "
             f"성공 {len(received)}종목, 실패 {failed}종목")
-    outcome = _outcome(status, skipped)
     if outcome:
         line += f". {outcome}"
     print(line, file=sys.stderr if status == logic.FAILED else sys.stdout)
@@ -267,6 +293,10 @@ def _close_crashed(sb: Any, run_id: int, exc: BaseException) -> None:
 # ── --codes: a check that writes nothing ─────────────────────────────────────
 
 def _check(sb: Any, kis: Any, stocks: StockList, codes: Sequence[str], window: tuple[date, date]) -> int:
+    problem = _token_problem(kis)
+    if problem is not None:   # nothing is asked or read without the token
+        print(CHECK_WITHOUT_TOKEN.format(reason=problem), file=sys.stderr)
+        return 1
     medians = logic.market_medians(store.read_all_returns(sb))
     start, end = window
     results: dict[str, dict] = {}
