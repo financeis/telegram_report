@@ -246,3 +246,249 @@ def test_aggregate_review_reasons_handles_llm_refusal_with_detail():
     rep = _aggregate(results, model="m", batch_size=2, dry_run=False)
     assert rep["review_reasons"]["llm_refusal"] == 2
     assert rep["review_reasons"]["first_page_unreadable"] == 1
+
+
+# ── Picture / suspect counts and dry-run rows (spec §5, §3.7) ────────────────
+
+_REPORT_KEYS = [
+    "model", "processed", "auto", "review_needed", "confidence", "oos", "review_reasons",
+    "transient_errors", "deadline_errors", "unhandled_errors",
+    "page_image", "page_image_unsupported", "publisher_suspect",
+    "dry_run", "batch_size",
+]
+
+
+def _final(id_, **values):
+    """A row's final graph state as run_batch collects it."""
+    return {"id": id_, **values}
+
+
+_MIXED_RESULTS = [
+    # in-scope auto, read from the picture, suspect publisher
+    _final(1, tagging_status="auto", tagging_confidence="medium",
+           tagging_notes="page_image;publisher_suspect:unknown",
+           llm_raw=make_llm_extraction(publisher_canon=None), page_image=True,
+           publisher_final=None, publisher_type_final=None, publisher_suspect="unknown"),
+    # in-scope review, suspect only
+    _final(2, tagging_status="review_needed", tagging_confidence="low",
+           tagging_notes="krx_unmatched_in_scope:ipo_pending_or_unknown;publisher_suspect:filename_mismatch",
+           llm_raw=make_llm_extraction(stock_codes_raw=[], company_names_raw=["미상장IPO후보"]),
+           publisher_final="키움증권", publisher_type_final="broker",
+           publisher_suspect="filename_mismatch"),
+    # picture the model could not take
+    _final(3, tagging_status="review_needed", tagging_confidence="low",
+           tagging_notes="first_page_unreadable", llm_raw=None, pdf_unreadable=True,
+           page_image_unsupported=True),
+    # OOS, read from the picture
+    _final(4, tagging_status="auto", tagging_confidence="medium", tagging_notes="page_image",
+           llm_raw=make_llm_extraction(report_type="IR자료", publisher_canon="해당기업"),
+           is_oos=True, oos_reason="ir_self", page_image=True,
+           publisher_final="해당기업", publisher_type_final="other", publisher_suspect=None),
+    # plain text row, unmarked
+    _final(5, tagging_status="auto", tagging_confidence="high", tagging_notes=None,
+           llm_raw=make_llm_extraction(), publisher_final="키움증권",
+           publisher_type_final="broker", publisher_suspect=None),
+    # refused picture row
+    _final(6, tagging_status="review_needed", tagging_confidence="low",
+           tagging_notes="llm_refusal:cannot read;page_image", llm_raw=None,
+           llm_refusal="cannot read", page_image=True),
+    # error rows
+    {"id": 7, "error": "transient", "detail": "429"},
+    {"id": 8, "error": "deadline_exceeded"},
+    {"id": 9, "error": "unhandled", "detail": "RuntimeError:boom"},
+]
+
+
+def test_report_counts_picture_and_suspect_rows():
+    from research_desk.tagger.orchestrator import _aggregate
+
+    rep = _aggregate(_MIXED_RESULTS, model="m", batch_size=10, dry_run=False)
+
+    assert rep["page_image"] == 3                 # rows 1, 4, 6
+    assert rep["page_image_unsupported"] == 1     # row 3
+    assert rep["publisher_suspect"] == 2          # rows 1, 2
+    assert all(isinstance(rep[k], int) for k in ("page_image", "page_image_unsupported",
+                                                  "publisher_suspect"))
+
+
+def test_report_keeps_the_existing_keys_and_adds_three():
+    from research_desk.tagger.orchestrator import _aggregate
+
+    rep = _aggregate(_MIXED_RESULTS, model="m", batch_size=10, dry_run=False)
+
+    assert list(rep) == _REPORT_KEYS
+    assert rep["processed"] == 9
+    assert (rep["auto"], rep["review_needed"]) == (3, 3)
+    assert rep["confidence"] == {"high": 1, "medium": 2, "low": 3}
+    assert rep["oos"]["ir_self"] == 1
+    assert (rep["transient_errors"], rep["deadline_errors"], rep["unhandled_errors"]) == (1, 1, 1)
+
+
+def test_review_reasons_count_only_the_four_names():
+    """page_image and publisher_suspect notes are not review reasons (spec §3.4)."""
+    from research_desk.tagger.orchestrator import _aggregate
+
+    rep = _aggregate(_MIXED_RESULTS, model="m", batch_size=10, dry_run=False)
+
+    assert rep["review_reasons"] == {
+        "krx_unmatched_in_scope": 1, "first_page_unreadable": 1, "llm_refusal": 1,
+    }
+
+
+def test_a_report_without_marked_rows_counts_zero():
+    from research_desk.tagger.orchestrator import _aggregate
+
+    rep = _aggregate([_MIXED_RESULTS[4]], model="m", batch_size=1, dry_run=False)
+
+    assert (rep["page_image"], rep["page_image_unsupported"], rep["publisher_suspect"]) == (0, 0, 0)
+
+
+def test_dry_run_report_lists_each_row():
+    from research_desk.tagger.orchestrator import _aggregate
+
+    rep = _aggregate(_MIXED_RESULTS, model="m", batch_size=10, dry_run=True)
+
+    assert list(rep) == [*_REPORT_KEYS, "rows"]
+    assert rep["rows"] == [
+        {"id": 1, "tagging_status": "auto", "tagging_confidence": "medium",
+         "report_type": "단일종목", "publisher": None, "publisher_type": None,
+         "tagging_notes": "page_image;publisher_suspect:unknown"},
+        {"id": 2, "tagging_status": "review_needed", "tagging_confidence": "low",
+         "report_type": "단일종목", "publisher": "키움증권", "publisher_type": "broker",
+         "tagging_notes": "krx_unmatched_in_scope:ipo_pending_or_unknown;"
+                          "publisher_suspect:filename_mismatch"},
+        {"id": 3, "tagging_status": "review_needed", "tagging_confidence": "low",
+         "report_type": None, "publisher": None, "publisher_type": None,
+         "tagging_notes": "first_page_unreadable"},
+        {"id": 4, "tagging_status": "auto", "tagging_confidence": "medium",
+         "report_type": "IR자료", "publisher": "해당기업", "publisher_type": "other",
+         "tagging_notes": "page_image"},
+        {"id": 5, "tagging_status": "auto", "tagging_confidence": "high",
+         "report_type": "단일종목", "publisher": "키움증권", "publisher_type": "broker",
+         "tagging_notes": None},
+        {"id": 6, "tagging_status": "review_needed", "tagging_confidence": "low",
+         "report_type": None, "publisher": None, "publisher_type": None,
+         "tagging_notes": "llm_refusal:cannot read;page_image"},
+        {"id": 7, "error": "transient", "detail": "429"},
+        {"id": 8, "error": "deadline_exceeded", "detail": None},
+        {"id": 9, "error": "unhandled", "detail": "RuntimeError:boom"},
+    ]
+
+
+def test_dry_run_rows_are_json_ready():
+    import json
+
+    from research_desk.tagger.orchestrator import _aggregate
+
+    rep = _aggregate(_MIXED_RESULTS, model="m", batch_size=10, dry_run=True)
+
+    assert json.loads(json.dumps(rep, ensure_ascii=False))["rows"] == rep["rows"]
+
+
+def test_a_report_that_is_not_a_dry_run_has_no_rows():
+    from research_desk.tagger.orchestrator import _aggregate
+
+    rep = _aggregate(_MIXED_RESULTS, model="m", batch_size=10, dry_run=False)
+
+    assert "rows" not in rep
+
+
+def test_the_empty_report_is_unchanged():
+    """No row taken: the empty report keeps its shape (no new keys, no rows)."""
+    from research_desk.tagger.orchestrator import _empty_report
+
+    assert _empty_report("m") == {
+        "model": "m", "processed": 0,
+        "auto": 0, "review_needed": 0,
+        "confidence": {"high": 0, "medium": 0, "low": 0},
+        "oos": {"foreign": 0, "fund": 0, "digital": 0, "private": 0, "ir_self": 0},
+        "review_reasons": {},
+        "transient_errors": 0,
+        "deadline_errors": 0,
+        "unhandled_errors": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_an_empty_dry_run_returns_the_empty_report(krx, mock_llm_client, mock_supabase):
+    from research_desk.tagger.orchestrator import _empty_report
+
+    mock_supabase.queue_fetch([])
+
+    report = await run_batch(
+        sb=mock_supabase, client=mock_llm_client, krx=krx,
+        taxonomy_version="KRX@2026-05-08",
+        batch_size=10, dry_run=True, row_ids=[],
+        model="gpt-5.4-mini", max_concurrent_llm=2, worker_id="w1",
+    )
+    assert report == _empty_report("gpt-5.4-mini")
+
+
+def _picture_pdf(path):
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page()
+    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 40, 20), False)
+    pix.clear_with(180)
+    page.insert_image(fitz.Rect(72, 72, 272, 172), pixmap=pix)
+    doc.save(path)
+    doc.close()
+
+
+@pytest.mark.asyncio
+async def test_dry_run_batch_reports_rows_and_marks(krx, mock_llm_client, mock_supabase,
+                                                    make_pdf, tmp_path):
+    """A text row with a suspect publisher, a picture row, and a failed row, end to end."""
+    _picture_pdf(tmp_path / "scan.pdf")
+    _picture_pdf(tmp_path / "broken_scan.pdf")
+    mock_supabase.queue_fetch([
+        _row(1, file_name="samsung_005930_20260511_MERITZ_1096333.pdf"),
+        _row(2, file_path="scan.pdf", file_name="scan.pdf"),
+        _row(3, file_path="broken_scan.pdf", file_name="broken_scan.pdf"),
+    ])
+    answer = make_llm_extraction()
+
+    async def parse(**kwargs):
+        from research_desk.core.llm import StructuredResult
+        if "broken_scan.pdf" in kwargs["user"]:
+            raise RuntimeError("boom")
+        return StructuredResult(parsed=answer)
+    mock_llm_client.parse = parse
+
+    report = await run_batch(
+        sb=mock_supabase, client=mock_llm_client, krx=krx,
+        taxonomy_version="KRX@2026-05-08",
+        batch_size=10, dry_run=True, row_ids=[],
+        model="gpt-5.4-mini", max_concurrent_llm=1, worker_id="w1",
+    )
+
+    assert mock_supabase.executed == []
+    assert (report["page_image"], report["page_image_unsupported"], report["publisher_suspect"]) == (
+        1, 0, 1)
+    assert report["rows"] == [
+        {"id": 1, "tagging_status": "auto", "tagging_confidence": "medium",
+         "report_type": "단일종목", "publisher": "키움증권", "publisher_type": "broker",
+         "tagging_notes": "publisher_suspect:filename_mismatch"},
+        {"id": 2, "tagging_status": "auto", "tagging_confidence": "medium",
+         "report_type": "단일종목", "publisher": "키움증권", "publisher_type": "broker",
+         "tagging_notes": "page_image"},
+        {"id": 3, "error": "unhandled", "detail": "RuntimeError:boom"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_normal_batch_report_has_the_counts_but_no_rows(krx, mock_llm_client, mock_supabase,
+                                                                make_pdf):
+    mock_supabase.queue_fetch([_row(1, file_name="samsung_005930_20260511_MERITZ_1096333.pdf")])
+    mock_llm_client.set_response(make_llm_extraction())
+
+    report = await run_batch(
+        sb=mock_supabase, client=mock_llm_client, krx=krx,
+        taxonomy_version="KRX@2026-05-08",
+        batch_size=10, dry_run=False, row_ids=[],
+        model="gpt-5.4-mini", max_concurrent_llm=2, worker_id="w1",
+    )
+
+    assert "rows" not in report
+    assert (report["page_image"], report["page_image_unsupported"], report["publisher_suspect"]) == (
+        0, 0, 1)
