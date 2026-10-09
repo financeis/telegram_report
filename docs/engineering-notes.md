@@ -5,7 +5,7 @@
 | 보이는 것 | 원인 | 대응 |
 |---|---|---|
 | Pydantic serializer warning (`LLMExtraction` 직렬화 시) | 분류기의 LLM 응답 모델(`LLMExtraction`)을 직렬화할 때 Pydantic이 내는 경고 | 기능 영향 없음(분류 결과와 저장 값이 같다). 무시한다 |
-| 반복 실행 중 `exit=-1073741569` (Windows native crash) | 윈도우에서 파이썬 프로세스가 비정상 종료된 경우 | `run-batches.ps1`이 그 작업자의 행을 되돌리고 재시도해서 자동 복구한다. 3회 반복 테스트 중 1회 발생했고, 5건이 자동으로 `pending`으로 돌아간 뒤 재시도에서 성공해 데이터 손실이 없었다 |
+| 반복 실행 중 `exit=-1073741569`(드물게 `-1073741784`) (Windows native crash) | 윈도우에서 파이썬 프로세스가 비정상 종료된 경우. 2026-10-09 백필에서 자주 났고, 분류기가 PDF를 두 스레드에서 동시에 읽은 것(PyMuPDF는 여러 스레드 동시 사용을 지원하지 않는다)이 원인으로 추정돼 2026-10-10에 `core.pdf`의 PyMuPDF 호출을 프로세스 전체 잠금으로 줄 세웠다 | `run-batches.ps1`이 그 작업자의 행을 되돌리고 재시도해서 자동 복구한다(데이터 손실 없음). 한 배치가 3번 연속 나면 스크립트가 1로 멈춘다 — 그때는 사람이 본다. 잠금 뒤 재측정: 아직 없음(운영 적용 백필의 횟수를 여기 적는다) |
 | `LangChainPendingDeprecationWarning: The default value of allowed_objects will change…` | LangGraph가 import될 때 내는 예고 경고. `tag run`·`tag escalate`가 그래프를 불러올 때와, 테스트 실행 끝의 "1 warning"이 이것이다 | 무시한다. `collect`·`web`·`stocks`·`tag inspect`·`tag reset-worker`·`--help`에서 이 경고가 보이면 그쪽은 무해한 것이 아니다 — 누가 명령 입구에서 그래프를 일찍 import하게 만든 것이니 그 import를 함수 안으로 옮긴다 |
 
 ## 함정
@@ -21,7 +21,11 @@
 - **Supabase REST는 한 요청에 최대 1000행만 돌려준다.** 전부 읽어야 하는 조회(수집의 이미 받은 번호 목록, 리포트·커버리지의 기간 조회)는 1000행씩 끊어 읽는다. 끊어 읽지 않는 새 조회를 쓰면 표가 커진 뒤 조용히 일부만 읽혀, 예를 들어 되감기 수집이 이미 받은 메시지를 다시 받는다.
 - **관심 기업 파일이 깨져 있으면 GET 요청 하나가 파일을 옮긴다.** `GET /api/workspace`가 깨진 JSON을 `favorites.json.bak`으로 이름을 바꾼다. 이미 `.bak`이 있으면 윈도우에서 이름 바꾸기가 실패해 그 요청이 일반 503으로 끝난다.
 - **일반 수집은 중간의 빈 메시지 번호를 채우지 않는다.** 시작점이 "가장 큰 번호 + 1"이라서다. 수집이 중간에 끊기면(Ctrl+C, 전체 실패) 동시에 받던 메시지 중 큰 번호만 들어가고 작은 번호가 빠질 수 있다. 빠진 구간이 의심되면 `collect --dry-run --backfill-days N`으로 "새로 받을 것" 수를 먼저 보고, 그다음 `--dry-run` 없이 돌린다.
-- **분류 프롬프트 재료를 고치면 LLM 요청이 바뀐다.** 분류 시스템 프롬프트는 `research_desk/domain/vocabulary.yaml`의 리포트 종류 순서와 `research_desk/tagger/vocabulary/publishers.yaml` 원문(주석까지), 그리고 LLM 응답 모양(`LLMExtraction`)의 설명문으로 만들어진다. 주석 한 줄만 고쳐도 분류 결과가 달라질 수 있고 Anthropic 프롬프트 캐시가 새로 쌓인다. 고친 뒤에는 parity 테스트와 첫 배치 결과를 확인한다.
+- **분류 프롬프트 재료를 고치면 LLM 요청이 바뀐다.** 분류 시스템 프롬프트는 `research_desk/domain/vocabulary.yaml`의 리포트 종류 순서와 `research_desk/tagger/vocabulary/publishers.yaml` 원문(주석까지), 그리고 LLM 응답 모양(`LLMExtraction`)의 설명문으로 만들어진다. 발행처 사전의 정식 이름은 응답 모양의 발행처 값 목록(enum)으로도 나가고, 그림 행의 사용자 메시지에는 고정 문장 `PAGE_IMAGE_NOTE`가 들어간다. 이 중 하나만 고쳐도(주석 한 줄이라도) 분류 결과가 달라질 수 있고 Anthropic 프롬프트 캐시가 새로 쌓인다. 그래서 백필이 도는 동안에는 고치지 않는다. 고친 뒤에는 parity 테스트와 첫 배치 결과를 확인한다.
+- **발행처 사전을 고칠 때의 함정.** (1) 별칭·파일 이름 표기 하나는 정확히 한 항목에만 넣고, 어떤 항목의 정식 이름과도 같으면 안 된다 — 어기면 사전 읽기가 실패한다. 테스트가 커밋을 막고, 그래도 들어가면 `tag run`·`tag escalate`는 행을 가져가기 전 그래프를 불러오는 단계에서 1로(반복 실행 스크립트는 재시도 뒤 1로 멈춘다), `tag requeue`는 4로 멈춘다. (2) 파일 이름 표기는 글자 그대로(대소문자까지) 비교한다. `MERITZ`와 `Meritz`는 다른 표기라 둘 다 필요하면 둘 다 넣는다. (3) 정식 이름을 바꾸거나 빼도 이미 저장된 행은 옛 이름 그대로다. `tag requeue --publisher-not-in-dictionary`가 `auto`·`review_needed` 행만 고르므로, 사람이 승인한 `verified` 행에는 옛 이름이 남는다. (4) 항목을 다른 구역으로 옮기면 그 발행처의 종류가 바뀐다 — 저장된 행은 `--publisher-type-mismatch`로 다시 분류한다. (5) 채널에서 새로 본 표기를 사전에 넣으면 `research_desk/tagger/tests/test_vocabulary.py`의 `OBSERVED_FILENAME_TAGS`에도 더한다.
+- **PyMuPDF 호출 하나가 멈추면 같은 프로세스의 PDF 일이 모두 기다린다.** `core.pdf`가 PyMuPDF를 프로세스 전체 잠금 하나로 줄 세우기 때문이다. 분류기에서는 그 배치의 남은 행이 행 시간 한도(90초)를 넘겨 `pending`으로 돌아가고, 웹앱에서는 검토 쪽 그림과 분석이 멈춘 것처럼 보인다 — 웹앱을 다시 켠다. 잠금을 풀어 해결하지 않는다(스레드 동시 사용이 비정상 종료의 원인으로 추정돼 넣은 잠금이다).
+- **`tag requeue --apply`의 실행 확인은 관리자 권한으로 띄운 프로세스를 못 본다.** 일반 권한에서 보면 관리자 프로세스의 명령줄이 비어 있어(`CommandLine` null) 백필·웹앱인지 알 수 없다. 백필·수집·웹앱을 관리자 창에서 띄우지 않는다. 띄웠다면 `--apply` 전에 직접 끈다.
+- **`tag requeue --unreadable`의 `skipped.unreadable_no_page`가 크면 PDF 폴더 설정부터 본다.** 1쪽 그림 확인은 `STORAGE_BASE_DIR` 안의 파일로 한다. 설정이 틀리면 모든 행이 "그림을 만들 수 없음"으로 빠져 아무것도 되돌리지 않는다.
 - **`frontend/dist`는 있는데 `frontend/dist/assets`가 없으면 웹 서버가 켜지지 않는다.** 서버를 켤 때 dist 폴더가 있으면 `/assets`를 그 아래 `assets`에 연결하는데, 그 폴더가 없으면 시작 중 오류가 난다. 빌드를 중간에 멈췄다면 `npm --prefix frontend run build`를 다시 끝까지 돌린다.
 - **오래 묵은 잠금은 정상 `tag run`이 시작할 때만 풀린다.** 분류를 돌리지 않는 동안 `processing`에 남은 행은 그대로다. 크래시 직후 바로 풀려면 `tag reset-worker --worker-id <그 작업자 ID>`를 쓴다(래퍼는 자동으로 한다).
 - **종목표 표시가 다시 갈라지면 원인부터 본다.** 예전 분류기는 CSV 파일 수정 시각으로 버전 표시를 만들어, 같은 내용에 `KRX@2026-05-08`·`-09`·`-12` 세 표시가 생겼다(마이그레이션 007로 통일). 지금은 버전 정보 파일만 쓰므로 새 표시는 `stocks set-version`으로만 생겨야 한다.
@@ -44,15 +48,21 @@
 2. `python -m research_desk stocks set-version --as-of <자료 기준일, YYYY-MM-DD>` → 새 버전 이름이 찍히고 0으로 끝나는지 본다.
 3. 전체 테스트를 돌린다(함께 들어 있는 CSV = 버전 정보 테스트). 분류기 테스트 일부(parity 고정 사례, 종목 매칭)는 실제 종목표의 몇 행(`005930` 삼성전자, `000660` SK하이닉스, `016360` 삼성증권 등)의 이름·업종을 기대값으로 쓴다. 새 종목표에서 그 값이 바뀌어 실패하면 기대값을 새 종목표 값에 맞춘다 — 분류 규칙이 바뀐 것이 아니므로 규칙 코드를 고치지 않는다.
 4. CSV와 `KRX_stocks_data.version.json`을 한 커밋에 올린다.
-5. 그동안 종목표에 없어서 `review_needed`(`krx_unmatched_in_scope`)로 쌓인 행이 있으면 `tag escalate --since <시각>`이나 검토의 재분류로 다시 분류한다.
+5. 그동안 종목표에 없어서 `review_needed`(`krx_unmatched_in_scope`)로 쌓인 행이 있으면 `tag requeue --krx-unmatched`(미리 보기 → `--apply` → 백필)로 다시 분류한다. `tag escalate --since <시각>`이나 검토의 재분류도 된다.
 
 ### 분류 모델 바꾸기
 1. `.env`의 `LLM_MODEL_DEFAULT`(또는 `LLM_MODEL_ESCALATION`, `LLM_MODEL_PHASE2`)만 바꾼다. 공급자는 모델 이름이 정한다.
-2. 쓸 공급자의 키(`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`)나 codex 로그인이 있는지 본다 — 없으면 분류 명령이 4로 멈춘다.
+2. 쓸 공급자의 키(`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`)나 codex 로그인이 있는지 본다 — 없으면 분류 명령이 4로 멈춘다. 분류 모델은 그림을 받는 모델이어야 한다(`core.llm.supports_images`가 참). 아니면 글자 없는 PDF가 모두 검토 대기로 가고 배치 보고의 `page_image_unsupported`가 늘어난다.
 3. 돌고 있는 반복 분류와 웹앱을 다시 켠다.
 4. 첫 배치 몇 개의 JSON 보고와 `tag inspect` 비율을 평소 기준과 비교한다. 행에 모델 이름이 저장되지 않으므로 바뀐 시점 전후는 `tagged_at`으로 나눠 본다.
 
+### 발행처 사전 고치기
+1. 백필·재처리가 돌고 있지 않을 때 `research_desk/tagger/vocabulary/publishers.yaml`을 고친다(백필 중에는 고치지 않는다). 정식 이름은 표지의 지금 회사명, 독립 리서치는 `data_provider`, 기술분석보고서는 작성기관과 상관없이 `한국IR협의회`.
+2. 새 표기를 넣었으면 `OBSERVED_FILENAME_TAGS`에도 더하고 전체 테스트를 돌린다(사전 규칙 위반은 `test_vocabulary.py`가 잡는다). 사전을 커밋한다.
+3. `docs/operations.md`의 "다시 분류 대기" 절차대로: 백필·수집·웹앱 끄기 → `tag requeue <조건>` 미리 보기 → `--apply` → 백필 → (필요하면) 발행처가 바뀐 저장된 비교 비우기.
+
 ### 운영 DB 데이터 고치기
+분류된 행을 조건으로 골라 `pending`으로 되돌리는 일이면 손으로 하지 말고 `tag requeue`를 쓴다(아래 순서를 코드로 지킨다). 그 밖의 데이터 수정은 이 순서로 한다.
 1. 반복 분류·수집·웹앱이 돌고 있지 않은지 확인한다.
 2. 바뀔 행의 `(id, 바뀔 열)`을 파일로 백업한다.
 3. 한 트랜잭션에서: 같은 문장을 `EXPLAIN`으로 먼저 확인 → 실행 → 바뀐 행 수 = 백업 행 수인지, 결과 분포가 기대와 같은지 확인 → 둘 다 맞을 때만 커밋, 아니면 되돌림.
