@@ -31,7 +31,8 @@ def seg(name='메모리', products=(), keywords=(), share=-1.0) -> dict:
 # ── comparison keys (§5.4) ───────────────────────────────────────────────────
 
 @pytest.mark.parametrize('text', ['Legacy DRAM', 'legacy-dram', 'LEGACY  DRAM', 'Legacy·DRAM',
-                                  'legacy ‐ dram', 'Legacy ㆍ DRAM'])
+                                  'legacy ‐ dram', 'Legacy ㆍ DRAM', 'Legacy 디램', 'LEGACY D램',
+                                  'legacy-디램', 'Legacy·D램'])
 def test_the_spec_example_and_its_spellings_share_one_key(text):
     assert logic.comparison_key(text, SYN) == 'legacydram'
 
@@ -49,13 +50,39 @@ def test_synonyms_become_the_standard_spelling_before_case_and_spacing():
 
 
 @pytest.mark.parametrize('text, key', [
-    ('시디램프', '시디램프'),                       # 디램 inside another word is no DRAM
-    ('Legacy 디램', 'legacy디램'),
-    ('하이니켈 양극활물질', '하이니켈양극활물질'),
-    ('2차전지 소재', '2차전지소재'),
+    ('D램 모듈', 'dram모듈'),
+    ('디램 모듈', 'dram모듈'),
+    ('저전력·D램', '저전력dram'),
+    ('하이니켈 양극활물질', '하이니켈양극재'),
+    ('2차전지 소재', '이차전지소재'),
+    ('D램/NAND', 'dram/nand'),                     # a slash parts words too and stays in the key
 ])
-def test_a_spelling_inside_a_longer_term_is_never_replaced(text, key):
+def test_a_word_that_is_a_spelling_becomes_the_standard_inside_a_longer_term(text, key):
     assert logic.comparison_key(text, SYN) == key
+
+
+@pytest.mark.parametrize('text, key', [
+    ('시디램프', '시디램프'),                       # 디램 inside another word is no DRAM
+    ('시디램프 조명', '시디램프조명'),
+    ('하이니켈양극활물질', '하이니켈양극활물질'),
+    ('2차전지소재', '2차전지소재'),
+])
+def test_a_spelling_inside_a_longer_word_is_never_replaced(text, key):
+    assert logic.comparison_key(text, SYN) == key
+
+
+@pytest.mark.parametrize('text', ['NOR Flash', 'NOR/NAND', '테스트 핸들러', 'LNG·보냉재', '시디램프 조명'])
+def test_a_term_without_synonym_words_keeps_its_squashed_key(text):
+    assert logic.comparison_key(text, SYN) == logic.squash(text)
+
+
+def test_a_whole_term_spelling_wins_over_the_spellings_of_its_words():
+    syn = logic.parse_synonyms({'MLCC': ['적층 세라믹 콘덴서'], '커패시터': ['콘덴서']})
+    assert logic.comparison_key('적층 세라믹 콘덴서', syn) == 'mlcc'
+    assert logic.comparison_key('세라믹 콘덴서', syn) == '세라믹커패시터'
+    for text in ('MLCC를 만듭니다.', '적층 세라믹 커패시터를 만듭니다.'):
+        _, kept, produced = logic.ground_profile(profile(keywords=['적층 세라믹 콘덴서']), text, syn)
+        assert (kept, produced) == (1, 1)
 
 
 def test_without_synonyms_only_case_and_spacing_count():
@@ -88,7 +115,7 @@ def test_term_keys_are_unique_non_empty_and_in_order():
 def test_profile_terms_are_keywords_products_then_segment_keywords_and_products():
     p = profile(keywords=['Legacy DRAM'], products=['NOR Flash', 'D램'],
                 segments=[seg(products=['MCP'], keywords=['저전력 디램', 'nor flash', '디램'])]).model_dump()
-    assert logic.profile_terms(p, SYN) == ['legacydram', 'norflash', 'dram', '저전력디램', 'mcp']
+    assert logic.profile_terms(p, SYN) == ['legacydram', 'norflash', 'dram', '저전력dram', 'mcp']
 
 
 def test_the_term_table_keeps_a_word_holding_a_synonym_spelling_apart():
@@ -96,6 +123,14 @@ def test_the_term_table_keeps_a_word_holding_a_synonym_spelling_apart():
                               profile(keywords=['디램']).model_dump()], SYN)
     assert table == {'시디램프': {'display': '시디램프', 'companies': 1},
                      'dram': {'display': 'DRAM', 'companies': 2}}
+
+
+def test_a_term_with_a_synonym_word_shows_the_first_spelling_met():
+    table = logic.term_table([profile(keywords=['Legacy 디램']).model_dump(),
+                              profile(keywords=['Legacy DRAM', 'D램 모듈']).model_dump(),
+                              profile(keywords=['디램 모듈']).model_dump()], SYN)
+    assert table == {'legacydram': {'display': 'Legacy 디램', 'companies': 2},
+                     'dram모듈': {'display': 'D램 모듈', 'companies': 2}}
 
 
 def test_the_term_table_counts_companies_and_shows_the_standard_or_first_spelling():
@@ -247,6 +282,38 @@ def test_terms_missing_from_the_input_are_dropped_and_counted():
 def test_a_term_is_grounded_by_any_spelling_of_its_synonym_entry(term, text):
     grounded, kept, produced = logic.ground_profile(profile(keywords=[term]), text, SYN)
     assert grounded.keywords == [term] and (kept, produced) == (1, 1)
+
+
+@pytest.mark.parametrize('term, text', [
+    ('Legacy DRAM', '당사는 Legacy 디램을 설계합니다.'),
+    ('Legacy DRAM', '주력은 legacy디램입니다.'),
+    ('LEGACY D램', '당사는 Legacy DRAM을 설계합니다.'),
+    ('D램 모듈', '주요 제품은 디램 모듈입니다.'),
+    ('디램 모듈', '주요 제품은 DRAM-모듈입니다.'),
+    ('하이니켈 양극활물질', '하이니켈 양극재를 양산합니다.'),
+])
+def test_a_term_is_grounded_by_other_spellings_of_its_words(term, text):
+    grounded, kept, produced = logic.ground_profile(profile(keywords=[term]), text, SYN)
+    assert grounded.keywords == [term] and (kept, produced) == (1, 1)
+
+
+def test_a_term_without_synonym_words_is_grounded_only_as_written():
+    grounded, kept, produced = logic.ground_profile(
+        profile(keywords=['NOR-Flash', 'NOR/NAND', '테스트 핸들러', 'LNG 보냉재', '시디램프']),
+        '당사는 NOR flash와 테스트핸들러를 만듭니다. NOR 및 NAND, 시DRAM프', SYN)
+    assert grounded.keywords == ['NOR-Flash', '테스트 핸들러'] and (kept, produced) == (2, 5)
+
+
+def test_the_spellings_tried_for_one_term_are_capped():
+    term = ' '.join(['D램'] * 7)                    # three spellings a word: 2,187 combinations
+    spellings = SYN.spellings(term)
+    assert len(spellings) == logic.SPELLINGS_MAX == 64
+    assert len(set(spellings)) == len(spellings)
+    assert spellings[0] == logic.squash(term)       # as written first
+    assert SYN.spellings('NOR Flash') == ('norflash',)
+    assert SYN.spellings('  ') == ()
+    _, kept, produced = logic.ground_profile(profile(keywords=[term]), f'제품: {term}', SYN)
+    assert (kept, produced) == (1, 1)
 
 
 def test_a_word_holding_a_synonym_spelling_is_grounded_as_itself():

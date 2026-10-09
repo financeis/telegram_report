@@ -1,14 +1,17 @@
 """Peers calculations: no DB, no network, no settings, no files.
 
 - Comparison keys (spec §5.4): a whole term that is one of the synonym table's spellings becomes
-  its standard spelling, then case, spaces, middle dots and hyphens are ignored (``squash``; the
-  term and the spellings are compared squashed). ``디램``, ``D램`` and ``DRAM`` all become
-  ``dram``; ``Legacy DRAM`` and ``legacy-dram`` become ``legacydram``. A spelling inside a longer
-  term is never replaced: ``시디램프`` stays ``시디램프`` and ``Legacy 디램`` is ``legacy디램``.
-  Shared terms, the term table and theme search compare these keys. Grounding looks in the
-  squashed input text (nothing replaced there) for the term's key or, when the key is a synonym
-  entry's, for any spelling of that entry. A term's display is the synonym table's standard
-  spelling, else the first original spelling met in the build.
+  its standard spelling; otherwise each word of the term (words part at spaces, middle dots,
+  hyphens and slashes) that is a whole spelling does. Then case, spaces, middle dots and hyphens
+  are ignored (``squash``; terms, words and spellings are compared squashed). ``디램``, ``D램``
+  and ``DRAM`` all become ``dram``; ``Legacy DRAM``, ``legacy-dram``, ``Legacy 디램`` and
+  ``LEGACY D램`` become ``legacydram``; ``D램 모듈`` and ``디램 모듈`` become ``dram모듈``. A
+  spelling inside a longer word is never replaced: ``시디램프`` stays ``시디램프``. Shared terms,
+  the term table and theme search compare these keys. Grounding looks in the squashed input text
+  (nothing replaced there) for any spelling of the term: as written, any spelling of its synonym
+  entry when the whole term is one, or the term with its words swapped for other spellings of
+  theirs (at most ``SPELLINGS_MAX``). A term's display is the synonym table's standard spelling,
+  else the first original spelling met in the build.
 - Input assembly (§5.1): labelled blocks from the business-report sections, each cut at its cap,
   the whole input at ``INPUT_CAP``; ``truncated`` says whether anything was cut.
 - Grounding and caps (§5.2, §5.4): terms missing from the input are dropped and counted; then
@@ -29,6 +32,7 @@ import re
 from bisect import bisect_right
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from itertools import islice, product
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
 import numpy as np
@@ -37,10 +41,16 @@ from .schemas import CompanyProfile, Segment
 
 # ── comparison keys (§5.4) ───────────────────────────────────────────────────
 
-# Middle dots (the spec's ·, plus the look-alikes Korean documents use) and hyphens.
+# Middle dots (the spec's ·, plus the look-alikes Korean documents use), hyphens and slashes.
 MIDDLE_DOTS = "·ㆍ・‧∙⋅"
 HYPHENS = "-‐‑‒–−﹣－"
+SLASHES = "/／"
 _SQUASH = re.compile(rf"[\s{re.escape(MIDDLE_DOTS + HYPHENS)}]+")
+# A term's words part at spaces, middle dots, hyphens and slashes; the split keeps the separators
+# (odd items), so a slash stays in the key as before.
+_WORDS = re.compile(rf"([\s{re.escape(MIDDLE_DOTS + HYPHENS + SLASHES)}]+)")
+# The most spellings grounding looks for one term: its words' spellings multiply.
+SPELLINGS_MAX = 64
 
 
 def squash(text: str) -> str:
@@ -50,7 +60,7 @@ def squash(text: str) -> str:
 
 @dataclass(frozen=True)
 class Synonyms:
-    """The synonym table, ready for keys: ``key(term)``, ``spellings(key)`` and ``display(key)``.
+    """The synonym table, ready for keys: ``key(term)``, ``spellings(term)`` and ``display(key)``.
 
     ``displays``: standard key → standard spelling. ``variants``: squashed other spelling →
     standard key. ``forms``: standard key → every squashed spelling of its entry, the standard
@@ -61,16 +71,42 @@ class Synonyms:
     forms: Mapping[str, tuple[str, ...]]
     fingerprint: str
 
-    def key(self, term: str) -> str:
-        """The comparison key of a whole term: its squashed form, or the standard key when that
-        form is one of the table's other spellings. Nothing inside a term is replaced."""
-        squashed = squash(term)
-        return self.variants.get(squashed, squashed)
+    def _standard(self, spelling: str) -> Optional[str]:
+        """The standard key of the entry ``spelling`` (squashed) is a spelling of, else None."""
+        squashed = squash(spelling)
+        return squashed if squashed in self.displays else self.variants.get(squashed)
 
-    def spellings(self, key: str) -> tuple[str, ...]:
-        """What stands for ``key`` in a squashed text: every spelling of its synonym entry, or the
-        key alone."""
-        return self.forms.get(key) or (key,)
+    def key(self, term: str) -> str:
+        """The comparison key of ``term``: the standard key when the whole term is a spelling of
+        an entry; otherwise the term squashed after each word that is a whole spelling becomes
+        its standard key. Nothing inside a word is replaced."""
+        whole = self._standard(term)
+        if whole is not None:
+            return whole
+        parts = _WORDS.split(term or "")
+        parts[::2] = [self._standard(word) or word for word in parts[::2]]
+        return squash("".join(parts))
+
+    def spellings(self, term: str) -> tuple[str, ...]:
+        """The squashed spellings that stand for ``term`` in a squashed text, as written first:
+        every spelling of its entry when the whole term is a spelling, and the term with each
+        word that is a whole spelling swapped for the other spellings of that word's entry. At
+        most ``SPELLINGS_MAX``; none for a blank term."""
+        found = dict.fromkeys([squash(term)])
+        whole = self._standard(term)
+        if whole is not None:
+            found.update(dict.fromkeys(self.forms[whole]))
+        choices: list[tuple[str, ...]] = []
+        for index, part in enumerate(_WORDS.split(term or "")):
+            standard = self._standard(part) if index % 2 == 0 else None
+            if standard is None:
+                choices.append((part,))
+            else:
+                word = squash(part)
+                choices.append((word,) + tuple(f for f in self.forms[standard] if f != word))
+        for combination in islice(product(*choices), SPELLINGS_MAX):
+            found.setdefault(squash("".join(combination)), None)
+        return tuple(spelling for spelling in found if spelling)[:SPELLINGS_MAX]
 
     def display(self, key: str) -> Optional[str]:
         return self.displays.get(key)
@@ -319,7 +355,8 @@ def ground_profile(profile: CompanyProfile, text: str,
     """``(profile with ungrounded terms dropped, terms kept, terms given)``.
 
     Products, keywords, customers, competitors and each segment's products and keywords must
-    appear in ``text``: the term's key, or any spelling of its synonym entry, inside the squashed
+    appear in ``text``: one of the term's spellings (``Synonyms.spellings``: as written, its
+    synonym entry's, or with its words swapped for other spellings of theirs) inside the squashed
     text (case and spacing ignored, nothing replaced). Blank terms are dropped and not counted.
     Other fields are left as they are.
     """
@@ -334,7 +371,7 @@ def ground_profile(profile: CompanyProfile, text: str,
             if not key:
                 continue
             counts[1] += 1
-            if any(spelling in haystack for spelling in synonyms.spellings(key)):
+            if any(spelling in haystack for spelling in synonyms.spellings(term)):
                 counts[0] += 1
                 kept.append(term)
         return kept
