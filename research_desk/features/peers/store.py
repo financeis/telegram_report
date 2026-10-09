@@ -16,6 +16,11 @@ This feature owns ``company_profiles``, ``company_segments``, ``company_embeddin
   model's rows are never touched.
 - the match functions take the query vector as a list; they return every row they find (the
   seed itself included, one row per segment for segments) — callers filter and reduce.
+- the web side reads the latest public build without its tables (one row, every request) and a
+  build's tables by id (the caller keeps them per build id: a public build never changes); reads
+  for a list of codes go ``CODES_CHUNK`` codes a request, each paged; the profiles holding a
+  query key are found with an array overlap on ``terms`` whose keys are each quoted
+  (``array_literal``), so a comma or a brace in a key stays inside it.
 """
 from __future__ import annotations
 
@@ -25,6 +30,7 @@ from typing import Any, Iterable, Optional, Sequence
 PAGE = 1000
 VECTOR_PAGE = 200
 WRITE_CHUNK = 100
+CODES_CHUNK = 100     # codes per read for a list of codes (keeps the request address short)
 
 PROFILES = "company_profiles"
 SEGMENTS = "company_segments"
@@ -36,6 +42,7 @@ PROFILE_KEY = ("fiscal_year", "profile_version", "stock_code")
 BUILD_LIST_COLUMNS = ("build_id, fiscal_year, profile_version, embed_model, embed_dims, parser_version, "
                       "synonyms_version, stock_list_version, status, eligible, profiled, failed, "
                       "started_at, heartbeat_at, finished_at, message")
+BUILD_TABLE_COLUMNS = "company_quantiles, segment_quantiles, term_table"
 MINIMAL = "minimal"
 
 
@@ -44,6 +51,13 @@ def parse_vector(value: Any) -> list[float]:
     if isinstance(value, str):
         value = json.loads(value)
     return [float(x) for x in value]
+
+
+def array_literal(values: Iterable[str]) -> str:
+    """A PostgreSQL text array literal with every value double-quoted (backslashes and quotes
+    escaped): ``{"a,b","c"}``. PostgREST hands it to PostgreSQL as it is."""
+    quoted = ('"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"' for value in values)
+    return "{" + ",".join(quoted) + "}"
 
 
 def _chunks(items: Sequence, size: int) -> Iterable[Sequence]:
@@ -102,6 +116,20 @@ class PeersStore:
                 .order("finished_at", desc=True, nullsfirst=False).order("build_id", desc=True)
                 .execute().data or [])
 
+    def latest_done_build(self) -> Optional[dict]:
+        """The latest public build (finished_at, then build_id) without its tables, or None: one
+        small read, made for every web request."""
+        rows = (self._table(BUILDS).select(BUILD_LIST_COLUMNS).eq("status", "done")
+                .order("finished_at", desc=True, nullsfirst=False).order("build_id", desc=True)
+                .limit(1).execute().data or [])
+        return rows[0] if rows else None
+
+    def build_tables(self, build_id: int) -> Optional[dict]:
+        """``{"company_quantiles", "segment_quantiles", "term_table"}`` of one build (they can
+        take megabytes), or None when there is no such build."""
+        rows = self._table(BUILDS).select(BUILD_TABLE_COLUMNS).eq("build_id", build_id).execute().data or []
+        return rows[0] if rows else None
+
     def recent_builds(self, limit: int = 10) -> list[dict]:
         """The latest ``limit`` builds of any status, newest first (no tables in the rows)."""
         return (self._table(BUILDS).select(BUILD_LIST_COLUMNS).order("build_id", desc=True)
@@ -135,6 +163,47 @@ class PeersStore:
         """Segments of one fiscal year and profile version, by code and number."""
         chain = self._key(self._table(SEGMENTS).select("*"), fiscal_year, profile_version)
         return self._paged(chain.order("stock_code").order("seg_no"))
+
+    def profile(self, fiscal_year: int, profile_version: str, stock_code: str,
+                columns: str = "*") -> Optional[dict]:
+        """``columns`` of one company's ``ok`` profile, or None."""
+        rows = (self._key(self._table(PROFILES).select(columns), fiscal_year, profile_version)
+                .eq("stock_code", stock_code).eq("status", "ok").execute().data or [])
+        return rows[0] if rows else None
+
+    @staticmethod
+    def _code_parts(codes: Iterable[str]) -> Iterable[list[str]]:
+        unique = sorted(dict.fromkeys(codes))
+        for start in range(0, len(unique), CODES_CHUNK):
+            yield unique[start:start + CODES_CHUNK]
+
+    def profiles_of(self, fiscal_year: int, profile_version: str, codes: Iterable[str],
+                    columns: str) -> list[dict]:
+        """``columns`` of the ``ok`` profiles of ``codes`` (each once), by code."""
+        rows: list[dict] = []
+        for part in self._code_parts(codes):
+            chain = (self._key(self._table(PROFILES).select(columns), fiscal_year, profile_version)
+                     .eq("status", "ok").in_("stock_code", part))
+            rows += self._paged(chain.order("stock_code"))
+        return rows
+
+    def segments_of(self, fiscal_year: int, profile_version: str, codes: Iterable[str]) -> list[dict]:
+        """The segments of ``codes`` (each once), by code and number."""
+        rows: list[dict] = []
+        for part in self._code_parts(codes):
+            chain = self._key(self._table(SEGMENTS).select("*"), fiscal_year, profile_version).in_("stock_code", part)
+            rows += self._paged(chain.order("stock_code").order("seg_no"))
+        return rows
+
+    def profiles_with_terms(self, fiscal_year: int, profile_version: str, keys: Sequence[str],
+                            columns: str = "stock_code, terms") -> list[dict]:
+        """``columns`` of the ``ok`` profiles whose ``terms`` hold at least one of ``keys`` exactly
+        (an array overlap), by code; none without keys."""
+        if not keys:
+            return []
+        chain = (self._key(self._table(PROFILES).select(columns), fiscal_year, profile_version)
+                 .eq("status", "ok").ov("terms", array_literal(keys)))
+        return self._paged(chain.order("stock_code"))
 
     def replace_profile(self, row: dict, segments: Sequence[dict] = ()) -> None:
         """Write one company's profile in place of the row under the same key (see the module
@@ -202,6 +271,21 @@ class PeersStore:
         rows = self._embedding_rows(SEGMENT_EMBEDDINGS, fiscal_year, profile_version, model,
                                     "stock_code, seg_no, embedding", ["stock_code", "seg_no"], VECTOR_PAGE)
         return [(r["stock_code"], r["seg_no"], parse_vector(r["embedding"])) for r in rows]
+
+    def company_vector(self, fiscal_year: int, profile_version: str, model: str,
+                       stock_code: str) -> Optional[list[float]]:
+        """One company's embedding of the model, or None."""
+        rows = (self._key(self._table(COMPANY_EMBEDDINGS).select("embedding"), fiscal_year, profile_version)
+                .eq("embed_model", model).eq("stock_code", stock_code).execute().data or [])
+        return parse_vector(rows[0]["embedding"]) if rows else None
+
+    def segment_vector(self, fiscal_year: int, profile_version: str, model: str, stock_code: str,
+                       seg_no: int) -> Optional[list[float]]:
+        """One segment's embedding of the model, or None."""
+        rows = (self._key(self._table(SEGMENT_EMBEDDINGS).select("embedding"), fiscal_year, profile_version)
+                .eq("embed_model", model).eq("stock_code", stock_code).eq("seg_no", seg_no)
+                .execute().data or [])
+        return parse_vector(rows[0]["embedding"]) if rows else None
 
     def save_company_embeddings(self, fiscal_year: int, profile_version: str, model: str,
                                 items: Sequence[tuple[str, Sequence[float]]]) -> None:
