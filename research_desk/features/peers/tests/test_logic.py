@@ -492,19 +492,48 @@ def test_retention_keeps_the_three_latest_done_builds_and_what_the_rest_still_us
     embedding_keys = {(2025, 'p0', 'm1'), (2025, 'p1', 'm0'), (2025, 'p1', 'm1'), (2025, 'p2', 'm1'),
                       (2024, 'p9', 'm1'), (2025, 'p-old', 'm1')}
     plan = logic.retention_plan(builds, profile_keys, embedding_keys, current_profile_version='p9')
-    assert plan.delete_build_ids == (1, 2)
-    # p0 was used only by build 1; p-old by nothing; p9 is the current profile version.
-    assert set(plan.delete_profile_keys) == {(2025, 'p0'), (2024, 'p1'), (2025, 'p-old')}
+    # Builds 1 and 2: public, after the three latest; build 3: a pilot older than build 4, the
+    # oldest public build kept.
+    assert plan.delete_build_ids == (1, 2, 3)
+    # p0 was used only by build 1, p2 only by build 3; p-old by nothing; p9 is the current
+    # profile version.
+    assert set(plan.delete_profile_keys) == {(2025, 'p0'), (2025, 'p2'), (2024, 'p1'), (2025, 'p-old')}
     # m0 was used only by build 2; the rows under deleted profiles go with them anyway.
     assert set(plan.delete_embedding_keys) == {(2025, 'p0', 'm1'), (2025, 'p1', 'm0'),
-                                               (2025, 'p-old', 'm1')}
+                                               (2025, 'p2', 'm1'), (2025, 'p-old', 'm1')}
 
 
 def test_retention_deletes_nothing_with_three_done_builds_or_fewer():
+    # Build 2 failed after build 1 was published: it is not older than the oldest public build.
     builds = [build(1, 'done', finished='2026-01-01T00:00:00+00:00'), build(2, 'failed'),
               build(3, 'done', finished='2026-02-01T00:00:00+00:00')]
     plan = logic.retention_plan(builds, {(2025, 'p1')}, {(2025, 'p1', 'm1')}, current_profile_version='p1')
     assert plan.delete_build_ids == () and plan.delete_profile_keys == () and plan.delete_embedding_keys == ()
+
+
+def test_retention_drops_closed_builds_older_than_the_oldest_public_build_kept():
+    builds = [build(1, 'pilot', pv='p-pilot', finished='2026-01-01T00:00:00+00:00'),
+              build(2, 'failed', finished='2026-01-15T00:00:00+00:00'),
+              build(3, 'running', pv='p-run'),
+              build(4, 'incomplete', pv='p-inc', finished='2026-02-01T00:00:00+00:00'),
+              build(5, 'done', finished='2026-03-01T00:00:00+00:00'),
+              build(6, 'pilot', pv='p-new', finished='2026-04-01T00:00:00+00:00'),
+              build(7, 'done', finished='2026-05-01T00:00:00+00:00')]
+    profile_keys = {(2025, 'p1'), (2025, 'p-pilot'), (2025, 'p-run'), (2025, 'p-inc'), (2025, 'p-new')}
+    embedding_keys = {(2025, 'p1', 'm1'), (2025, 'p-pilot', 'm1'), (2025, 'p-new', 'm1')}
+    plan = logic.retention_plan(builds, profile_keys, embedding_keys, current_profile_version='p1')
+    # Older than build 5, the oldest public build kept: the pilot, failed and incomplete builds go;
+    # a running build never does, and the pilot after build 5 stays with its rows.
+    assert plan.delete_build_ids == (1, 2, 4)
+    assert set(plan.delete_profile_keys) == {(2025, 'p-pilot'), (2025, 'p-inc')}
+    assert set(plan.delete_embedding_keys) == {(2025, 'p-pilot', 'm1')}
+
+
+def test_retention_keeps_every_build_while_none_is_public():
+    builds = [build(1, 'pilot', pv='p0'), build(2, 'failed'), build(3, 'incomplete')]
+    plan = logic.retention_plan(builds, {(2025, 'p0'), (2025, 'p1')}, {(2025, 'p0', 'm1')},
+                                current_profile_version='p1')
+    assert plan == logic.RetentionPlan((), (), ())
 
 
 # ── pilot neighbours ─────────────────────────────────────────────────────────

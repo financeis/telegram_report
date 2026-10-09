@@ -519,9 +519,22 @@ async def test_a_running_build_silent_for_over_six_hours_is_failed_and_taken_ove
     world = World(catalog(2), db=db, clock=clock)
     outcome = await world.run()          # the clock reads START + 1s: 6 h 1 s of silence
     assert outcome.status == 'done'
+    closed = [op for op in db.ops('update', 'peer_builds') if ('eq', 'build_id', 1) in op.filters]
+    assert len(closed) == 1 and closed[0].payload['status'] == 'failed'
+    assert '6시간' in closed[0].payload['message'] and closed[0].payload['finished_at']
+    # Older than the public build that took over, the failed build is then cleared by retention.
+    assert [(b['build_id'], b['status']) for b in db.rows('peer_builds')] == [(2, 'done')]
+
+
+async def test_a_pilot_after_a_silent_build_shows_the_failed_build():
+    clock = Clock()
+    db = FakeSupabase(now=clock, peer_builds=[running_build(START - timedelta(hours=6))])
+    world = World(catalog(2), db=db, clock=clock)
+    outcome = await world.run(pilot=True)
+    assert outcome.status == 'pilot'
     old, new = db.rows('peer_builds')
     assert old['status'] == 'failed' and '6시간' in old['message'] and old['finished_at']
-    assert new['status'] == 'done'
+    assert new['status'] == 'pilot'
 
 
 # ── retention ────────────────────────────────────────────────────────────────
@@ -554,6 +567,28 @@ async def test_only_the_three_latest_public_builds_and_the_rows_they_use_are_kep
     assert [b['build_id'] for b in db.rows('peer_builds')] == [5, 6, 7]
     # ...but under the current profile version every row stays, whatever its model.
     assert len(db.rows('company_embeddings', embed_model='old-model')) == 2
+
+
+async def test_closed_builds_older_than_the_oldest_kept_public_build_are_removed():
+    clock = Clock()
+    db = FakeSupabase(
+        now=clock,
+        peer_builds=[{'fiscal_year': FY, 'profile_version': 'peer-profile@0.9', 'embed_model': MODEL,
+                      'status': 'pilot', 'finished_at': '2026-01-01T00:00:00+00:00'},
+                     {'fiscal_year': FY, 'profile_version': PV, 'embed_model': MODEL,
+                      'status': 'incomplete', 'finished_at': '2026-02-01T00:00:00+00:00'}],
+        company_profiles=[{'fiscal_year': FY, 'profile_version': 'peer-profile@0.9', 'stock_code': '000010',
+                           'status': 'ok'}],
+    )
+    world = World(catalog(2), db=db, clock=clock)
+    await world.run(pilot=True)                     # build 3: with no public build, every build stays
+    assert [b['build_id'] for b in db.rows('peer_builds')] == [1, 2, 3]
+    assert set(world.profiles(profile_version='peer-profile@0.9')) == {'000010'}
+    await world.run()                               # build 4: public; builds 1 to 3 are older
+    assert [b['build_id'] for b in db.rows('peer_builds')] == [4]
+    assert world.profiles(profile_version='peer-profile@0.9') == {}      # only build 1 used it
+    await world.run(pilot=True)                     # build 5: newer than build 4, it stays
+    assert [(b['build_id'], b['status']) for b in db.rows('peer_builds')] == [(4, 'done'), (5, 'pilot')]
 
 
 async def test_old_profile_versions_used_by_no_build_are_removed_but_not_the_current_one():
@@ -646,17 +681,20 @@ def test_an_interruption_during_the_clean_up_keeps_the_published_build():
     assert '그 전에 done 상태로 마감' in world.err.getvalue()
 
 
-def test_a_clean_up_error_after_publishing_exits_1_and_keeps_the_build():
+@pytest.mark.parametrize('pilot, status', [(False, 'done'), (True, 'pilot')])
+def test_a_clean_up_error_after_closing_is_a_warning_and_keeps_the_exit_code(pilot, status, caplog):
+    """Spec §11: done (and a pilot) end with 0 even when the clean-up after them fails."""
     world = World(catalog(2))
-    job = world.job()
+    job = world.job(pilot=pilot)
 
     def broken():
         raise RuntimeError('db hiccup')
 
     job.store.builds = broken
-    assert build.execute(job) == 1
-    assert world.build_row()['status'] == 'done'
-    assert 'db hiccup' in world.err.getvalue() and world.summary()['status'] == 'done'
+    assert build.execute(job) == 0
+    assert world.build_row()['status'] == status
+    assert 'db hiccup' in world.err.getvalue() and world.summary()['status'] == status
+    assert any(r.levelname == 'WARNING' and 'retention' in r.getMessage() for r in caplog.records)
 
 
 def test_an_interruption_before_the_build_starts_leaves_no_build():

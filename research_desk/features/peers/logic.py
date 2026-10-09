@@ -16,7 +16,8 @@
 - Embedding texts (§6.1), unit vectors, the seed segment order (§6.2).
 - Percentile tables, interpolation and tiers (§6.3): the web reads a similarity's percentile from
   a build's table with ``percentile_of`` and its tier with ``tier_of``.
-- Build status (95 %), the six-hour rule for a running build, and retention (§6.5).
+- Build status (95 %), the six-hour rule for a running build, and retention (§6.5): the three
+  latest public builds, newer unpublished ones and running ones stay.
 
 The numbers are adjustable defaults, kept here as constants.
 """
@@ -577,6 +578,8 @@ def top_segments(seed: str, seed_vector, codes: Sequence[str], seg_nos: Sequence
 DONE_PERCENT = 95
 STALE_AFTER = timedelta(hours=6)
 KEEP_DONE_BUILDS = 3
+# Closed builds that are never published: retention deletes those older than the public ones.
+UNPUBLISHED_STATUSES = ("pilot", "failed", "incomplete")
 
 
 def build_status(eligible: int, profiled: int, *, pilot: bool) -> str:
@@ -604,12 +607,19 @@ class RetentionPlan:
 def retention_plan(builds: Sequence[Mapping[str, Any]], profile_keys: Iterable[tuple[int, str]],
                    embedding_keys: Iterable[tuple[int, str, str]],
                    current_profile_version: str) -> RetentionPlan:
-    """What to delete: public (``done``) builds after the three latest (by finished_at, then id),
-    and the profile and embedding rows that neither a remaining build nor the current profile
-    version uses."""
+    """What to delete (spec §6.5): public (``done``) builds after the three latest (by
+    finished_at, then id); ``pilot``, ``failed`` and ``incomplete`` builds older than the oldest
+    public build kept (a lower build_id: builds run one at a time); then the profile and
+    embedding rows that neither a remaining build nor the current profile version uses. A
+    ``running`` build is never deleted, nor is any build while none is public."""
     done = sorted((b for b in builds if b.get("status") == "done"),
                   key=lambda b: (b.get("finished_at") or "", b["build_id"]), reverse=True)
+    kept = done[:KEEP_DONE_BUILDS]
     dropped = {b["build_id"] for b in done[KEEP_DONE_BUILDS:]}
+    if kept:
+        oldest_kept = min(b["build_id"] for b in kept)
+        dropped |= {b["build_id"] for b in builds
+                    if b.get("status") in UNPUBLISHED_STATUSES and b["build_id"] < oldest_kept}
     remaining = [b for b in builds if b["build_id"] not in dropped]
     used_profiles = {(b["fiscal_year"], b["profile_version"]) for b in remaining}
     used_embeddings = {(b["fiscal_year"], b["profile_version"], b["embed_model"]) for b in remaining}

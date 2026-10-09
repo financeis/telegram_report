@@ -23,8 +23,11 @@ A build is one run for (fiscal year, profile version, embedding model):
    ``ok`` profile and records the term table and the percentile tables (the company table over
    every pair, the segment table over at most ``logic.MAX_PAIRS`` sampled pairs); a pilot prints
    each target's ten most similar companies and segments instead and leaves ``terms`` alone.
-6. Retention: the three latest public builds stay; older ones, and the profile and embedding rows
-   neither a remaining build nor the current profile version uses, are deleted.
+6. Retention: the three latest public builds stay; older public builds, every pilot, failed or
+   incomplete build older than the oldest public build kept, and then the profile, segment and
+   embedding rows neither a remaining build nor the current profile version uses are deleted.
+   A clean-up error after the build is closed is a warning on stderr: the exit code still
+   follows the status.
 7. A summary JSON on stdout (counts of targets, profiled, failed, reused and extracted
    companies, ``kept_previous``, embeddings, tokens). Exit code: done 0, pilot 0, incomplete 1;
    refused 1.
@@ -83,7 +86,8 @@ NOTE_FAILED = "빌드 번호 {build_id}의 상태를 실패(failed)로 바꿨습
 NOTE_NOT_CLOSED = ("빌드 번호 {build_id}의 상태를 바꾸지 못했습니다. 6시간이 지나면 다음 실행이 "
                    "실패로 정리합니다.")
 NOTE_ALREADY_CLOSED = "빌드 번호 {build_id}는 그 전에 {status} 상태로 마감됐습니다."
-LINE_CLEANUP_FAILED = "빌드는 마쳤지만 오래된 빌드 정리 중 오류가 났습니다: {error}"
+LINE_CLEANUP_FAILED = ("경고: 빌드는 마쳤지만 오래된 빌드 정리 중 오류가 났습니다(다음 빌드 때 다시 "
+                       "정리합니다): {error}")
 
 _URL_CREDENTIALS = re.compile(r"(\w+://)[^/@\s]+@")
 
@@ -499,15 +503,16 @@ class _Build:
         else:
             fields["message"] = INCOMPLETE.format(profiled=self.tally.profiled, eligible=len(targets))
         self.finish(status, **fields)
-        exit_code = EXIT_CODES[status]
         try:
             self.retain()
         except Exception as exc:
+            # The build is closed: a failed clean-up is only a warning (the next build cleans up)
+            # and never changes the exit code of the status (spec §11: done → 0).
+            logger.warning("retention after build %s failed: %s", self.state.build_id, type(exc).__name__)
             print(LINE_CLEANUP_FAILED.format(error=describe(exc)), file=self.err)
-            exit_code = 1
         summary = self.summary(status, len(targets))
         print(json.dumps(summary, ensure_ascii=False, indent=2), file=self.out)
-        return BuildOutcome(status, exit_code, self.state.build_id, summary)
+        return BuildOutcome(status, EXIT_CODES[status], self.state.build_id, summary)
 
 
 def _record_failure(job: Job, state: BuildState, exc: BaseException) -> None:
