@@ -24,7 +24,7 @@ def test_pdf_unreadable_takes_priority_over_refusal():
     assert out["tagging_notes"] == "first_page_unreadable"
 
 
-# ── Rules applied last: page_image (spec §3.2, §3.5) ─────────────────────────
+# ── Rules applied last: page_image (docs/business-rules.md) ─────────────────────────
 
 def test_a_refused_picture_row_is_a_refusal_with_the_page_image_note():
     out = status_unreadable({"pdf_unreadable": False, "page_image": True,

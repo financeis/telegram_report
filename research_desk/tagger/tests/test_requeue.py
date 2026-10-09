@@ -1,4 +1,4 @@
-"""``tag requeue`` (spec §3.6): send classified rows that match chosen criteria back to ``pending``.
+"""``tag requeue`` (docs/contracts.md): send classified rows that match chosen criteria back to ``pending``.
 
 What is checked:
 - arguments: the five criteria, ``--apply``, no criterion → usage error 2 before anything runs;
@@ -1008,5 +1008,5 @@ def test_the_first_page_check_uses_the_taggers_picture_rule(tagger_env, tmp_path
     assert REAL_FIRST_PAGE_RENDERS("ok.pdf") is True
 
     monkeypatch.setattr(extract_pdf, "_fit_scale", lambda png: 0.5)   # never fits the limits
-    assert extract_pdf._render_page_images(storage / "ok.pdf") == []
+    assert extract_pdf.render_page_images(storage / "ok.pdf") == []
     assert REAL_FIRST_PAGE_RENDERS("ok.pdf") is False

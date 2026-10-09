@@ -333,7 +333,7 @@ async def test_a_refused_picture_row_is_a_refusal(krx, mock_llm_client, mock_sup
 
     assert final["page_image"] is True
     assert final["tagging_status"] == "review_needed"
-    # spec §3.2: a refused picture row is a refusal, and also carries the page_image note.
+    # docs/business-rules.md: a refused picture row is a refusal, and also carries the page_image note.
     assert final["tagging_confidence"] == "low"
     assert final["tagging_notes"] == "llm_refusal:cannot read;page_image"
     (_, args), = mock_supabase.executed

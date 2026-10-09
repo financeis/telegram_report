@@ -121,7 +121,7 @@ def _render_fitting(path: Path, number: int) -> bytes:
     raise PageImageTooBig(f"page {number} is over the picture limits even at {dpi:.0f} dpi")
 
 
-def _render_page_images(path: Path) -> list[bytes]:
+def render_page_images(path: Path) -> list[bytes]:
     """PNGs of pages 1..PAGE_IMAGE_PAGES at PAGE_IMAGE_DPI (lower for an oversized page).
 
     Stops at the first page that cannot be drawn and keeps the pages before it, so a
@@ -142,7 +142,7 @@ def _sync_read(path: Path) -> dict:
     """The text walk, plus the page pictures (``page_images``) only when it found no text."""
     out = _sync_extract(path)
     if out["pdf_unreadable"]:
-        out["page_images"] = _render_page_images(path)
+        out["page_images"] = render_page_images(path)
     return out
 
 

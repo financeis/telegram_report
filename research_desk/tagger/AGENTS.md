@@ -175,7 +175,7 @@ START -> extract_pdf -> llm_extract --oos_gate--+-> status_unreadable           
   | `--krx-unmatched` | `review_needed`이면서 메모가 `krx_unmatched_in_scope`로 시작하는 행(종목표를 바꾼 뒤 쓰는 용도) |
 
 - 상태가 `auto`·`review_needed`인 행만 고른다. `verified`(사람이 승인한 행)·`processing`·`pending`은 어떤 조건에서도 고르지 않는다. 한 행이 여러 조건에 맞으면 조건별 건수에 각각 세고 되돌리기는 한 번이다.
-- 후보는 분류된 행(`auto`·`review_needed`·`verified`) 전체를 한 번에 읽어(`REQUEUE_CANDIDATES_SQL`) 파이썬에서 고른다. Supabase REST가 아니라 `core.db` 직접 연결이다(REST는 1000행에서 끊긴다). 1쪽 그림 확인은 `--unreadable`의 메모 조건에 맞는 행만 한다. 확인은 분류기 자신의 그림 규칙(`extract_pdf._render_page_images`, 한도를 넘으면 줄여 다시 그림)을 저장 폴더 안의 `.pdf`(`core.pdf.resolve_in_storage`)에 쓴다 — 여기서 고른 행은 분류기가 정말 그림으로 읽는다.
+- 후보는 분류된 행(`auto`·`review_needed`·`verified`) 전체를 한 번에 읽어(`REQUEUE_CANDIDATES_SQL`) 파이썬에서 고른다. Supabase REST가 아니라 `core.db` 직접 연결이다(REST는 1000행에서 끊긴다). 1쪽 그림 확인은 `--unreadable`의 메모 조건에 맞는 행만 한다. 확인은 분류기 자신의 그림 규칙(`extract_pdf.render_page_images`, 한도를 넘으면 줄여 다시 그림)을 저장 폴더 안의 `.pdf`(`core.pdf.resolve_in_storage`)에 쓴다 — 여기서 고른 행은 분류기가 정말 그림으로 읽는다.
 - 미리 보기(기본)는 아무것도 쓰지 않는다. `selected`는 고른 조건만, `skipped`는 `--unreadable`을 골랐을 때만 `{"unreadable_no_page": n}`(메모 조건은 맞지만 지금 1쪽 그림을 만들 수 없어 고르지 않은 행 — PDF 폴더 설정이 틀리면 커진다)이고 아니면 `{}`, `total`은 중복 없는 행 수, `publisher_values`는 고른 행의 지금 발행처 값별 건수(NULL은 `(null)`, 많은 순), `unknown_filename_tags`는 고른 조건과 상관없이 분류된 행 전체에서 사전에 없는 파일 이름 표기별 건수(많은 순, 사전 보충 참고용)다. 저장된 비교 수는 내지 않는다.
 - 적용(`--apply`):
   1. 실행 확인(시작 확인 4번). `Get-CimInstance Win32_Process`의 명령줄에 `run-batches.ps1`이 있거나, `research_desk` 다음 낱말이 `tag run`(백필)·`tag escalate`(재처리)·`collect`(수집)·`web`(웹앱)이면 찾는다. 자기 자신과 `tag requeue`·`tag inspect`·`tag reset-worker`·`stocks`는 아니다. 자기 프로세스가 목록에 없으면 목록을 믿을 수 없다고 보고 4다.

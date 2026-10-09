@@ -112,7 +112,7 @@ def test_type_indeterminate_review_low():
     assert out["tagging_notes"] == "type_indeterminate"
 
 
-# ── Rules applied last: page_image / publisher_suspect (spec §3.5) ───────────
+# ── Rules applied last: page_image / publisher_suspect (docs/business-rules.md) ───────────
 # A row read from the page picture or with a suspect publisher is at most medium
 # (low stays low) and gets "page_image" then "publisher_suspect:<why>" after its
 # own note, joined by ";". The status never changes.

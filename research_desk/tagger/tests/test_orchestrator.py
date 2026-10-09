@@ -248,7 +248,7 @@ def test_aggregate_review_reasons_handles_llm_refusal_with_detail():
     assert rep["review_reasons"]["first_page_unreadable"] == 1
 
 
-# ── Picture / suspect counts and dry-run rows (spec §5, §3.7) ────────────────
+# ── Picture / suspect counts and dry-run rows (docs/contracts.md, tag run report) ────────────────
 
 _REPORT_KEYS = [
     "model", "processed", "auto", "review_needed", "confidence", "oos", "review_reasons",
@@ -325,7 +325,7 @@ def test_report_keeps_the_existing_keys_and_adds_three():
 
 
 def test_review_reasons_count_only_the_four_names():
-    """page_image and publisher_suspect notes are not review reasons (spec §3.4)."""
+    """page_image and publisher_suspect notes are not review reasons (docs/business-rules.md)."""
     from research_desk.tagger.orchestrator import _aggregate
 
     rep = _aggregate(_MIXED_RESULTS, model="m", batch_size=10, dry_run=False)

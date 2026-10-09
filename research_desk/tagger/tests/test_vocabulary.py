@@ -1,4 +1,4 @@
-"""The publisher dictionary (vocabulary/publishers.yaml) and its lookups (spec §3.3, §3.4).
+"""The publisher dictionary (vocabulary/publishers.yaml) and its lookups (docs/business-rules.md, 발행처).
 
 - Dictionary rules, read straight from the yaml so a lookup table cannot hide a duplicate:
   the four sections are the publisher types, canonical names are unique, every alias

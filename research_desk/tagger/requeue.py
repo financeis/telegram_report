@@ -1,4 +1,4 @@
-"""``tag requeue``: send classified rows that meet chosen criteria back to ``pending`` (spec §3.6).
+"""``tag requeue``: send classified rows that meet chosen criteria back to ``pending`` (docs/contracts.md, ``tag requeue``).
 
 The usual backfill (``scripts/run-batches.ps1``: 2 AI calls at once, batches of 10) then
 classifies them again under today's rules. Nothing here calls an AI.
@@ -245,7 +245,7 @@ def prepare(criteria: Sequence[str], *, apply: bool, model: str) -> PublisherDic
 def first_page_renders(file_path: Optional[str]) -> bool:
     """Whether the tagger could show page 1 of the PDF at ``file_path`` (under STORAGE_BASE_DIR) to the AI now.
 
-    Uses the tagger's own picture rule (``extract_pdf._render_page_images``: drawn at the
+    Uses the tagger's own picture rule (``extract_pdf.render_page_images``: drawn at the
     tagger's dpi, smaller when over the AI limits), so a row picked here is one the
     tagger will really read from a picture. Any failure — no path, outside the storage
     folder, missing, broken, no page, too big at every tried dpi — is False.
@@ -257,7 +257,7 @@ def first_page_renders(file_path: Optional[str]) -> bool:
         path = pdf.resolve_in_storage(settings.storage_base_dir(), file_path)
     except Exception:
         return False
-    return bool(extract_pdf._render_page_images(path))
+    return bool(extract_pdf.render_page_images(path))
 
 
 def _notes(row: Mapping[str, Any]) -> str:

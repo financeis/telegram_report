@@ -36,7 +36,7 @@ def test_private_remains_medium():
     assert out["tagging_confidence"] == "medium"
 
 
-# ── Rules applied last: page_image / publisher_suspect (spec §3.5, §3.2) ─────
+# ── Rules applied last: page_image / publisher_suspect (docs/business-rules.md) ─────
 
 @pytest.mark.parametrize("reason", ["foreign", "fund", "digital", "ir_self", "private"])
 def test_a_picture_row_is_at_most_medium_with_the_page_image_note(reason):
