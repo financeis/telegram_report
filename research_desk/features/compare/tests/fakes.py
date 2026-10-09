@@ -47,7 +47,8 @@ def build_app() -> FastAPI:
 def tagged(rid: int, published: Optional[str], *, publisher: Optional[str] = 'KB',
            codes=('016360',), report_type: Optional[str] = '단일종목', status: str = 'auto',
            reason: Optional[str] = None) -> dict:
-    """A reports row as the tagger leaves it (the 15 columns the reports feature reads)."""
+    """A reports row as the tagger leaves it: the 16 columns the reports feature reads but
+    publisher_type, which a read of this row gives as None."""
     return {'id': rid, 'published_at': published, 'sent_at': '2026-05-11T01:00:00+00:00',
             'report_type': report_type, 'publisher': publisher, 'stock_codes': list(codes),
             'company_names': ['삼성증권'], 'sectors_major': ['금융'], 'sectors_minor': ['증권'],
