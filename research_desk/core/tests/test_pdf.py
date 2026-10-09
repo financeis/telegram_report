@@ -365,3 +365,14 @@ def test_a_failed_pdf_call_does_not_block_the_next_one(tmp_path):
     [texts] = _run_together([lambda: pdf.page_texts(good)], timeout=10)
     assert count == 2
     assert [t.strip() for t in texts] == ["first", "second"]
+
+
+def test_mupdf_messages_never_reach_stdout():
+    # MuPDF prints some document errors (e.g. "MuPDF error: format error: No common ancestor
+    # in structure tree") straight to the process's stdout. Commands promise one JSON object on
+    # stdout, so importing core.pdf turns MuPDF's own error/warning printing off; the errors
+    # still surface as exceptions or empty results as before.
+    import pymupdf
+    from research_desk.core import pdf as _pdf  # noqa: F401 — the import sets the switches
+    assert not pymupdf.TOOLS.mupdf_display_errors()
+    assert not pymupdf.TOOLS.mupdf_display_warnings()

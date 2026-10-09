@@ -21,6 +21,12 @@ import pymupdf
 
 logger = logging.getLogger(__name__)
 
+# MuPDF prints some document errors (e.g. "MuPDF error: format error: ...") straight to the
+# process's stdout, which would corrupt a command's one-JSON-object stdout. Turn its own
+# printing off; the errors still surface as exceptions or empty results.
+pymupdf.TOOLS.mupdf_display_errors(False)
+pymupdf.TOOLS.mupdf_display_warnings(False)
+
 StrPath = Union[str, os.PathLike]
 
 NOT_IN_STORAGE = "PDF를 찾을 수 없습니다."
