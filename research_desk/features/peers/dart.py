@@ -6,8 +6,10 @@ guaranteed from ``parser_version`` 0.2.0 on, so documents of older parsers are n
 - Fiscal-year rule: for fiscal year N each company (``stock_code``) uses one report: final
   (``is_final``), ``fiscal_year = N``, the latest ``fiscal_end`` (then the latest receipt). A
   March year-end report of 2025-03-31 belongs to N = 2025 like a December one.
-- Targets: ``corp_cls`` Y (KOSPI) or K (KOSDAQ), in the app's stock list, and neither the DART
-  name nor the stock-list name holds 스팩, 기업인수목적, 리츠 or 부동산투자회사. KONEX is out.
+- Targets: ``corp_cls`` Y (KOSPI) or K (KOSDAQ), in the app's stock list, not a REIT there (its
+  ``산업명(중)`` is not 리츠), and neither the DART name nor the stock-list name holds 스팩,
+  기업인수목적 or 부동산투자회사. KONEX is out. REITs go by the sector, not by the word 리츠 in a
+  name: that word would also drop 메리츠금융지주 and 블리츠웨이엔터테인먼트.
 - Texts are read per report, only when a company's profile is (re)built.
 
 ``DartSource`` wraps a pymongo Collection (``core.mongo.mongo_collection``); this module never
@@ -25,8 +27,11 @@ from .logic import INPUT_SECTIONS, Section
 
 MIN_PARSER_VERSION = (0, 2, 0)
 TARGET_CORP_CLASSES = ("Y", "K")
-# Any of these in a company name keeps it out (SPACs, REITs). Literal words, as the spec says.
-EXCLUDED_NAME_WORDS = ("스팩", "기업인수목적", "리츠", "부동산투자회사")
+# The stock list's 산업명(중) of REITs: such a stock is out whatever its name.
+REIT_SECTOR = "리츠"
+# Any of these in a company name keeps it out (SPACs, real-estate investment companies).
+# Literal words, as the spec says.
+EXCLUDED_NAME_WORDS = ("스팩", "기업인수목적", "부동산투자회사")
 
 _CODE = re.compile(r"^[0-9A-Z]{6}$")
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -105,6 +110,8 @@ def select_reports(docs: Iterable[dict], fiscal_year: int, stocks: StockList) ->
         doc = latest["doc"]
         entry = stocks.lookup(code)
         if doc.get("corp_cls") not in TARGET_CORP_CLASSES or entry is None:
+            continue
+        if (entry.sector_minor or "").strip() == REIT_SECTOR:
             continue
         if _excluded_name(doc.get("corp_name"), entry.name):
             continue

@@ -22,11 +22,13 @@ def doc(code, section='020100', *, name='가나반도체', cls='K', rcept='20260
 
 
 def stocks(*entries) -> StockList:
-    return StockList([StockEntry(code, name, 'KOSDAQ', '반도체', '메모리', '') for code, name in entries])
+    """Stock-list entries from ``(code, name)`` or ``(code, name, 산업명(중))`` (default 메모리)."""
+    return StockList([StockEntry(code, name, 'KOSDAQ', '반도체', minor[0] if minor else '메모리', '')
+                      for code, name, *minor in entries])
 
 
 STOCKS = stocks(('000010', '가나반도체'), ('000020', '다라전자'), ('000030', '마바스팩'),
-                ('000040', '사아리츠'), ('000050', '자차기업인수목적'), ('000060', '카타부동산투자회사'),
+                ('000040', '사아리츠', '리츠'), ('000050', '자차기업인수목적'), ('000060', '카타부동산투자회사'),
                 ('000070', '코넥스회사'), ('00007A', '영문코드회사'), ('000080', '기타법인'))
 
 
@@ -72,11 +74,11 @@ def test_each_company_uses_its_final_report_of_the_year_with_the_latest_fiscal_e
         '가나반도체', '00100001', '사업보고서 (2025.12)', '0.2.0')
 
 
-def test_targets_are_kospi_and_kosdaq_companies_in_the_stock_list_without_spac_or_reit_names():
+def test_targets_are_kospi_and_kosdaq_companies_in_the_stock_list_without_spacs_or_reits():
     docs = [
         doc('000010', cls='Y'), doc('000020', name='다라전자', cls='K'),
         doc('000030', name='마바스팩', cls='K'),                      # SPAC
-        doc('000040', name='사아리츠', cls='Y'),                      # REIT
+        doc('000040', name='사아리츠', cls='Y'),                      # REIT: 산업명(중) 리츠
         doc('000050', name='자차기업인수목적', cls='K'),
         doc('000060', name='카타부동산투자회사', cls='Y'),
         doc('000070', name='코넥스회사', cls='N'),                    # KONEX
@@ -92,6 +94,24 @@ def test_targets_are_kospi_and_kosdaq_companies_in_the_stock_list_without_spac_o
 def test_a_banned_word_in_the_stock_list_name_also_excludes():
     docs = [doc('000030', name='마바주식회사', cls='K')]     # DART name clean, stock list name 마바스팩
     assert dart.DartSource(FakeCollection(docs)).reports(2025, STOCKS, ['0.2.0']) == []
+
+
+def test_reits_are_left_out_by_their_stock_list_sector_not_by_a_word_in_the_name():
+    """리츠 in a name is no REIT (메리츠금융지주, 블리츠웨이엔터테인먼트); a stock whose 산업명(중) is
+    리츠 is one, whatever its name (이리츠코크렙, and a made-up name without the word)."""
+    listed = stocks(('138040', '메리츠금융지주', '금융지주'), ('369370', '블리츠웨이엔터테인먼트', '드라마_제작'),
+                    ('088260', '이리츠코크렙', '리츠'), ('000100', '한빛자산', '리츠'))
+    docs = [doc('138040', name='메리츠금융지주', cls='Y'), doc('369370', name='블리츠웨이엔터테인먼트', cls='K'),
+            doc('088260', name='이리츠코크렙', cls='Y'), doc('000100', name='한빛자산', cls='Y')]
+    reports = dart.DartSource(FakeCollection(docs)).reports(2025, listed, ['0.2.0'])
+    assert [r.stock_code for r in reports] == ['138040', '369370']
+
+
+@pytest.mark.parametrize('name', ['마바스팩', '자차기업인수목적', '카타부동산투자회사'])
+def test_spac_and_real_estate_investment_company_names_stay_out_whatever_the_sector(name):
+    listed = stocks(('000100', name, '기타_금융'))
+    docs = [doc('000100', name=name, cls='K')]
+    assert dart.DartSource(FakeCollection(docs)).reports(2025, listed, ['0.2.0']) == []
 
 
 def test_documents_below_parser_0_2_0_are_not_read():
