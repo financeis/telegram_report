@@ -1,0 +1,3 @@
+#!/bin/sh
+# Blocks the commit unless the full test suite passes (spec §12). Shared logic: run-checks.sh.
+exec sh "$(dirname "$0")/run-checks.sh"

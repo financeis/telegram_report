@@ -17,7 +17,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed.' }
     }
     Write-Host 'Research Desk: http://127.0.0.1:8520/'
-    & $pythonPath -m langgraph_tagger.workspace
+    & $pythonPath -m research_desk web
 } finally {
     Pop-Location
 }
