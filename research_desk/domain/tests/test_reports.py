@@ -1,8 +1,11 @@
-"""research_desk.domain.reports: vocabulary value sets, the in-scope rule, the out-of-scope row shape.
+"""research_desk.domain.reports: vocabulary value sets, the in-scope rule, the out-of-scope and
+pending-reset row shapes.
 
 Value-set tests are ported from langgraph_tagger/tests/test_vocabulary.py.
 The out-of-scope row shape tests pin what langgraph_tagger/nodes/write.py's OOS branch
 and langgraph_tagger/review_viewer/actions.py::build_oos_payload produced (spec §9.2).
+The pending-reset row shape tests pin what features/review/rules.build_pending_reset_payload
+wrote before that shape moved here.
 """
 from __future__ import annotations
 
@@ -258,3 +261,87 @@ def test_oos_shape_accepts_every_reason(reason):
 def test_oos_shape_rejects_unknown_reason(reason):
     with pytest.raises(ValueError, match="reason must be one of"):
         reports.oos_row_shape(make_row(), reason)
+
+
+# --- pending-reset row shape -----------------------------------------------------------------
+
+# What features/review/rules.build_pending_reset_payload wrote before the shape moved here,
+# key by key and in the same order (the review's retag, "재분류").
+OLD_PENDING_RESET = {
+    'tagging_status': 'pending',
+    'tagging_locked_at': None,
+    'tagging_worker_id': None,
+    'tagged_at': None,
+    'tagging_notes': None,
+    'tagging_confidence': None,
+    'tagger_version': None,
+    'taxonomy_version': None,
+    'published_at': None,
+    'report_type': None,
+    'publisher': None,
+    'publisher_type': None,
+    'analysts': [],
+    'title': None,
+    'stock_codes': [],
+    'company_names': [],
+    'stock_codes_raw': [],
+    'company_names_raw': [],
+    'sectors_major': [],
+    'sectors_minor': [],
+    'products': [],
+    'out_of_scope_reason': None,
+}
+
+# Array columns are NOT NULL in the DB: the reset must write [] there, never None.
+ARRAY_COLUMNS = (
+    'analysts', 'stock_codes', 'company_names', 'stock_codes_raw', 'company_names_raw',
+    'sectors_major', 'sectors_minor', 'products',
+)
+
+
+def test_pending_reset_shape_is_exactly_the_old_retag_payload():
+    shape = reports.pending_reset_shape()
+    assert shape == OLD_PENDING_RESET
+    assert list(shape) == list(OLD_PENDING_RESET)
+    assert len(shape) == 22
+
+
+def test_pending_reset_shape_empties_arrays_and_nulls_everything_else():
+    shape = reports.pending_reset_shape()
+    assert shape['tagging_status'] == 'pending'
+    assert 'pending' in reports.TAGGING_STATUSES
+    for column, value in shape.items():
+        if column == 'tagging_status':
+            continue
+        if column in ARRAY_COLUMNS:
+            assert value == [], column
+        else:
+            assert value is None, column
+    assert set(ARRAY_COLUMNS) <= set(shape)
+
+
+def test_pending_reset_shape_covers_every_oos_column():
+    """Re-queueing an out-of-scope row clears everything the OOS shape wrote."""
+    oos = reports.oos_row_shape(make_row(), 'foreign')
+    reset = reports.pending_reset_shape()
+    assert set(oos) <= set(reset)
+    for column, value in oos.items():
+        if isinstance(value, list):
+            assert reset[column] == [], column
+
+
+def test_pending_reset_shape_leaves_collector_columns_alone():
+    shape = reports.pending_reset_shape()
+    for column in ('id', 'message_id', 'chat_username', 'file_path', 'file_name',
+                   'file_size_bytes', 'file_hash_sha256', 'caption', 'downloaded_at', 'sent_at'):
+        assert column not in shape
+
+
+def test_pending_reset_shape_gives_fresh_lists_each_call():
+    first = reports.pending_reset_shape()
+    first['stock_codes'].append('005930')
+    first['analysts'].append('홍길동')
+    first['tagging_status'] = 'auto'
+    second = reports.pending_reset_shape()
+    assert second == OLD_PENDING_RESET
+    assert all(second[column] is not first[column] for column in ARRAY_COLUMNS)

@@ -1,13 +1,15 @@
 """Report rules shared by the tagger, manual review and the web features.
 
-The single place that defines (spec §4, §9.2):
+The single place that defines (docs/architecture.md, docs/business-rules.md):
 
 - the value sets in ``vocabulary.yaml``: report types, out-of-scope (OOS) reasons,
   publisher types, tagging statuses, tagging confidences;
 - the in-scope rule ("분석 대상"): ``tagging_status`` in ``IN_SCOPE_STATUSES`` and
   ``out_of_scope_reason`` is null;
 - the out-of-scope row shape ("분석 대상 외 행 모양") that both the tagger's write step
-  and the review's OOS action produce.
+  and the review's OOS action produce;
+- the pending-reset row shape ("되돌리는 모양") that the review's retag action and the
+  tagger's re-queue command write to send a row back to ``pending``.
 
 Nothing here touches the DB: callers pass rows in and write the returned values themselves.
 """
@@ -87,4 +89,42 @@ def oos_row_shape(row: Optional[Mapping[str, Any]], reason: str) -> dict[str, An
         "title": source.get("title"),
         "stock_codes_raw": list(source.get("stock_codes_raw") or []),
         "company_names_raw": list(source.get("company_names_raw") or []),
+    }
+
+
+def pending_reset_shape() -> dict[str, Any]:
+    """Column values that send a row back to ``pending`` for a fresh classification.
+
+    The review's retag ("재분류") writes exactly this, and the tagger's re-queue command
+    must write the same, so the definition lives here once. Every classification and
+    tagging-meta column is emptied: the array columns become [] (they are NOT NULL in the
+    DB, so null would fail the write), every other column None, and ``tagging_status``
+    is ``'pending'``. Collector columns (id, message, file and channel data) are not
+    part of the shape. Each call returns new lists.
+    """
+    return {
+        # tagging meta
+        "tagging_status": "pending",
+        "tagging_locked_at": None,
+        "tagging_worker_id": None,
+        "tagged_at": None,
+        "tagging_notes": None,
+        "tagging_confidence": None,
+        "tagger_version": None,
+        "taxonomy_version": None,
+        # classification
+        "published_at": None,
+        "report_type": None,
+        "publisher": None,
+        "publisher_type": None,
+        "analysts": [],
+        "title": None,
+        "stock_codes": [],
+        "company_names": [],
+        "stock_codes_raw": [],
+        "company_names_raw": [],
+        "sectors_major": [],
+        "sectors_minor": [],
+        "products": [],
+        "out_of_scope_reason": None,
     }
