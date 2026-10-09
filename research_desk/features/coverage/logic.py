@@ -10,17 +10,33 @@ Effective date (spec §9.7): every time-bucketed aggregation counts a row on its
 published_at, else sent_at converted to the Korean (KST) date. Out-of-scope rows have
 published_at NULL (the tagger sets it NULL for them), so without this fallback the report type
 volume with out-of-scope rows included would silently drop those rows.
+
+Report counts of companies (spec §7, ``count_reports``): per stock code, the in-scope rows holding
+it whose effective date is within the last ``COUNT_DAYS`` days, split three ways that never
+overlap — stock reports, sector mentions and other research — with the last stock report's date,
+the number of distinct publishers of those stock reports and a label (none / few / covered).
 """
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
-from typing import Optional
+from datetime import date, datetime, timedelta
+from typing import Any, Iterable, Optional
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 KST = ZoneInfo('Asia/Seoul')
+
+# ── report counts of companies (spec §7): the adjustable numbers and the kinds counted ──
+COUNT_DAYS = 365            # rows from this many days back count
+COVERED_MIN_REPORTS = 3     # 'covered': at least this many stock reports,
+FRESH_DAYS = 180            # the last of them no older than this many days
+
+# Values of domain.reports' vocabulary (REPORT_TYPES / PUBLISHER_TYPES); a test checks them.
+BROKER = 'broker'                         # a securities firm's report (an empty type counts too)
+STOCK_REPORT_TYPES = ('단일종목', '기타')   # report types of a stock report (an empty type too)
+SECTOR = '섹터'                            # the report type of a sector mention
+OTHER_RESEARCH_PUBLISHERS = ('data_provider', 'ir_agency', 'other')
 
 
 def period_start(days: int, now: Optional[datetime] = None) -> str:
@@ -204,3 +220,95 @@ def stock_activity_payload(df, code, unit):
     """``GET /api/stocks/{code}/activity`` body for the company's rows ``df``."""
     return {'timeline': records(stock_monthly(df, code, unit)),
             'publishers': records(publisher_dist(df)), 'total': len(df)}
+
+
+# ── report counts of companies (spec §7) ─────────────────────────────────────
+
+def code_list(codes: Iterable[str]) -> list[str]:
+    """``codes`` as a list, each once, in the given order and as given (no zero-padding).
+
+    One plain string is refused: its characters would be taken for codes.
+    """
+    if isinstance(codes, str):
+        raise TypeError('codes must be a collection of stock codes, not one string')
+    return list(dict.fromkeys(codes))
+
+
+def _blank(value: Any) -> bool:
+    """An empty cell: None, NaN or ''."""
+    return value is None or value == '' or (isinstance(value, float) and value != value)
+
+
+def _count_kind(publisher_type: Any, report_type: Any, held: list, code: str) -> Optional[str]:
+    """Which of the three counts a row holding ``code`` adds to, or None (spec §7).
+
+    A broker's or unknown publisher's 단일종목 / 기타 / untyped report on ``code`` alone is a stock
+    report; a broker's or unknown publisher's 섹터 report is a sector mention, however many codes it
+    has (one code included); any report of data_provider / ir_agency / other is other research.
+    """
+    by_broker = _blank(publisher_type) or publisher_type == BROKER
+    if by_broker and (_blank(report_type) or report_type in STOCK_REPORT_TYPES) and held == [code]:
+        return 'stock_reports'
+    if by_broker and report_type == SECTOR:
+        return 'sector_mentions'
+    if publisher_type in OTHER_RESEARCH_PUBLISHERS:
+        return 'other_research'
+    return None
+
+
+def _label(stock_reports: int, latest: Optional[pd.Timestamp], fresh_from: pd.Timestamp) -> str:
+    """``none`` without stock reports; ``covered`` with enough of them and the last one fresh
+    (on or after ``fresh_from``); else ``few``."""
+    if stock_reports == 0:
+        return 'none'
+    if stock_reports >= COVERED_MIN_REPORTS and latest >= fresh_from:
+        return 'covered'
+    return 'few'
+
+
+def count_reports(rows: pd.DataFrame, codes: Iterable[str], today: date,
+                  days: int = COUNT_DAYS) -> dict[str, dict]:
+    """Report counts per code (spec §7) over ``rows``, the reports window's in-scope rows.
+
+    A row counts when its effective date is on or after ``today`` − ``days`` (``today`` is the
+    date in Korea) and its stock_codes hold the code. For each code in ``codes`` (each once, in the
+    given order, also with no rows):
+
+    - ``stock_reports``, ``sector_mentions``, ``other_research``: the three counts; a row adds to
+      one of them at most, and to none when no rule fits (e.g. a broker's 산업 report, or its
+      단일종목 report on several codes);
+    - ``last_stock_report_date``: the latest effective date of the stock reports (YYYY-MM-DD), or
+      None;
+    - ``brokers``: how many different non-empty publishers wrote the stock reports;
+    - ``label``: ``none`` without stock reports; ``covered`` with at least COVERED_MIN_REPORTS of
+      them, the last no older than FRESH_DAYS days; else ``few``.
+
+    ``rows`` is not changed.
+    """
+    wanted = code_list(codes)
+    counts = {code: {'stock_reports': 0, 'sector_mentions': 0, 'other_research': 0} for code in wanted}
+    last: dict[str, pd.Timestamp] = {}
+    publishers: dict[str, set] = {code: set() for code in wanted}
+    if not rows.empty:
+        dated = _ensure_effective_date(rows)
+        recent = dated[dated['effective_date'] >= pd.Timestamp(today - timedelta(days=days))]
+        for row in recent.to_dict('records'):
+            held = row['stock_codes'] if isinstance(row['stock_codes'], list) else []
+            for code in dict.fromkeys(held):
+                if code not in counts:
+                    continue
+                kind = _count_kind(row['publisher_type'], row['report_type'], held, code)
+                if kind is None:
+                    continue
+                counts[code][kind] += 1
+                if kind == 'stock_reports':
+                    if code not in last or row['effective_date'] > last[code]:
+                        last[code] = row['effective_date']
+                    if not _blank(row['publisher']):
+                        publishers[code].add(row['publisher'])
+    fresh_from = pd.Timestamp(today - timedelta(days=FRESH_DAYS))
+    return {code: {**counts[code],
+                   'last_stock_report_date': last[code].date().isoformat() if code in last else None,
+                   'brokers': len(publishers[code]),
+                   'label': _label(counts[code]['stock_reports'], last.get(code), fresh_from)}
+            for code in wanted}

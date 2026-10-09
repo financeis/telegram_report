@@ -8,15 +8,29 @@ Ported from langgraph_tagger:
 
 New (spec §9.7): the period start is today in Korea minus ``days``; buckets per unit; the
 market payload's empty period and its item list.
+
+New (spec §7): the report counts of companies — stock reports, sector mentions and other
+research, never overlapping; the 365-day window; the last stock report date and the brokers; the
+labels none / few / covered and the 180-day rule.
 """
+import json
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pytest
 
+from research_desk.domain.reports import PUBLISHER_TYPES, REPORT_TYPES
 from research_desk.features.coverage.logic import (
+    BROKER,
+    COUNT_DAYS,
+    COVERED_MIN_REPORTS,
+    FRESH_DAYS,
+    OTHER_RESEARCH_PUBLISHERS,
+    SECTOR,
+    STOCK_REPORT_TYPES,
     _floor_to_unit,
+    count_reports,
     market_payload,
     period_start,
     publisher_dist,
@@ -26,7 +40,7 @@ from research_desk.features.coverage.logic import (
     stock_activity_payload,
     stock_monthly,
 )
-from research_desk.features.coverage.tests.rows import REPORT_COLUMNS, frame, wider_frame
+from research_desk.features.coverage.tests.rows import REPORT_COLUMNS, frame, frame_of, report, wider_frame
 from research_desk.features.reports.store import EXPECTED_COLS
 
 
@@ -277,3 +291,184 @@ def test_stock_activity_counts_the_company_by_unit(unit):
     assert sum(r['count'] for r in result['timeline']) == 3
     assert result['total'] == 7   # every row it was given
     assert sum(r['count'] for r in result['publishers']) == 7
+
+
+# === report counts of companies (spec §7) ===
+
+TODAY = date(2026, 10, 9)   # in Korea
+COUNTS = ('stock_reports', 'sector_mentions', 'other_research')
+ENTRY_KEYS = ['stock_reports', 'sector_mentions', 'other_research', 'last_stock_report_date', 'brokers',
+              'label']
+NO_REPORTS = {'stock_reports': 0, 'sector_mentions': 0, 'other_research': 0,
+              'last_stock_report_date': None, 'brokers': 0, 'label': 'none'}
+
+
+def day(age: int) -> str:
+    """The ISO date ``age`` days before TODAY."""
+    return (TODAY - timedelta(days=age)).isoformat()
+
+
+def counts_of(entry: dict) -> dict:
+    return {name: entry[name] for name in COUNTS}
+
+
+def spec_bucket(publisher_type, report_type, alone):
+    """The table of spec §7, read row by row."""
+    by_broker = publisher_type in ('broker', None, '')
+    if by_broker and report_type in ('단일종목', '기타', None, '') and alone:
+        return 'stock_reports'
+    if by_broker and report_type == '섹터':
+        return 'sector_mentions'
+    if publisher_type in ('data_provider', 'ir_agency', 'other'):
+        return 'other_research'
+    return None
+
+
+@pytest.mark.parametrize('alone', [True, False], ids=['one code', 'two codes'])
+@pytest.mark.parametrize('report_type', ['단일종목', '기타', None, '', '섹터', '산업', 'IR자료', '전략·시황'],
+                         ids=repr)
+@pytest.mark.parametrize('publisher_type', ['broker', None, '', 'data_provider', 'ir_agency', 'other'], ids=repr)
+def test_a_row_counts_in_one_of_the_three_at_most(publisher_type, report_type, alone):
+    codes = ['005930'] if alone else ['005930', '000660']
+    rows = frame_of(report(1, codes, publisher_type=publisher_type, report_type=report_type))
+    entry = count_reports(rows, ['005930'], TODAY)['005930']
+    expected = spec_bucket(publisher_type, report_type, alone)
+    assert counts_of(entry) == {name: int(name == expected) for name in COUNTS}
+
+
+def test_the_three_counts_over_a_mix_of_rows():
+    rows = frame_of(
+        report(1, ['005930']),                                                  # stock report
+        report(2, ['005930'], publisher_type=None, report_type=None),           # stock report: both empty
+        report(3, ['005930'], report_type='기타'),                              # stock report
+        report(4, ['005930', '000660']),                                        # 단일종목 with two codes: nowhere
+        report(5, ['005930'], report_type='섹터'),                              # 섹터 with one code: a mention
+        report(6, ['005930', '000660'], report_type='섹터'),                    # a mention for both codes
+        report(7, ['005930'], publisher_type='data_provider'),                 # other research
+        report(8, ['005930', '000660'], publisher_type='ir_agency', report_type='IR자료'),   # for both
+        report(9, ['005930'], publisher_type='other', report_type='섹터'),      # other research, not a mention
+        report(10, ['005930'], report_type='산업'),                             # a broker's 산업 report: nowhere
+        report(11, ['035420']),                                                 # another company
+    )
+    result = count_reports(rows, ['005930', '000660'], TODAY)
+    assert counts_of(result['005930']) == {'stock_reports': 3, 'sector_mentions': 2, 'other_research': 3}
+    assert counts_of(result['000660']) == {'stock_reports': 0, 'sector_mentions': 1, 'other_research': 1}
+
+
+@pytest.mark.parametrize('published, sent, counted', [
+    (day(365), None, True),                       # exactly 365 days ago
+    (day(366), None, False),
+    (day(0), None, True),
+    # no published_at: sent_at as a date in Korea
+    (None, f'{day(366)}T15:00:00Z', True),        # 00:00 in Korea, 365 days ago
+    (None, f'{day(366)}T14:59:59Z', False),       # 23:59:59 in Korea, 366 days ago
+    (day(366), f'{day(10)}T01:00:00Z', False),    # published_at wins over sent_at
+    (None, None, False),                          # no date at all
+], ids=['365 days', '366 days', 'today', 'sent 365 days ago in Korea', 'sent 366 days ago in Korea',
+        'published wins', 'no date'])
+def test_rows_count_from_365_days_ago(published, sent, counted):
+    rows = frame_of(report(1, published=published, sent=sent))
+    entry = count_reports(rows, ['005930'], TODAY)['005930']
+    assert entry['stock_reports'] == int(counted)
+
+
+def test_the_window_takes_other_day_counts():
+    rows = frame_of(report(1, published=day(30)), report(2, published=day(31)))
+    assert count_reports(rows, ['005930'], TODAY, days=30)['005930']['stock_reports'] == 1
+    assert count_reports(rows, ['005930'], TODAY, days=31)['005930']['stock_reports'] == 2
+
+
+@pytest.mark.parametrize('ages, label', [
+    ((), 'none'),
+    ((10,), 'few'),
+    ((10, 20), 'few'),
+    ((10, 20, 30), 'covered'),
+    ((1, 2, 3, 4, 5), 'covered'),
+    ((180, 200, 300), 'covered'),   # the last one exactly 180 days ago
+    ((181, 200, 300), 'few'),       # the last one 181 days ago
+    ((181,), 'few'),
+], ids=['no report', 'one', 'two', 'three', 'five', 'last 180 days ago', 'last 181 days ago',
+        'one old'])
+def test_labels_from_the_stock_reports(ages, label):
+    rows = frame_of(*[report(n, published=day(age)) for n, age in enumerate(ages, 1)])
+    entry = count_reports(rows, ['005930'], TODAY)['005930']
+    assert (entry['stock_reports'], entry['label']) == (len(ages), label)
+
+
+def test_without_stock_reports_the_label_is_none_whatever_else_there_is():
+    rows = frame_of(report(1, report_type='섹터'), report(2, publisher_type='ir_agency'),
+                    report(3, ['005930', '000660']))
+    entry = count_reports(rows, ['005930'], TODAY)['005930']
+    assert counts_of(entry) == {'stock_reports': 0, 'sector_mentions': 1, 'other_research': 1}
+    assert (entry['label'], entry['last_stock_report_date'], entry['brokers']) == ('none', None, 0)
+
+
+def test_the_last_date_and_the_brokers_come_from_the_stock_reports_only():
+    rows = frame_of(
+        report(1, published='2026-09-01', publisher='KB'),
+        report(2, published='2026-09-20', publisher='NH'),
+        report(3, published='2026-09-10', publisher='KB'),                       # KB again
+        report(4, published='2026-09-15', publisher=None),                       # no publisher name
+        report(5, published='2026-09-12', publisher=''),
+        report(6, published=None, sent='2026-09-29T15:30:00Z', publisher='삼성'),   # 2026-09-30 in Korea
+        # later, but not stock reports
+        report(7, published='2026-10-05', publisher='키움', report_type='섹터'),
+        report(8, published='2026-10-06', publisher='FnGuide', publisher_type='data_provider'),
+        report(9, ['005930', '000660'], published='2026-10-07', publisher='미래에셋'),
+    )
+    entry = count_reports(rows, ['005930'], TODAY)['005930']
+    assert entry['stock_reports'] == 6
+    assert entry['last_stock_report_date'] == '2026-09-30'
+    assert entry['brokers'] == 3   # KB, NH, 삼성
+
+
+def test_every_code_asked_is_answered_once_in_the_order_given():
+    rows = frame_of(report(1, ['005930'], published=day(3)))
+    result = count_reports(rows, ['000660', '005930', '000660', '035420'], TODAY)
+    assert list(result) == ['000660', '005930', '035420']
+    assert result['000660'] == result['035420'] == NO_REPORTS
+    assert result['005930'] == {'stock_reports': 1, 'sector_mentions': 0, 'other_research': 0,
+                                'last_stock_report_date': day(3), 'brokers': 1, 'label': 'few'}
+    assert all(list(entry) == ENTRY_KEYS for entry in result.values())
+
+
+def test_codes_are_matched_as_given():
+    rows = frame_of(report(1, ['005930']))
+    assert count_reports(rows, ['5930'], TODAY) == {'5930': NO_REPORTS}   # no zero-padding
+
+
+def test_no_rows_or_no_codes():
+    assert count_reports(frame_of(), ['005930', '000660'], TODAY) == {'005930': NO_REPORTS,
+                                                                      '000660': NO_REPORTS}
+    assert count_reports(frame_of(report(1)), [], TODAY) == {}
+
+
+def test_one_plain_string_of_codes_is_refused():
+    with pytest.raises(TypeError):
+        count_reports(frame_of(report(1)), '005930', TODAY)
+
+
+def test_the_rows_given_are_not_changed():
+    rows = frame_of(report(1), report(2, published=None, sent='2026-09-29T15:30:00Z'))
+    before = rows.copy(deep=True)
+    count_reports(rows, ['005930'], TODAY)
+    pd.testing.assert_frame_equal(rows, before)   # no effective_date column added in place
+
+
+def test_the_answer_is_plain_json():
+    rows = frame_of(*[report(n, published=day(n)) for n in range(1, 5)])
+    result = count_reports(rows, ['005930'], TODAY)
+    assert json.loads(json.dumps(result)) == result
+    entry = result['005930']
+    assert all(type(entry[name]) is int for name in (*COUNTS, 'brokers'))
+
+
+def test_the_kinds_counted_are_values_of_the_shared_vocabulary():
+    assert set(STOCK_REPORT_TYPES) | {SECTOR} <= set(REPORT_TYPES)
+    # every publisher type is a broker's or other research: a new one must be placed on purpose
+    assert {BROKER, *OTHER_RESEARCH_PUBLISHERS} == set(PUBLISHER_TYPES)
+    assert BROKER not in OTHER_RESEARCH_PUBLISHERS
+
+
+def test_the_adjustable_numbers():
+    assert (COUNT_DAYS, FRESH_DAYS, COVERED_MIN_REPORTS) == (365, 180, 3)

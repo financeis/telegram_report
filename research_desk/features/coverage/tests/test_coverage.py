@@ -15,15 +15,20 @@ New (spec §6, §9.7, §9.9, §13 item 3):
   is ``NotReady("커버리지", "종목표 파일을 읽을 수 없습니다")``, tried again on the next request
   with ``.env`` read again; a stock list version problem only logs a warning; the activity route
   needs no stock list
+- the report counts of companies (spec §7) through the window: the codes as given, the period
+  start in Korea, NotReady passing through, no stock list needed, and once end to end through the
+  real reports window on the reports tests' in-memory DB
 
-The reports window (``period_rows`` / ``stock_rows``) is replaced where coverage looks it up, so
-no Supabase client is ever made. Every environment variable involved is set or deleted here.
+The reports window (``period_rows`` / ``stock_rows`` / ``rows_for_stocks``) is replaced where
+coverage looks it up, so no Supabase client is ever made (but in the end-to-end test, which hands
+out an in-memory one). Every environment variable involved is set or deleted here.
 """
 from __future__ import annotations
 
 import logging
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -39,9 +44,9 @@ from research_desk.domain.stocks import version_file, write_version
 from research_desk.features import coverage, reports
 from research_desk.features.coverage import router
 from research_desk.features.coverage import service as service_module
-from research_desk.features.coverage.logic import market_payload, period_start, stock_activity_payload
+from research_desk.features.coverage.logic import KST, market_payload, period_start, stock_activity_payload
 from research_desk.features.coverage.service import CoverageService, get_service
-from research_desk.features.coverage.tests.rows import frame, wider_frame
+from research_desk.features.coverage.tests.rows import frame, frame_of, report, wider_frame
 
 ENV = ('SUPABASE_URL', 'SUPABASE_SERVICE_KEY', 'SUPABASE_DB_URL', 'KRX_CSV_PATH', 'STORAGE_BASE_DIR')
 
@@ -139,11 +144,12 @@ def clean_env(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def reads(monkeypatch):
-    """reports.period_rows / stock_rows, replaced where coverage looks them up; records each read.
+    """reports.period_rows / stock_rows / rows_for_stocks, replaced where coverage looks them up;
+    records each read (``codes`` holds the rows_for_stocks reads).
 
     ``rows`` is what a read returns, ``error`` what it raises, ``during`` runs inside a period read.
     """
-    state = SimpleNamespace(period=[], stock=[], rows=frame(), error=None, during=None)
+    state = SimpleNamespace(period=[], stock=[], codes=[], rows=frame(), error=None, during=None)
 
     def period_rows(since, include_oos):
         state.period.append((since, include_oos))
@@ -159,8 +165,15 @@ def reads(monkeypatch):
             raise state.error
         return state.rows
 
+    def rows_for_stocks(codes, since):
+        state.codes.append((codes, since))
+        if state.error is not None:
+            raise state.error
+        return state.rows
+
     monkeypatch.setattr(reports, 'period_rows', period_rows)
     monkeypatch.setattr(reports, 'stock_rows', stock_rows)
+    monkeypatch.setattr(reports, 'rows_for_stocks', rows_for_stocks)
     return state
 
 
@@ -412,7 +425,7 @@ def test_creating_the_service_reads_nothing(window, reads, tmp_path, monkeypatch
     created = CoverageService()
     assert isinstance(created, CoverageService)
     assert get_service() is get_service() is window
-    assert reads.period == [] and reads.stock == []
+    assert reads.period == [] and reads.stock == [] and reads.codes == []
 
 
 def _blocking_read(reads):
@@ -578,3 +591,114 @@ def test_a_matching_stock_list_version_logs_nothing(client, reads, stock_csv, ca
     with caplog.at_level(logging.WARNING, logger=LOGGER):
         assert client.get('/api/market').status_code == 200
     assert [r for r in caplog.records if r.name == LOGGER] == []
+
+
+# ── report counts of companies (spec §7) ─────────────────────────────────────
+
+NOW = datetime(2026, 10, 9, 3, 0, tzinfo=timezone.utc)   # 12:00 on 2026-10-09 in Korea
+NO_REPORTS = {'stock_reports': 0, 'sector_mentions': 0, 'other_research': 0,
+              'last_stock_report_date': None, 'brokers': 0, 'label': 'none'}
+
+
+def test_window_exposes_report_counts():
+    assert callable(coverage.report_counts)
+
+
+def test_report_counts_reads_each_code_once_as_given_since_365_days_ago(service, reads):
+    reads.rows = frame_of(report(1, ['005930'], published='2026-10-01'))
+    result = service.report_counts(['005930', '5930', '005930'], now=NOW)
+    assert reads.codes == [(['005930', '5930'], '2025-10-09')]   # no zero-padding, no repeats
+    assert result == {
+        '005930': {'stock_reports': 1, 'sector_mentions': 0, 'other_research': 0,
+                   'last_stock_report_date': '2026-10-01', 'brokers': 1, 'label': 'few'},
+        '5930': NO_REPORTS,
+    }
+    assert reads.period == [] and reads.stock == []
+
+
+def test_report_counts_takes_the_days(service, reads):
+    reads.rows = frame_of()
+    service.report_counts(['005930'], days=30, now=NOW)
+    assert reads.codes == [(['005930'], '2026-09-09')]
+
+
+def test_report_counts_go_by_the_date_in_korea(service, reads):
+    # three stock reports, the last 180 days before 2026-10-09
+    reads.rows = frame_of(report(1, published='2026-04-12'), report(2, published='2026-03-01'),
+                          report(3, published='2026-02-01'))
+    assert service.report_counts(['005930'], now=NOW)['005930']['label'] == 'covered'
+    # 15:00 UTC on 2026-10-09 is already 2026-10-10 in Korea: 181 days, and the period moves too
+    late = datetime(2026, 10, 9, 15, 0, tzinfo=timezone.utc)
+    assert service.report_counts(['005930'], now=late)['005930']['label'] == 'few'
+    assert [since for _, since in reads.codes] == ['2025-10-09', '2025-10-10']
+
+
+def test_report_counts_need_no_stock_list(service, reads, tmp_path, monkeypatch):
+    monkeypatch.setenv('KRX_CSV_PATH', str(tmp_path / 'missing.csv'))
+    reads.rows = frame_of()
+    assert service.report_counts(['005930'], now=NOW) == {'005930': NO_REPORTS}
+
+
+def test_one_plain_string_of_codes_is_refused_before_any_read(service, reads):
+    with pytest.raises(TypeError):
+        service.report_counts('005930', now=NOW)
+    assert reads.codes == []
+
+
+def test_the_window_counts_the_last_365_days_by_default(window, reads):
+    reads.rows = frame_of()
+    before = period_start(365), period_start(30)
+    assert coverage.report_counts(['005930']) == {'005930': NO_REPORTS}
+    coverage.report_counts(['005930'], days=30)
+    after = period_start(365), period_start(30)
+    ((codes1, since1), (codes2, since2)) = reads.codes
+    assert codes1 == codes2 == ['005930']
+    assert since1 in {before[0], after[0]} and since2 in {before[1], after[1]}
+
+
+def test_not_ready_from_the_reports_window_passes_through_report_counts(window, reads):
+    error = NotReady('리포트', DB_REASON)
+    reads.error = error
+    with pytest.raises(NotReady) as exc:
+        coverage.report_counts(['005930'])
+    assert exc.value is error
+    assert str(exc.value) == REPORTS_NOT_READY['detail']
+
+
+def test_report_counts_end_to_end_through_the_real_reports_window(window, monkeypatch):
+    # the reports window itself, on the reports tests' in-memory DB
+    from research_desk.features.reports import service as reports_service
+    from research_desk.features.reports.tests.fakes import FakeSupabase
+
+    today = datetime.now(KST).date()
+
+    def ago(days):
+        return (today - timedelta(days=days)).isoformat()
+
+    db = FakeSupabase(reports=[
+        report(1, ['005930'], published=ago(10)),
+        report(2, ['005930'], published=ago(20), publisher='NH'),
+        report(3, ['005930'], published=ago(30), publisher='키움', publisher_type=None),
+        report(4, ['005930', '000660'], published=ago(40), report_type='섹터'),
+        report(5, ['000660'], published=ago(50), publisher='FnGuide', publisher_type='data_provider'),
+        report(6, ['000660'], published=ago(400)),                                 # older than 365 days
+        report(7, ['000660'], published=ago(5), tagging_status='review_needed'),   # not final
+        report(8, ['000660'], published=ago(5), tagging_status='verified', out_of_scope_reason='foreign'),
+    ])
+    monkeypatch.setenv('SUPABASE_URL', 'https://example.supabase.test')
+    monkeypatch.setenv('SUPABASE_SERVICE_KEY', 'service-key')
+    monkeypatch.setattr(core_db, 'supabase_client', lambda url, key: db)
+    monkeypatch.setattr(reports_service, '_service', None)
+    monkeypatch.setattr(reports, 'rows_for_stocks', reports_service.rows_for_stocks)
+
+    result = coverage.report_counts(['005930', '000660', '035420'])
+
+    assert result == {
+        '005930': {'stock_reports': 3, 'sector_mentions': 1, 'other_research': 0,
+                   'last_stock_report_date': ago(10), 'brokers': 3, 'label': 'covered'},
+        '000660': {'stock_reports': 0, 'sector_mentions': 1, 'other_research': 1,
+                   'last_stock_report_date': None, 'brokers': 0, 'label': 'none'},
+        '035420': NO_REPORTS,
+    }
+    (query,) = db.queries('reports')
+    assert query.filter_values('ov', 'stock_codes') == [['005930', '000660', '035420']]

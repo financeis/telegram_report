@@ -3,6 +3,8 @@
 ``frame()`` is the helper of langgraph_tagger/workspace/tests/test_migration.py: two in-scope
 reports of 016360 (단일종목 and 산업, published 2026-05-11) and one out-of-scope row with no
 published_at, sent 2026-05-11T16:00Z = 2026-05-12 in Korea.
+
+``report()`` / ``frame_of()``: rows for the report counts of companies, one field at a time.
 """
 from __future__ import annotations
 
@@ -53,3 +55,19 @@ def wider_frame() -> pd.DataFrame:
                    tagging_status='auto', out_of_scope_reason=reason)
         rows.append(row)
     return pd.DataFrame(rows, columns=list(REPORT_COLUMNS))
+
+
+def report(rid, codes=('005930',), *, publisher_type='broker', report_type='단일종목', publisher='KB',
+           published='2026-10-01', sent='2026-10-01T01:00:00Z', **extra) -> dict:
+    """An in-scope reports row with the 16 columns: a broker's 단일종목 report of 005930 unless told
+    otherwise. ``extra`` sets any other column."""
+    row = dict.fromkeys(REPORT_COLUMNS)
+    row.update(id=rid, stock_codes=list(codes), publisher_type=publisher_type, report_type=report_type,
+               publisher=publisher, published_at=published, sent_at=sent, tagging_status='auto')
+    row.update(extra)
+    return row
+
+
+def frame_of(*rows: dict) -> pd.DataFrame:
+    """The rows as the reports window gives them: a DataFrame of the 16 columns, even when empty."""
+    return pd.DataFrame(list(rows), columns=list(REPORT_COLUMNS))
