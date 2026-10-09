@@ -19,7 +19,7 @@ Public name:
   latest run failed (``마지막 주가 갱신이 실패했습니다``), or when ``as_of`` is before the expected
   trading day (``주가가 10월 7일 기준으로 밀려 있습니다. 휴장일이면 정상입니다``); ``note`` is null
   exactly when they are fresh. The expected trading day is today when it is a weekday at or after
-  18:30 in Korea, else the nearest weekday before today. Reports are stale without any in-scope
+  20:00 in Korea (after the 18:30 daily price run), else the nearest weekday before today. Reports are stale without any in-scope
   report or when the newest is more than 3 days old; reports have no note. The rules and their
   adjustable values are in ``logic.py``.
 
