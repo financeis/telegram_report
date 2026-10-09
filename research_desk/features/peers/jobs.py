@@ -19,6 +19,10 @@ the command functions (``python -m research_desk`` imports every window when it 
 
 ``peers inspect``: profile counts by fiscal year, profile version and status with their tokens,
 the token totals and the latest builds, as JSON. Without DB settings, 4.
+
+Both commands first set stdout and stderr to write ``?`` for a character their encoding lacks
+instead of failing: piped or redirected output on Korean Windows is cp949, which has no em dash,
+en dash or ``é``, and AI-written text and error messages can hold them. The encoding stays.
 """
 from __future__ import annotations
 
@@ -159,9 +163,19 @@ def _not_ready(exc: Exception) -> int:
     return EXIT_NOT_READY
 
 
+def _tolerant(stream: Any) -> Any:
+    """``stream`` set to write ``?`` for a character its encoding lacks (same object, same
+    encoding); a stream without ``reconfigure`` (a ``StringIO``) is left as it is."""
+    reconfigure = getattr(stream, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(errors="replace")
+    return stream
+
+
 # ── peers build ──────────────────────────────────────────────────────────────
 
 def build_command(args) -> int:
+    out, err = _tolerant(sys.stdout), _tolerant(sys.stderr)
     core_settings.load_env()
     from . import settings
 
@@ -195,7 +209,7 @@ def build_command(args) -> int:
         except core_settings.NotReady as exc:   # passed on as it is: the reports feature's own words
             return _not_ready(exc)
         if tagging:
-            print(TAGGING_IN_PROGRESS, file=sys.stderr)
+            print(TAGGING_IN_PROGRESS, file=err)
             return EXIT_FAILED
 
         from . import build
@@ -205,7 +219,7 @@ def build_command(args) -> int:
                         client=_llm_client(cfg.per_company_timeout_s), stocks=stocks,
                         stock_list_version=stock_list_version, parser_versions=parser_versions,
                         synonyms=synonyms, cfg=cfg, fiscal_year=fiscal_year, codes=args.codes,
-                        limit=args.limit, pilot=args.pilot)
+                        limit=args.limit, pilot=args.pilot, out=out, err=err)
         return build.execute(job)
     finally:
         dart.close()
@@ -234,6 +248,8 @@ def inspect_report(store) -> dict:
 
 
 def inspect_command(args) -> int:
+    out = _tolerant(sys.stdout)
+    _tolerant(sys.stderr)
     core_settings.load_env()
     try:
         url, key = _db_settings()
@@ -242,7 +258,7 @@ def inspect_command(args) -> int:
     from .store import PeersStore
 
     report = inspect_report(PeersStore(_supabase(url, key)))
-    print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
+    print(json.dumps(report, ensure_ascii=False, indent=2, default=str), file=out)
     return 0
 
 

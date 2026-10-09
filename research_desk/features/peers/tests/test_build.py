@@ -258,8 +258,8 @@ async def test_a_pilot_is_recorded_as_pilot_prints_neighbours_and_keeps_the_term
     assert row['status'] == 'pilot' and row['term_table'] is None and row['company_quantiles'] is None
     assert world.profiles()['000010']['terms'] == ['stale']
     blocks = world.out.getvalue().split('■ ')[1:]
-    assert [b.split(' — ')[0] for b in blocks] == ['000010 회사00', '000020 회사01', '000030 회사02',
-                                                   '000040 회사03']
+    assert [b.split('\n')[0] for b in blocks] == ['000010 회사00 - 회사00 틈새', '000020 회사01 - 회사01 틈새',
+                                                  '000030 회사02 - 회사02 틈새', '000040 회사03 - 회사03 틈새']
     first = blocks[0]
     companies = first[first.index('회사 유사도 상위 10'):first.index('부문 유사도 상위 10')]
     listed = [line.split()[1] for line in companies.splitlines()[1:] if line.strip()]

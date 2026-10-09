@@ -1,9 +1,12 @@
 """``peers build`` and ``peers inspect`` (spec §11): start-up checks (exit 4, nothing done), the
-tagging refusal (exit 1), exit codes by status, arguments, and the inspect report."""
+tagging refusal (exit 1), exit codes by status, arguments, the inspect report, and output on a
+cp949 console or pipe (characters it lacks come out as ``?``)."""
 from __future__ import annotations
 
 import argparse
+import io
 import json
+import sys
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -308,3 +311,59 @@ def test_inspect_reports_profile_counts_tokens_and_recent_builds(ready, capsys):
         1, 'incomplete', 2, 1, 1)
     assert build['started_at'] and build['finished_at']
     assert 'term_table' not in build and 'company_quantiles' not in build
+
+
+# ── output on a cp949 console or pipe ────────────────────────────────────────
+
+FOREIGN = '틈새 – café'      # an en dash and é: AI-written text can hold them, cp949 has neither
+
+
+def cp949_pipe():
+    """What Python writes a pipe or a redirect with on this PC: cp949, strict errors."""
+    return io.TextIOWrapper(io.BytesIO(), encoding='cp949')
+
+
+def written(stream) -> str:
+    """What reached the pipe, line ends as ``\\n``."""
+    stream.flush()
+    return stream.buffer.getvalue().decode('cp949').replace('\r\n', '\n')
+
+
+def cp949_pipes(monkeypatch):
+    """Point stdout and stderr at cp949 pipes. Called in the test body: pytest puts its own
+    capture back between a fixture and the test."""
+    pipes = SimpleNamespace(out=cp949_pipe(), err=cp949_pipe())
+    monkeypatch.setattr(sys, 'stdout', pipes.out)
+    monkeypatch.setattr(sys, 'stderr', pipes.err)
+    return pipes
+
+
+def test_a_pilot_writes_its_table_and_summary_on_a_cp949_pipe(ready, monkeypatch):
+    ready.llm.reply = lambda model, user: reply(model, user).model_copy(update={'niche_industry': FOREIGN})
+    pipes = cp949_pipes(monkeypatch)
+    assert run('build', '--pilot') == 0
+    out = written(pipes.out)
+    assert '■ 000010 가나반도체 - 틈새 ? caf?\n' in out and '■ 000020 다라메모리 - 틈새 ? caf?\n' in out
+    assert '회사 유사도 상위 10' in out and '부문 유사도 상위 10' in out
+    summary = json.loads(out[out.rindex('\n{\n') + 1:])
+    assert (summary['status'], summary['eligible'], summary['profiled']) == ('pilot', 2, 2)
+    assert ready.db.rows('peer_builds')[0]['status'] == 'pilot'
+    # Only the output is replaced: the stored profile keeps the characters.
+    assert ready.db.rows('company_profiles')[0]['profile']['niche_industry'] == FOREIGN
+    assert written(pipes.err) == ''
+
+
+def test_an_error_and_inspect_write_their_lines_on_a_cp949_pipe(ready, monkeypatch):
+    async def broken(**kwargs):
+        raise RuntimeError(f'embedding {FOREIGN}')
+
+    ready.llm.embed = broken
+    pipes = cp949_pipes(monkeypatch)
+    assert run('build') == 1
+    err = written(pipes.err)
+    assert '유사도 계산 중 오류가 났습니다(RuntimeError: embedding 틈새 ? caf?). ' in err
+    assert '빌드 번호 1의 상태를 실패(failed)로 바꿨습니다.' in err
+    assert ready.db.rows('peer_builds')[0]['message'] == f'오류로 중단: RuntimeError: embedding {FOREIGN}'
+    assert run('inspect') == 0
+    report = json.loads(written(pipes.out))
+    assert report['builds'][0]['message'] == '오류로 중단: RuntimeError: embedding 틈새 ? caf?'

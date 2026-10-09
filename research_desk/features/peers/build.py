@@ -429,7 +429,8 @@ class _Build:
         for report in targets:
             code = report.stock_code
             profile = (profiles.get(code) or {}).get("profile") or {}
-            print(f"■ {code} {self.name_of(code, profiles)} — {profile.get('niche_industry', '(프로필 없음)')}",
+            # An ASCII separator: piped output on Korean Windows is cp949, which has no em dash.
+            print(f"■ {code} {self.name_of(code, profiles)} - {profile.get('niche_industry', '(프로필 없음)')}",
                   file=self.out)
             if code not in company_vectors:
                 print("  프로필이나 임베딩이 없어 이웃을 계산하지 않았습니다.", file=self.out)
