@@ -97,6 +97,15 @@ TABLE_OWNERS = {
     "reports": ("collector", "tagger", "features/review", "features/reports"),
     "failed_attempts": ("collector",),
     "report_summaries": ("features/analysis",),
+    # 주가 스냅숏과 갱신 실행 기록
+    "stock_price_snapshot": ("features/prices",),
+    "price_update_runs": ("features/prices",),
+    # 회사 프로필·사업 부문·임베딩과 유사 기업 계산 기록
+    "company_profiles": ("features/peers",),
+    "company_segments": ("features/peers",),
+    "company_embeddings": ("features/peers",),
+    "segment_embeddings": ("features/peers",),
+    "peer_builds": ("features/peers",),
 }
 # supabase-py opens a table with client.table('<표>') or its alias client.from_('<표>').
 _TABLE_METHODS = ("table", "from_")

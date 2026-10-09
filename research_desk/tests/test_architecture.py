@@ -948,6 +948,52 @@ def test_r11_table_access_outside_owner_areas_is_detected(tmp_path):
     assert "failed_attempts" in retry.message
 
 
+def test_r11_price_and_peer_tables_belong_to_their_features(tmp_path):
+    root = make_tree(tmp_path, {
+        "features/prices/store.py": '''
+            SAVE = "INSERT INTO stock_price_snapshot (stock_code, close) VALUES ($1, $2)"
+
+
+            def record_run(sb):
+                sb.table("price_update_runs").insert({}).execute()
+                return sb.table("stock_price_snapshot").select("*").execute()
+        ''',
+        "features/peers/store.py": '''
+            PEERS = """
+            SELECT p.stock_code FROM company_profiles p
+            JOIN company_segments s ON s.stock_code = p.stock_code
+            JOIN company_embeddings e ON e.stock_code = p.stock_code
+            JOIN segment_embeddings g ON g.segment_id = s.id
+            """
+            DONE = "UPDATE peer_builds SET finished_at = now() WHERE id = $1"
+
+
+            def prices(sb):
+                return sb.table("stock_price_snapshot").select("*").execute()
+        ''',
+        "features/prices/service.py": 'BUILD = "INSERT INTO peer_builds DEFAULT VALUES"\n',
+        "features/reports/store.py": 'def profiles(sb):\n    return sb.from_("company_profiles").select("*").execute()\n',
+        "core/db.py": 'LAST = "SELECT max(id) FROM price_update_runs"\n',
+        "web/app.py": 'Q = "SELECT * FROM public.segment_embeddings"\n',
+        "features/coverage/logic.py": '''
+            A = "FROM company_profiles_old"
+            B = "price_update_runs_count"
+            C = "JOIN peer_builds2 ON true"
+        ''',
+        "features/peers/tests/test_store.py": 'SQL = "UPDATE stock_price_snapshot SET close = 1"\n',
+    })
+    violations = check_tree(root)
+    assert hits(violations) == (
+        at("features/peers/store.py", 11, rule="R11 표 주인")
+        | at("features/prices/service.py", 1, rule="R11 표 주인")
+        | at("features/reports/store.py", 2, rule="R11 표 주인")
+        | at("core/db.py", 1, rule="R11 표 주인")
+        | at("web/app.py", 1, rule="R11 표 주인")
+    )
+    (qualified,) = [v for v in violations if v.path == "research_desk/web/app.py"]
+    assert "`segment_embeddings` 표는 주인 칸(features/peers)만" in qualified.message
+
+
 def test_r11_catches_the_from_alias_of_table(tmp_path):
     # supabase-py's client.from_('<표>') opens the same table as client.table('<표>').
     root = make_tree(tmp_path, {
