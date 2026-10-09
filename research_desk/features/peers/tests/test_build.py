@@ -337,6 +337,61 @@ async def test_only_the_failed_companies_are_tried_again():
     assert outcome.status == 'done' and world.profiles()['000020']['status'] == 'ok'
 
 
+PROFILE_TABLES = ('company_profiles', 'company_segments', 'company_embeddings', 'segment_embeddings')
+
+
+@pytest.mark.parametrize('failure', ['ai_error', 'empty_report'])
+async def test_a_failed_rebuild_keeps_the_served_profile_and_counts_as_failed(failure):
+    """The profile of an older report stays served until an extraction succeeds (spec §5.5)."""
+    world = World(catalog(2))
+    await world.run()
+    served = {table: world.db.rows(table, stock_code='000010') for table in PROFILE_TABLES}
+    changes = {'rcept_no': 'R-new'}
+    if failure == 'ai_error':
+        world.fail['회사00'] = RuntimeError('AI down')
+        reason = build.AI_ERROR.format(error='RuntimeError: AI down')
+    else:
+        changes |= {'prose_text': '  ', 'table_text': ''}
+        reason = build.EMPTY_INPUT
+    world.docs = [d | changes if d['stock_code'] == '000010' else d for d in world.docs]
+    outcome = await world.run()
+    assert {table: world.db.rows(table, stock_code='000010') for table in PROFILE_TABLES} == served
+    assert served['company_profiles'][0]['status'] == 'ok'
+    assert served['company_profiles'][0]['rcept_no'] == 'R000010'
+    row = world.build_row()
+    assert (outcome.status, row['eligible'], row['profiled'], row['failed']) == ('incomplete', 2, 1, 1)
+    assert outcome.summary['kept_previous'] == [{'stock_code': '000010', 'reason': reason}]
+    assert world.summary()['kept_previous'] == outcome.summary['kept_previous']
+
+
+async def test_the_served_profile_is_replaced_once_an_extraction_succeeds():
+    world = World(catalog(2))
+    await world.run()
+    world.fail['회사00'] = RuntimeError('AI down')
+    world.docs = [d | {'rcept_no': 'R-new'} if d['stock_code'] == '000010' else d for d in world.docs]
+    await world.run()
+    assert world.profiles()['000010']['rcept_no'] == 'R000010'
+    world.fail.clear()
+    outcome = await world.run()
+    assert outcome.status == 'done' and outcome.summary['kept_previous'] == []
+    profile = world.profiles()['000010']
+    assert (profile['status'], profile['rcept_no']) == ('ok', 'R-new')
+    assert len(world.db.rows('company_embeddings', stock_code='000010')) == 1
+
+
+async def test_a_failed_extraction_without_a_served_profile_is_recorded_as_failed():
+    world = World(catalog(2))
+    world.fail['회사00'] = RuntimeError('AI down')
+    await world.run()
+    assert world.profiles()['000010']['status'] == 'failed'
+    world.fail['회사00'] = RuntimeError('still down')
+    outcome = await world.run()
+    row = world.profiles()['000010']
+    assert row['status'] == 'failed' and row['fail_reason'] == build.AI_ERROR.format(
+        error='RuntimeError: still down')
+    assert (outcome.summary['failed'], outcome.summary['kept_previous']) == (1, [])
+
+
 async def test_a_company_without_text_fails_without_an_ai_call():
     world = World(catalog(1), extra_docs=[doc('000990', '020100', name='빈회사', prose='  ')],
                   extra_stocks=[StockEntry('000990', '빈회사', 'KOSDAQ', '전자', '부품', '')])

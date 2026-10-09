@@ -9,8 +9,12 @@ A build is one run for (fiscal year, profile version, embedding model):
 3. Profiles: an ``ok`` profile with the same report (``rcept_no``) and parser version is reused;
    every other target is extracted again (failed ones included), at most
    ``PEERS_MAX_CONCURRENT_LLM`` companies at once, each within ``PEERS_PER_COMPANY_TIMEOUT_S``.
-   A company whose extraction fails is written as ``failed`` with its reason; the build goes on.
-   Companies outside the targets (KONEX, SPACs, REITs, not in the stock list) never reach the AI.
+   A profile is replaced (its segments and embeddings with it) only after a successful
+   extraction. A company whose extraction fails is written as ``failed`` with its reason, unless
+   it still has an ``ok`` profile (an older report or parser): that one stays served, untouched,
+   and the run only counts the company as failed and lists it under ``kept_previous``. Either way
+   the build goes on. Companies outside the targets (KONEX, SPACs, REITs, not in the stock list)
+   never reach the AI.
 4. Embeddings: every ``ok`` profile of the fiscal year and profile version, and every segment of
    it, that has no embedding of this build's model gets one (100 texts per call, 1536
    dimensions, scaled to length 1). Other models' embeddings are never touched.
@@ -21,7 +25,9 @@ A build is one run for (fiscal year, profile version, embedding model):
    each target's ten most similar companies and segments instead and leaves ``terms`` alone.
 6. Retention: the three latest public builds stay; older ones, and the profile and embedding rows
    neither a remaining build nor the current profile version uses, are deleted.
-7. A summary JSON on stdout. Exit code: done 0, pilot 0, incomplete 1; refused 1.
+7. A summary JSON on stdout (counts of targets, profiled, failed, reused and extracted
+   companies, ``kept_previous``, embeddings, tokens). Exit code: done 0, pilot 0, incomplete 1;
+   refused 1.
 
 The progress time (``heartbeat_at``) moves after every company and embedding batch. An error or
 an interruption (Ctrl+C) while the build runs closes it as ``failed`` and the command ends with 1;
@@ -156,6 +162,8 @@ class _Tally:
     output_tokens: int = 0
     embedding_tokens: int = 0
     embedded: dict = field(default_factory=lambda: {"companies": 0, "segments": 0})
+    # Failed companies whose earlier ok profile stays served: {"stock_code", "reason"}.
+    kept_previous: list = field(default_factory=list)
 
 
 async def _run_workers(items: Sequence[Any], count: int, handle: Callable[[Any], Awaitable[None]]) -> None:
@@ -188,6 +196,7 @@ class _Build:
         self.out, self.err = job.out or sys.stdout, job.err or sys.stderr
         self.fy, self.pv, self.model = job.fiscal_year, job.cfg.profile_version, job.cfg.embed_model
         self.tally = _Tally()
+        self.served: set[str] = set()          # codes with an ok profile when the build started
 
     # ── small helpers ────────────────────────────────────────────────────────
 
@@ -280,10 +289,17 @@ class _Build:
                 row = self.failed_row(report, assembled, AI_ERROR.format(error=describe(exc)))
             else:
                 row, segments = self.ok_rows(report, assembled, result)
-        self.store.replace_profile(row, segments)
         if row["status"] == "ok":
+            self.store.replace_profile(row, segments)
             self.tally.profiled += 1
+        elif report.stock_code in self.served:
+            # The ok profile of an older report or parser stays served until an extraction
+            # succeeds: this run only counts and lists the failure.
+            logger.warning("profile of %s not rebuilt; its previous ok profile is kept", report.stock_code)
+            self.tally.kept_previous.append({"stock_code": report.stock_code, "reason": row["fail_reason"]})
+            self.tally.failed += 1
         else:
+            self.store.replace_profile(row)
             self.tally.failed += 1
         self.progress(profiled=self.tally.profiled, failed=self.tally.failed)
 
@@ -309,6 +325,7 @@ class _Build:
     async def profiles(self, targets: list[CompanyReport]) -> None:
         existing = {r["stock_code"]: r for r in self.store.profiles(
             self.fy, self.pv, "stock_code, status, rcept_no, parser_version")}
+        self.served = {code for code, row in existing.items() if row["status"] == "ok"}
         todo = []
         for report in targets:
             old = existing.get(report.stock_code)
@@ -452,6 +469,7 @@ class _Build:
         return {"build_id": self.state.build_id, "status": status, "fiscal_year": self.fy,
                 "profile_version": self.pv, "embed_model": self.model, "eligible": eligible,
                 "profiled": t.profiled, "failed": t.failed, "reused": t.reused, "extracted": t.extracted,
+                "kept_previous": sorted(t.kept_previous, key=lambda item: item["stock_code"]),
                 "embedded": dict(t.embedded),
                 "tokens": {"input": t.input_tokens, "output": t.output_tokens,
                            "embedding": t.embedding_tokens}}
