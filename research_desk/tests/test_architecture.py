@@ -122,6 +122,17 @@ CLEAN_TREE = {
         import fitz
         import pymupdf
     """,
+    "core/mongo.py": """
+        def mongo_collection(url, db, name):
+            import pymongo
+            from bson import ObjectId
+            return pymongo.MongoClient(url)[db][name]
+    """,
+    "core/kis.py": """
+        def connections():
+            import httpx
+            return httpx.Client()
+    """,
     "domain/reports.py": """
         from pathlib import Path
 
@@ -715,6 +726,46 @@ def test_r9_external_tools_stay_in_their_area(tmp_path):
     )
 
 
+def test_r9_mongodb_and_http_tools_stay_in_core(tmp_path):
+    root = make_tree(tmp_path, {
+        "core/mongo.py": """
+            def mongo_collection(url, db, name):
+                import pymongo
+                from bson import ObjectId
+                return pymongo.MongoClient(url)[db][name]
+        """,
+        "core/kis.py": """
+            def connections():
+                import httpx
+                return httpx.Client()
+        """,
+        "features/prices/service.py": """
+            import httpx
+            from bson.objectid import ObjectId
+
+
+            def snapshot():
+                import pymongo
+                return pymongo
+        """,
+        "features/peers/store.py": "from pymongo import MongoClient\n",
+        "domain/stocks.py": "import bson\n",
+        "web/app.py": "import httpx\n",
+        "cli.py": "from pymongo.errors import PyMongoError\n",
+        "features/peers/tests/test_store.py": "import httpx\nimport pymongo\nfrom bson import ObjectId\n",
+    })
+    violations = check_tree(root)
+    assert hits(violations) == (
+        at("features/prices/service.py", 1, 2, 6, rule="R9 외부 도구")
+        | at("features/peers/store.py", 1, rule="R9 외부 도구")
+        | at("domain/stocks.py", 1, rule="R9 외부 도구")
+        | at("web/app.py", 1, rule="R9 외부 도구")
+        | at("cli.py", 1, rule="R9 외부 도구")
+    )
+    (inside_a_function,) = [v for v in violations if v.path.endswith("prices/service.py") and v.line == 6]
+    assert "`pymongo`" in inside_a_function.message and "research_desk/core/" in inside_a_function.message
+
+
 def test_r10_old_code_is_never_imported_even_by_tests(tmp_path):
     root = make_tree(tmp_path, {
         "core/settings.py": "import config\n",
@@ -895,6 +946,52 @@ def test_r11_table_access_outside_owner_areas_is_detected(tmp_path):
     )
     (retry,) = [v for v in violations if v.path.endswith("coverage/service.py") and v.line == 8]
     assert "failed_attempts" in retry.message
+
+
+def test_r11_price_and_peer_tables_belong_to_their_features(tmp_path):
+    root = make_tree(tmp_path, {
+        "features/prices/store.py": '''
+            SAVE = "INSERT INTO stock_price_snapshot (stock_code, close) VALUES ($1, $2)"
+
+
+            def record_run(sb):
+                sb.table("price_update_runs").insert({}).execute()
+                return sb.table("stock_price_snapshot").select("*").execute()
+        ''',
+        "features/peers/store.py": '''
+            PEERS = """
+            SELECT p.stock_code FROM company_profiles p
+            JOIN company_segments s ON s.stock_code = p.stock_code
+            JOIN company_embeddings e ON e.stock_code = p.stock_code
+            JOIN segment_embeddings g ON g.segment_id = s.id
+            """
+            DONE = "UPDATE peer_builds SET finished_at = now() WHERE id = $1"
+
+
+            def prices(sb):
+                return sb.table("stock_price_snapshot").select("*").execute()
+        ''',
+        "features/prices/service.py": 'BUILD = "INSERT INTO peer_builds DEFAULT VALUES"\n',
+        "features/reports/store.py": 'def profiles(sb):\n    return sb.from_("company_profiles").select("*").execute()\n',
+        "core/db.py": 'LAST = "SELECT max(id) FROM price_update_runs"\n',
+        "web/app.py": 'Q = "SELECT * FROM public.segment_embeddings"\n',
+        "features/coverage/logic.py": '''
+            A = "FROM company_profiles_old"
+            B = "price_update_runs_count"
+            C = "JOIN peer_builds2 ON true"
+        ''',
+        "features/peers/tests/test_store.py": 'SQL = "UPDATE stock_price_snapshot SET close = 1"\n',
+    })
+    violations = check_tree(root)
+    assert hits(violations) == (
+        at("features/peers/store.py", 11, rule="R11 표 주인")
+        | at("features/prices/service.py", 1, rule="R11 표 주인")
+        | at("features/reports/store.py", 2, rule="R11 표 주인")
+        | at("core/db.py", 1, rule="R11 표 주인")
+        | at("web/app.py", 1, rule="R11 표 주인")
+    )
+    (qualified,) = [v for v in violations if v.path == "research_desk/web/app.py"]
+    assert "`segment_embeddings` 표는 주인 칸(features/peers)만" in qualified.message
 
 
 def test_r11_catches_the_from_alias_of_table(tmp_path):
