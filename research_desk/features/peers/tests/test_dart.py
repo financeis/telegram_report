@@ -145,6 +145,16 @@ def test_the_sections_of_one_report_are_read_when_needed():
     assert query['rcept_no'] == report.rcept_no and query['stock_code'] == '000010'
 
 
+def test_sections_of_parsers_below_0_2_0_are_not_read():
+    """Fields are guaranteed from parser 0.2.0 on: an older parser's section is left out of the input."""
+    docs = [doc('000010', '020100', prose='개요', parser='0.2.0'),
+            doc('000010', '020200', prose='옛 파서의 제품', tables='품목 | 용도\n가 | 나', parser='0.1.0'),
+            doc('000010', '020700', prose='버전 없음', parser=None)]
+    source = dart.DartSource(FakeCollection(docs))
+    report = source.reports(2025, STOCKS, ['0.2.0'])[0]
+    assert source.sections(report) == {'020100': Section(prose='개요', tables='')}
+
+
 def test_missing_text_fields_read_as_empty():
     docs = [doc('000010')]
     del docs[0]['table_text']

@@ -153,8 +153,9 @@ class DartSource:
         return select_reports(docs, fiscal_year, stocks)
 
     def sections(self, report: CompanyReport) -> dict[str, Section]:
-        """The input sections of one report: ``{section_code: Section(prose, tables)}``. When a
-        section has several documents, the newest parser's wins."""
+        """The input sections of one report: ``{section_code: Section(prose, tables)}``. Only
+        documents of parser 0.2.0 or later are read, as for the report selection; when a section
+        has several of them, the newest parser's wins."""
         docs = self._collection.find(
             {"rcept_no": report.rcept_no, "stock_code": report.stock_code,
              "section_code": {"$in": list(INPUT_SECTIONS)}},
@@ -162,6 +163,8 @@ class DartSource:
         )
         best: dict[str, dict] = {}
         for doc in docs:
+            if not is_supported_parser(doc.get("parser_version")):
+                continue
             code = doc.get("section_code")
             current = best.get(code)
             if current is None or _version_order(doc.get("parser_version") or "") > _version_order(
