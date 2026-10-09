@@ -31,16 +31,31 @@ def seg(name='메모리', products=(), keywords=(), share=-1.0) -> dict:
 # ── comparison keys (§5.4) ───────────────────────────────────────────────────
 
 @pytest.mark.parametrize('text', ['Legacy DRAM', 'legacy-dram', 'LEGACY  DRAM', 'Legacy·DRAM',
-                                  'legacy ‐ dram', 'Legacy ㆍ DRAM', 'Legacy 디램', 'legacy D램'])
+                                  'legacy ‐ dram', 'Legacy ㆍ DRAM'])
 def test_the_spec_example_and_its_spellings_share_one_key(text):
     assert logic.comparison_key(text, SYN) == 'legacydram'
 
 
+@pytest.mark.parametrize('text', ['디램', 'D램', 'DRAM', 'd-ram', ' 디 램 ', 'D·램'])
+def test_every_spelling_of_a_synonym_entry_gives_the_standard_key(text):
+    assert logic.comparison_key(text, SYN) == 'dram'
+
+
 def test_synonyms_become_the_standard_spelling_before_case_and_spacing():
     assert logic.comparison_key('2차 전지', SYN) == logic.comparison_key('이차전지', SYN) == '이차전지'
-    assert logic.comparison_key('하이니켈 양극활물질', SYN) == '하이니켈양극재'
+    assert logic.comparison_key('양극 활물질', SYN) == '양극재'
     assert logic.comparison_key('NOR-Flash', SYN) == 'norflash'
     assert logic.comparison_key('  ', SYN) == ''
+
+
+@pytest.mark.parametrize('text, key', [
+    ('시디램프', '시디램프'),                       # 디램 inside another word is no DRAM
+    ('Legacy 디램', 'legacy디램'),
+    ('하이니켈 양극활물질', '하이니켈양극활물질'),
+    ('2차전지 소재', '2차전지소재'),
+])
+def test_a_spelling_inside_a_longer_term_is_never_replaced(text, key):
+    assert logic.comparison_key(text, SYN) == key
 
 
 def test_without_synonyms_only_case_and_spacing_count():
@@ -72,8 +87,15 @@ def test_term_keys_are_unique_non_empty_and_in_order():
 
 def test_profile_terms_are_keywords_products_then_segment_keywords_and_products():
     p = profile(keywords=['Legacy DRAM'], products=['NOR Flash', 'D램'],
-                segments=[seg(products=['MCP'], keywords=['저전력 디램', 'nor flash'])]).model_dump()
-    assert logic.profile_terms(p, SYN) == ['legacydram', 'norflash', 'dram', '저전력dram', 'mcp']
+                segments=[seg(products=['MCP'], keywords=['저전력 디램', 'nor flash', '디램'])]).model_dump()
+    assert logic.profile_terms(p, SYN) == ['legacydram', 'norflash', 'dram', '저전력디램', 'mcp']
+
+
+def test_the_term_table_keeps_a_word_holding_a_synonym_spelling_apart():
+    table = logic.term_table([profile(keywords=['시디램프', 'DRAM']).model_dump(),
+                              profile(keywords=['디램']).model_dump()], SYN)
+    assert table == {'시디램프': {'display': '시디램프', 'companies': 1},
+                     'dram': {'display': 'DRAM', 'companies': 2}}
 
 
 def test_the_term_table_counts_companies_and_shows_the_standard_or_first_spelling():
@@ -201,19 +223,38 @@ TEXT = ('[사업의 개요]\n당사는 Legacy DRAM과 NOR Flash를 설계합니�
 
 
 def test_terms_missing_from_the_input_are_dropped_and_counted():
-    p = profile(keywords=['legacy-dram', 'NOR flash', 'HBM'], products=['D램 모듈', '   '],
+    p = profile(keywords=['legacy-dram', 'NOR flash', 'HBM'], products=['D램', '   '],
                 customers=['삼성전자', 'SK하이닉스'], competitors=['마이크론'],
                 applications=['서버'],        # not checked
                 segments=[seg(products=['NOR Flash'], keywords=['MCP', '하이니켈 양극재'])])
     grounded, kept, produced = logic.ground_profile(p, TEXT, SYN)
     assert grounded.keywords == ['legacy-dram', 'NOR flash']
-    assert grounded.products == ['D램 모듈']
+    assert grounded.products == ['D램']
     assert grounded.customers == ['삼성전자']
     assert grounded.competitors == []
     assert grounded.applications == ['서버']
     assert grounded.segments[0].products == ['NOR Flash']
     assert grounded.segments[0].keywords == ['MCP']
     assert (kept, produced) == (6, 10)
+
+
+@pytest.mark.parametrize('term, text', [
+    ('DRAM', '당사는 디램을 만듭니다.'),               # the keyword DRAM, the text 디램
+    ('디램', '주력 제품은 DRAM입니다.'),
+    ('D램', '주력 제품은 디 램 모듈입니다.'),
+    ('이차전지', '2차전지 소재를 판매합니다.'),
+])
+def test_a_term_is_grounded_by_any_spelling_of_its_synonym_entry(term, text):
+    grounded, kept, produced = logic.ground_profile(profile(keywords=[term]), text, SYN)
+    assert grounded.keywords == [term] and (kept, produced) == (1, 1)
+
+
+def test_a_word_holding_a_synonym_spelling_is_grounded_as_itself():
+    """The input text is compared as written (case and spacing aside): a spelling inside a word of
+    the text is not replaced either, so such a word still grounds itself."""
+    grounded, kept, produced = logic.ground_profile(
+        profile(keywords=['시디램프', 'Legacy 디램', 'HBM']), '시디램프와 Legacy 디램을 판매합니다.', SYN)
+    assert grounded.keywords == ['시디램프', 'Legacy 디램'] and (kept, produced) == (2, 3)
 
 
 def test_the_grounding_ratio_is_kept_over_produced_and_one_without_terms():

@@ -1,10 +1,14 @@
 """Peers calculations: no DB, no network, no settings, no files.
 
-- Comparison keys (spec §5.4): squash a term (lower case; drop spaces, middle dots and hyphens),
-  then turn every synonym spelling into its standard spelling. ``Legacy DRAM``, ``legacy-dram``
-  and ``Legacy 디램`` all become ``legacydram``. Grounding, shared terms, the term table and theme
-  search all compare these keys. A term's display is the synonym table's standard spelling, else
-  the first original spelling met in the build.
+- Comparison keys (spec §5.4): a whole term that is one of the synonym table's spellings becomes
+  its standard spelling, then case, spaces, middle dots and hyphens are ignored (``squash``; the
+  term and the spellings are compared squashed). ``디램``, ``D램`` and ``DRAM`` all become
+  ``dram``; ``Legacy DRAM`` and ``legacy-dram`` become ``legacydram``. A spelling inside a longer
+  term is never replaced: ``시디램프`` stays ``시디램프`` and ``Legacy 디램`` is ``legacy디램``.
+  Shared terms, the term table and theme search compare these keys. Grounding looks in the
+  squashed input text (nothing replaced there) for the term's key or, when the key is a synonym
+  entry's, for any spelling of that entry. A term's display is the synonym table's standard
+  spelling, else the first original spelling met in the build.
 - Input assembly (§5.1): labelled blocks from the business-report sections, each cut at its cap,
   the whole input at ``INPUT_CAP``; ``truncated`` says whether anything was cut.
 - Grounding and caps (§5.2, §5.4): terms missing from the input are dropped and counted; then
@@ -45,21 +49,27 @@ def squash(text: str) -> str:
 
 @dataclass(frozen=True)
 class Synonyms:
-    """The synonym table, ready for keys: ``key(text)`` and ``display(key)``.
+    """The synonym table, ready for keys: ``key(term)``, ``spellings(key)`` and ``display(key)``.
 
     ``displays``: standard key → standard spelling. ``variants``: squashed other spelling →
-    standard key. ``fingerprint``: SHA-256 of the table's content (the build records it).
+    standard key. ``forms``: standard key → every squashed spelling of its entry, the standard
+    first. ``fingerprint``: SHA-256 of the table's content (the build records it).
     """
     displays: Mapping[str, str]
     variants: Mapping[str, str]
+    forms: Mapping[str, tuple[str, ...]]
     fingerprint: str
-    pattern: Optional[re.Pattern] = None
 
-    def key(self, text: str) -> str:
-        squashed = squash(text)
-        if self.pattern is None or not squashed:
-            return squashed
-        return self.pattern.sub(lambda match: self.variants[match.group(0)], squashed)
+    def key(self, term: str) -> str:
+        """The comparison key of a whole term: its squashed form, or the standard key when that
+        form is one of the table's other spellings. Nothing inside a term is replaced."""
+        squashed = squash(term)
+        return self.variants.get(squashed, squashed)
+
+    def spellings(self, key: str) -> tuple[str, ...]:
+        """What stands for ``key`` in a squashed text: every spelling of its synonym entry, or the
+        key alone."""
+        return self.forms.get(key) or (key,)
 
     def display(self, key: str) -> Optional[str]:
         return self.displays.get(key)
@@ -95,15 +105,16 @@ def parse_synonyms(mapping: Optional[Mapping[str, Sequence[str]]]) -> Synonyms:
             if variant in displays or variants.get(variant, squash(standard)) != squash(standard):
                 raise ValueError(f"the spelling {other!r} belongs to more than one standard")
             variants[variant] = squash(standard)
+    forms: dict[str, list[str]] = {key: [key] for key in displays}
+    for variant, key in variants.items():
+        forms[key].append(variant)
     canonical = {standard.strip(): sorted({str(o).strip() for o in others})
                  for standard, others in mapping.items()}
     fingerprint = hashlib.sha256(
         json.dumps(canonical, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
-    pattern = None
-    if variants:
-        # Longest first, so a longer spelling wins over a shorter one inside it.
-        pattern = re.compile("|".join(re.escape(v) for v in sorted(variants, key=len, reverse=True)))
-    return Synonyms(displays=displays, variants=variants, fingerprint=fingerprint, pattern=pattern)
+    return Synonyms(displays=displays, variants=variants,
+                    forms={key: tuple(spellings) for key, spellings in forms.items()},
+                    fingerprint=fingerprint)
 
 
 def comparison_key(text: str, synonyms: Synonyms) -> str:
@@ -306,10 +317,11 @@ def ground_profile(profile: CompanyProfile, text: str,
     """``(profile with ungrounded terms dropped, terms kept, terms given)``.
 
     Products, keywords, customers, competitors and each segment's products and keywords must
-    appear in ``text`` (both compared as keys). Blank terms are dropped and not counted. Other
-    fields are left as they are.
+    appear in ``text``: the term's key, or any spelling of its synonym entry, inside the squashed
+    text (case and spacing ignored, nothing replaced). Blank terms are dropped and not counted.
+    Other fields are left as they are.
     """
-    haystack = synonyms.key(text)
+    haystack = squash(text)
     counts = [0, 0]
 
     def keep(terms: list[str]) -> list[str]:
@@ -320,7 +332,7 @@ def ground_profile(profile: CompanyProfile, text: str,
             if not key:
                 continue
             counts[1] += 1
-            if key in haystack:
+            if any(spelling in haystack for spelling in synonyms.spellings(key)):
                 counts[0] += 1
                 kept.append(term)
         return kept
