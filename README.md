@@ -81,15 +81,21 @@ Research Desk는 이 과정을 **수집 → 분류 → 열람·분석 → 비교
 
 <tr>
 
-<td><img src="docs/images/report-detail-summary.png" width="270" alt="핵심 요약">
+<td>
+
+<img src="docs/images/report-detail-summary.png" width="270" alt="핵심 요약">
 
 </td>
 
-<td><img src="docs/images/report-detail-estimates.png" width="270" alt="실적 전망">
+<td>
+
+<img src="docs/images/report-detail-estimates.png" width="270" alt="실적 전망">
 
 </td>
 
-<td><img src="docs/images/report-detail-thesis.png" width="270" alt="투자 논리">
+<td>
+
+<img src="docs/images/report-detail-thesis.png" width="270" alt="투자 논리">
 
 </td>
 
@@ -186,7 +192,7 @@ AI가 확신하지 못한 리포트만 검토 대기열에 올라옵니다. 원�
 
 ## 이렇게 씁니다
 
-리서치 인턴의 하루를 예로 들면 이렇습니다.
+이 웹앱을 통해 리서치를 공부할 경우,
 
 ```mermaid
 flowchart LR
@@ -198,7 +204,7 @@ flowchart LR
     F --> G["테마 검색<br/>새 테마의<br/>관련 기업 목록"]
 ```
 
-1. 출근하면 상태 줄로 주가·리포트가 최신인지 봅니다.
+1. 상태 줄로 주가·리포트가 최신인지 봅니다.
 2. 리서치 커버리지에서 전날 리포트가 몰린 업종과 기업을 훑습니다.
 3. 담당 기업 화면에서 새 리포트를 고르고, 필요한 것만 AI 분석을 돌립니다.
 4. 지난달 리포트와 비교해 목표주가·추정치·논리가 어떻게 바뀌었는지 정리합니다.
@@ -425,7 +431,7 @@ flowchart TB
 | 작업           | 모델                              | 왜 이 모델인가                                                               |
 | ------------ | ------------------------------- | ---------------------------------------------------------------------- |
 | 리포트 분류       | Claude Haiku 5.5                | 수만 건을 도는 일이라 싸고 빠른 모델. 35건 비교 실험에서 오류 0, 행당 2~11초                      |
-| 분류 재처리       | GPT-5.4                         | 확신이 낮은 행만 더 강한 모델로 한 번 더                                               |
+| 분류 재처리       | gpt-6-terra (Codex CLI)         | 확신이 낮은 행만 더 강한 모델로 한 번 더                                               |
 | 리포트 재무 분석·비교 | gpt-6-luna (Codex CLI)          | 사람이 고른 리포트만 분석. 같은 계열 모델로 잰 12건 비교에서 Haiku보다 재무 지표를 두 배 가까이 뽑고 형식 실패 0 |
 | 기업 사업 카드     | Claude Sonnet 5.5               | 카드 품질이 유사도 전체를 정해서 품질 우선                                               |
 | 유사도·테마 검색    | text-embedding-3-large (1536차원) | 회사·부문 카드를 의미 좌표로                                                       |
