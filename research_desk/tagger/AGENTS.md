@@ -218,7 +218,7 @@ START -> extract_pdf -> llm_extract --oos_gate--+-> status_unreadable           
   - 리포트 종류·제외 사유·발행처 종류 값: `domain/vocabulary.yaml` + CHECK 제약 마이그레이션 + `llm_schemas.py` Literal + (제외 사유면) `state.py` Literal·`mark_oos_reason`·`status_oos`·`orchestrator`의 `oos` 키 + 프롬프트의 정의문. 발행처 종류면 `publishers.yaml`의 구역 이름도.
   - 검토 사유: `decide_status`(또는 상태 노드)에 메모 형식대로, `_aggregate`의 인식 목록, 패리티 사례. 검토 사유가 아닌 표시(그림·의심처럼)는 `apply_final_rules`에 두고 `review_reasons`에 넣지 않는다.
   - 종목표 교체는 이 칸이 아니라 `stocks set-version`이다. 옛 종목표에 없어 `krx_unmatched_in_scope`로 쌓인 행은 저절로 풀리지 않으니 `tag requeue --krx-unmatched`(또는 `escalate --since`, 검토의 재분류)로 다시 분류한다.
-- **무해한 경고(디버깅하지 않는다).** `LLMExtraction` 직렬화 때의 Pydantic serializer 경고, LangGraph를 불러올 때의 `LangChainPendingDeprecationWarning`. Windows 비정상 종료 코드 `-1073741569`(드물게 `-1073741784`)는 반복 실행 스크립트가 그 작업자의 행을 되돌리고 다시 시도한다(데이터 손실 없음). 2026-10-09 백필에서 자주 났고, PDF를 두 스레드에서 동시에 읽은 것이 원인으로 추정돼 PDF 접근을 프로세스 안에서 줄 세웠다(`core.pdf` 잠금, 2026-10-10). 잠금 뒤 재측정 결과: 아직 없음(운영 적용 백필의 횟수를 여기 적는다).
+- **무해한 경고(디버깅하지 않는다).** `LLMExtraction` 직렬화 때의 Pydantic serializer 경고, LangGraph를 불러올 때의 `LangChainPendingDeprecationWarning`. Windows 비정상 종료 코드 `-1073741569`(드물게 `-1073741784`)는 반복 실행 스크립트가 그 작업자의 행을 되돌리고 다시 시도한다(데이터 손실 없음). 2026-10-09 백필에서 자주 났고, PDF를 두 스레드에서 동시에 읽은 것이 원인으로 추정돼 PDF 접근을 프로세스 안에서 줄 세웠다(`core.pdf` 잠금, 2026-10-10). 잠금 뒤 재측정 결과: 2026-10-10 재분류 백필(첫 묶음의 앞부분)에서 44번 실행 중 0번 — 2026-10-09 백필의 937번 중 131번보다 크게 줄었다. 실행 수가 아직 적으니 남은 백필에서도 센다.
 
 ## 테스트
 

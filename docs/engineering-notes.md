@@ -5,7 +5,7 @@
 | 보이는 것 | 원인 | 대응 |
 |---|---|---|
 | Pydantic serializer warning (`LLMExtraction` 직렬화 시) | 분류기의 LLM 응답 모델(`LLMExtraction`)을 직렬화할 때 Pydantic이 내는 경고 | 기능 영향 없음(분류 결과와 저장 값이 같다). 무시한다 |
-| 반복 실행 중 `exit=-1073741569`(드물게 `-1073741784`) (Windows native crash) | 윈도우에서 파이썬 프로세스가 비정상 종료된 경우. 2026-10-09 백필에서 자주 났고, 분류기가 PDF를 두 스레드에서 동시에 읽은 것(PyMuPDF는 여러 스레드 동시 사용을 지원하지 않는다)이 원인으로 추정돼 2026-10-10에 `core.pdf`의 PyMuPDF 호출을 프로세스 전체 잠금으로 줄 세웠다 | `run-batches.ps1`이 그 작업자의 행을 되돌리고 재시도해서 자동 복구한다(데이터 손실 없음). 한 배치가 3번 연속 나면 스크립트가 1로 멈춘다 — 그때는 사람이 본다. 잠금 뒤 재측정: 아직 없음(운영 적용 백필의 횟수를 여기 적는다) |
+| 반복 실행 중 `exit=-1073741569`(드물게 `-1073741784`) (Windows native crash) | 윈도우에서 파이썬 프로세스가 비정상 종료된 경우. 2026-10-09 백필에서 자주 났고, 분류기가 PDF를 두 스레드에서 동시에 읽은 것(PyMuPDF는 여러 스레드 동시 사용을 지원하지 않는다)이 원인으로 추정돼 2026-10-10에 `core.pdf`의 PyMuPDF 호출을 프로세스 전체 잠금으로 줄 세웠다 | `run-batches.ps1`이 그 작업자의 행을 되돌리고 재시도해서 자동 복구한다(데이터 손실 없음). 한 배치가 3번 연속 나면 스크립트가 1로 멈춘다 — 그때는 사람이 본다. 잠금 뒤 재측정: 2026-10-10 재분류 백필(첫 묶음의 앞부분)에서 44번 실행 중 0번 — 2026-10-09 백필의 937번 중 131번보다 크게 줄었다. 실행 수가 아직 적으니 남은 백필에서도 센다 |
 | `LangChainPendingDeprecationWarning: The default value of allowed_objects will change…` | LangGraph가 import될 때 내는 예고 경고. `tag run`·`tag escalate`가 그래프를 불러올 때와, 테스트 실행 끝의 "1 warning"이 이것이다 | 무시한다. `collect`·`web`·`stocks`·`tag inspect`·`tag reset-worker`·`--help`에서 이 경고가 보이면 그쪽은 무해한 것이 아니다 — 누가 명령 입구에서 그래프를 일찍 import하게 만든 것이니 그 import를 함수 안으로 옮긴다 |
 
 ## 함정
