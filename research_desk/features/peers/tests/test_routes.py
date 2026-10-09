@@ -349,6 +349,20 @@ def test_the_latest_public_build_is_looked_up_every_time_and_its_tables_read_onc
     assert world.made == [(URL, KEY)]                     # one DB client for the process
 
 
+def test_a_build_whose_tables_cannot_be_read_grades_nothing_and_is_not_kept(world, monkeypatch):
+    calls = []
+    original = PeersStore.build_tables
+
+    def gone_once(self, build_id):
+        calls.append(build_id)
+        return None if len(calls) == 1 else original(self, build_id)
+
+    monkeypatch.setattr(PeersStore, 'build_tables', gone_once)
+    assert get(world).json()['peers'] == []
+    assert [p['code'] for p in get(world).json()['peers']] == LISTED
+    assert calls == [1, 1]
+
+
 def test_no_public_build_is_a_503_that_is_not_remembered(world):
     world.db.tables['peer_builds'] = [build_row(1, status='incomplete')]
     assert get(world).json() == not_ready(NO_BUILD_REASON)

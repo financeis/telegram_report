@@ -246,16 +246,18 @@ class PeersService:
         return build
 
     def tables(self, store: PeersStore, build: dict) -> BuildTables:
-        """The build's tables: read once per build id and kept."""
+        """The build's tables: read once per build id and kept. A build gone in between gives
+        empty tables (nothing graded) that are not kept."""
         build_id = build["build_id"]
         with self._build_lock:
             if self._tables is not None and self._tables[0] == build_id:
                 return self._tables[1]
-            row = store.build_tables(build_id) or {}
-            tables = BuildTables(company_quantiles=row.get("company_quantiles"),
-                                 segment_quantiles=row.get("segment_quantiles"),
-                                 term_table=row.get("term_table") or {})
-            self._tables = (build_id, tables)
+            row = store.build_tables(build_id)
+            tables = BuildTables(company_quantiles=(row or {}).get("company_quantiles"),
+                                 segment_quantiles=(row or {}).get("segment_quantiles"),
+                                 term_table=(row or {}).get("term_table") or {})
+            if row is not None:
+                self._tables = (build_id, tables)
             return tables
 
     def synonyms(self, build: dict) -> logic.Synonyms:
