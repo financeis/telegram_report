@@ -24,7 +24,16 @@ names below. No web routes. Units: returns and excess returns are percent floats
   ok / partial run's data date)}``, or None when there has been no run.
 
 Both raise ``NotReady("주가", "DB 접속 설정(SUPABASE_URL, SUPABASE_SERVICE_KEY)이 없습니다")``
-without DB settings (tried again on the next call). Importing this window loads no FastAPI, HTTP
-library, KIS client or MongoDB package.
+without DB settings (tried again on the next call).
+
+- ``register_jobs(subparsers)`` adds the command ``prices update [--codes 005930,080220]``
+  (``jobs.py``): exit 0 for an ok / partial run, 1 for a failed one, 4 when not ready (DB
+  settings, KIS_APP_KEY / KIS_APP_SECRET, the stock list), 2 for argument errors. ``--codes`` only
+  prints the computed rows and writes nothing. Settings: KIS_APP_KEY, KIS_APP_SECRET, KIS_BASE_URL
+  (default the real service), PRICES_MAX_CALLS_PER_SEC (default 10); ``scripts/run-prices.ps1``
+  runs the command for the daily schedule.
+
+Importing this window loads no FastAPI, HTTP library, KIS client or MongoDB package.
 """
+from .jobs import register as register_jobs
 from .service import latest_run, snapshots

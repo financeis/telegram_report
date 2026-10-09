@@ -389,6 +389,7 @@ class FakeKis:
         self.closed = True
 
     def __enter__(self) -> "FakeKis":
+        self.closed = False   # a test may run the command twice on one stand-in
         return self
 
     def __exit__(self, *exc: Any) -> None:
