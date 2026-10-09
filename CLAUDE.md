@@ -29,7 +29,8 @@ telegram_report/
 │   │   └── findings.md              ← 아직 못 푼 문제
 │   ├── llm-models.md                ← 모델 비교 측정 기록
 │   ├── superpowers/, *-2026-09-15.md, research-workspace.md, financial-details-implementation.md
-│   │                                ← 날짜가 붙은 옛 설계·실험 기록 (옛 명령·경로가 그대로 있다 — 따라 하지 않는다)
+│   │                                ← 날짜가 붙은 옛 설계·실험 기록. 이 PC에만 두고 git에는 올리지 않는다(.gitignore)
+│   │                                  (옛 명령·경로가 그대로 있다 — 따라 하지 않는다)
 │   └── stock_data/                  ← 종목표 CSV + 버전 정보 파일 (KRX_stocks_data.version.json)
 ├── research_desk/
 │   ├── AGENTS.md                    ← 명령 입구(cli.py·__main__.py), 테스트 공통 준비, 구조 검사

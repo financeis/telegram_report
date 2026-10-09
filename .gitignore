@@ -11,6 +11,12 @@ auth_helper.py
 # KIS sample-code config (real-account app key, secret, account numbers); the app reads .env
 /kis_devlp.yaml
 
+# Old dated design and experiment notes: kept on this PC only, never in git
+/docs/superpowers/
+/docs/*-2026-09-15.md
+/docs/research-workspace.md
+/docs/financial-details-implementation.md
+
 # Downloaded data
 /reports/
 

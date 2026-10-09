@@ -2,7 +2,7 @@
 --
 -- Phase 2: lazy on-demand LLM 요약 결과를 영구 캐시하는 별도 테이블.
 -- 1:1 with reports.id (단일종목만 처리되지만 PK는 report_id로 단순화).
--- 설계 문서: docs/superpowers/specs/2026-05-12-llm-summary-extraction-design.md §6.1
+-- 설계 문서: 2026-05의 옛 설계 노트(git에 없음). 지금 규칙은 docs/business-rules.md
 
 BEGIN;
 

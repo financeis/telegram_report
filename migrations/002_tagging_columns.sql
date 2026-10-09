@@ -1,7 +1,7 @@
 -- migrations/002_tagging_columns.sql
 --
 -- Phase 1: 리포트 메타데이터 태깅 routine을 위한 reports 테이블 확장.
--- 설계 문서: docs/superpowers/specs/2026-05-07-report-metadata-tagging-routine-design.md
+-- 설계 문서: 2026-05의 옛 설계 노트(git에 없음). 지금 규칙은 docs/business-rules.md
 --
 -- 적용 전 사전 점검:
 --   - tagged_at은 001_init.sql에 이미 존재. ADD COLUMN 하지 않음 (의미만 'tagging 완료 시각'으로 확장).

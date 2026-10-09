@@ -6,7 +6,7 @@
 - ``run``: one collection cycle — Stage A retries past failures, Stage B fetches new messages.
 - ``cli``: the ``collect`` command; ``register(subparsers)`` adds it to the entry point.
 
-Section numbers in this package's comments refer to the original design notes:
-"collector design" = docs/superpowers/specs/2026-05-05-telegram-report-collector-design.md,
-"backfill design" = docs/superpowers/specs/2026-05-06-parallel-and-backfill-design.md.
+Section numbers in this package's comments ("collector design §N", "backfill design §N") refer to
+the original design notes of 2026-05, kept on the operator's PC and not in git. The rules they
+hold are in docs/business-rules.md (수집) and docs/contracts.md (collect).
 """

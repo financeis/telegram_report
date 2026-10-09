@@ -2,7 +2,7 @@
 --
 -- v2 redesign: reset all v1-tagged data and apply v2 schema (6 report_types,
 -- 5 OOS reasons, 4 publisher_types, raw audit columns, topics drop).
--- See docs/superpowers/specs/2026-05-09-langgraph-tagger-v2-design.md §11.
+-- 설계 문서: 2026-05의 옛 설계 노트(git에 없음). 지금 규칙은 docs/business-rules.md
 
 BEGIN;
 

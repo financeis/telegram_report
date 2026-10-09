@@ -23,8 +23,8 @@ publisher, an alias answer stored as null, no tag and no publisher, an
 IR자료 with a broker's filename tag) and picture-only PDFs (no text on the
 page, so page 1 is drawn and sent to the AI). Reference docs:
 
-- `docs/superpowers/specs/2026-05-09-langgraph-tagger-v2-design.md`
-  for the v2 policy (oos_gate / mark_oos_reason / decide_status).
+- `docs/business-rules.md` (분류 규칙) for the v2 policy (oos_gate / mark_oos_reason /
+  decide_status); the original v2 design note is kept off git.
 - `research_desk/tagger/llm_schemas.py` for the LLMExtraction v2 fields.
 - `research_desk/tagger/sql.py::UPDATE_SQL` for the 19-arg payload.
 - `research_desk/tagger/vocabulary/publishers.yaml` for canonical publisher
