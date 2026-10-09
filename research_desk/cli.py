@@ -12,10 +12,10 @@ A new background command is its area's ``register`` function plus one line in ``
 
 ``main(argv)`` parses the arguments and returns the exit code of the command's ``func(args)``.
 No command, an unknown command or bad arguments: argparse's usage message and exit code 2.
-``--help`` on any command: 0. Exit code 4 means "not ready": nothing was changed, and running
-again after fixing what the one-line message says works (a missing setting, a stock list that
-does not match its version, ``tag requeue --apply`` while a backfill runs); ``tag`` and ``stocks``
-use it.
+``--help`` on any command: 0. Exit code 4 means "not ready": a problem that stays until a setting
+or file is fixed (a missing setting, a stock list that does not match its version); nothing was
+changed. A state that clears by waiting (another job running, e.g. ``tag requeue --apply`` while a
+backfill runs) is 1, not 4. ``tag`` and ``stocks`` use 4.
 
 ``stocks set-version`` (spec §8) records the stock list's content hash under the version
 ``KRX@<as-of>``, the as-of date of the stock data. It re-reads ``.env``, takes ``KRX_CSV_PATH``

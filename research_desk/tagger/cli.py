@@ -15,8 +15,9 @@ Start-up checks, all before the DB pool opens (spec §5, §7, §8):
 - inspect / reset-worker: SUPABASE_DB_URL only.
 - requeue (``tagger/requeue.py``): no criterion is a usage error (2) before anything;
   then SUPABASE_DB_URL, the publisher dictionary, with ``--unreadable`` whether the
-  tagging model (``tag run``'s) takes images, with ``--apply`` that no backfill /
-  escalate / collect / web app is running on this PC (or the list cannot be read).
+  tagging model (``tag run``'s) takes images (all 4 when they fail), with ``--apply`` that no
+  backfill / escalate / collect / web app is running on this PC (a running job: 1, a state that
+  clears once it ends; a process list that cannot be read: 4).
 """
 from __future__ import annotations
 
@@ -317,6 +318,9 @@ def _requeue(args) -> int:
                                      model=tagger_settings.default_model())
     except (NotReadyToRun, requeue.RequeueNotReady) as exc:
         return _not_ready(exc)
+    except requeue.RequeueFailed as exc:   # a running job: nothing changed, clears once it ends
+        print(requeue.failure_line(exc), file=sys.stderr)
+        return 1
     try:
         report = asyncio.run(_cmd_requeue(criteria, dictionary, apply=args.apply))
     except Exception as exc:   # one line on stderr, nothing on stdout

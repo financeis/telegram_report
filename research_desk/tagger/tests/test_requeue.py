@@ -4,7 +4,10 @@ What is checked:
 - arguments: the five criteria, ``--apply``, no criterion → usage error 2 before anything runs;
 - not ready (exit 4, nothing read or written): no SUPABASE_DB_URL, a publisher dictionary that
   cannot be read, ``--unreadable`` with a tagging model that takes no images, and (``--apply``
-  only) a running backfill / escalate / collect / web app or a process list that cannot be read;
+  only) a process list that cannot be read;
+- (``--apply`` only) a running backfill / escalate / collect / web app → exit 1 with the guidance
+  line and nothing read or written: a state that clears once the job ends or is stopped, the same
+  rule as ``peers build`` while tagging;
 - selection per criterion and every exclusion (verified / processing / pending never; suspect-noted,
   unreadable and refused rows never for the filename mismatch; rows whose first page cannot be
   rendered are counted in ``skipped``), several criteria on one row counted per criterion but
@@ -388,13 +391,13 @@ def test_the_image_check_is_only_for_unreadable(env, table, capsys):
     ("python -m research_desk collect", "수집(research_desk collect)"),
     ("python -m research_desk web --view review", "웹앱(research_desk web)"),
 ])
-def test_apply_while_a_job_runs_exits_4_and_changes_nothing(env, table, processes, backups, capsys,
+def test_apply_while_a_job_runs_exits_1_and_changes_nothing(env, table, processes, backups, capsys,
                                                             command_line, label):
     table.rows = {1: make_row(1, tagging_status="review_needed",
                               tagging_notes="krx_unmatched_in_scope:ipo_pending_or_unknown")}
     processes.listed.append((4242, command_line))
     code, out, err = requeue_cmd(capsys, "--krx-unmatched", "--apply")
-    assert (code, out) == (4, "")
+    assert (code, out) == (1, "")
     line = one_line(err)
     assert label in line and "4242" in line
     assert table.events == []
@@ -896,7 +899,7 @@ def test_the_guidance_names_every_running_job_on_one_line():
     listed = [(OWN_PID, "python -m research_desk tag requeue --apply"),
               (31, "python -m research_desk web"), (12, "python -m research_desk tag run"),
               (13, "powershell -File scripts\\run-batches.ps1")]
-    with pytest.raises(requeue.RequeueNotReady) as excinfo:
+    with pytest.raises(requeue.RequeueJobsRunning) as excinfo:
         requeue.check_nothing_running(listed, OWN_PID)
     message = str(excinfo.value)
     assert "\n" not in message

@@ -101,6 +101,14 @@ class RequeueFailed(Exception):
     """Stopped with nothing changed; ``str()`` is the stderr line (exit code 1)."""
 
 
+class RequeueJobsRunning(RequeueFailed):
+    """``--apply`` while a backfill / escalate / collect / web app runs: nothing changed, exit 1.
+
+    Like ``peers build`` while tagging, this clears once the job ends or is stopped, so it is
+    1 and not 4 (4 is for problems that stay until a setting or file is fixed).
+    """
+
+
 class ProcessListError(RuntimeError):
     """The list of running processes could not be read."""
 
@@ -203,7 +211,7 @@ def running_jobs(processes: Iterable[tuple[int, Optional[str]]], own_pid: int) -
 
 
 def check_nothing_running(processes: Sequence[tuple[int, Optional[str]]], own_pid: int) -> None:
-    """``RequeueNotReady`` naming every running job, or when the list cannot be trusted."""
+    """``RequeueJobsRunning`` naming every running job; ``RequeueNotReady`` when the list cannot be trusted."""
     if not any(pid == own_pid for pid, _ in processes):
         # This process is running, so a list without it is not the full list.
         raise RequeueNotReady(PROCESS_LIST_UNREADABLE.format(reason="이 프로세스가 목록에 없습니다"))
@@ -211,7 +219,7 @@ def check_nothing_running(processes: Sequence[tuple[int, Optional[str]]], own_pi
     if jobs:
         named = " / ".join(f"{JOB_LABELS[job]} PID {', '.join(str(pid) for pid in pids)}"
                            for job, pids in jobs.items())
-        raise RequeueNotReady(JOBS_RUNNING.format(jobs=named))
+        raise RequeueJobsRunning(JOBS_RUNNING.format(jobs=named))
 
 
 def prepare(criteria: Sequence[str], *, apply: bool, model: str) -> PublisherDictionary:
