@@ -104,7 +104,7 @@ def kis_client(cfg: prices_settings.PricesSettings) -> Any:
     from research_desk.core import kis   # the HTTP library loads only when the command runs
 
     return kis.KisClient(cfg.app_key, cfg.app_secret, max_calls_per_sec=cfg.max_calls_per_sec,
-                         base_url=cfg.base_url)
+                         base_url=cfg.base_url, token_cache=cfg.token_cache)
 
 
 # ── the command ──────────────────────────────────────────────────────────────

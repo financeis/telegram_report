@@ -6,7 +6,7 @@
 - 명령 `prices update [--codes 005930,080220]`(`jobs.py`)과 매일 실행 스크립트 `scripts/run-prices.ps1`.
 - 창구 이름은 셋이다: `register_jobs`, `snapshots(codes)`, `latest_run()`. 웹 주소는 없다(유사 기업 기능과 상태 줄이 창구로 읽는다).
 - 계산(`logic.py`): 기간 수익률, 같은 실행·같은 시장 중앙값 대비 초과수익률, 20일 평균 거래대금, 표시(`flags`), 실행 상태.
-- 설정(`settings.py`): `KIS_APP_KEY`, `KIS_APP_SECRET`, `KIS_BASE_URL`, `PRICES_MAX_CALLS_PER_SEC`.
+- 설정(`settings.py`): `KIS_APP_KEY`, `KIS_APP_SECRET`, `KIS_BASE_URL`, `PRICES_MAX_CALLS_PER_SEC`, `KIS_TOKEN_CACHE`(masterdb와 같이 쓰는 토큰 파일, `jobs.kis_client`가 클라이언트에 넘긴다).
 
 ## 맡지 않는 일
 

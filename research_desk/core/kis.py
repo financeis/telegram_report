@@ -10,6 +10,12 @@ work that calls KIS should load an HTTP library.
   Make one client a run. A failed token request is final: from then on every
   call of that client raises ``KisError`` at once without asking KIS again (the
   retries below happen inside that one request).
+- Token cache: with ``token_cache`` (a JSON file shared with the other project
+  that uses this app key, in its format) a token still valid for more than
+  ``TOKEN_CACHE_MARGIN_S`` is taken from the file instead of asking KIS, and a
+  newly issued one is written there. KIS restricts an app key that asks for
+  tokens too often. When KIS refuses a cached token (``EGW00121``/``EGW00123``),
+  the client asks for a new one once and repeats that call.
 - Pace: call starts are at least ``1 / max_calls_per_sec`` apart, the token
   call included, also across threads that share the client.
 - Retries: a rate-limit answer (HTTP 429 or KIS ``EGW00201``), a 5xx answer, a
@@ -21,17 +27,27 @@ work that calls KIS should load an HTTP library.
 """
 from __future__ import annotations
 
+import json
 import logging
+import os
+import tempfile
 import threading
 import time
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from typing import Any, Callable, Optional
+from pathlib import Path
+from typing import Any, Callable, Optional, Union
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://openapi.koreainvestment.com:9443"  # 실전 서비스
 TOKEN_PATH = "/oauth2/tokenP"
+
+# Token cache file, the other project's format: {"access_token", "app_key_tail" (the app key's
+# last 6 characters), "expires_at" (epoch seconds)}.
+TOKEN_CACHE_MARGIN_S = 600          # a cached token this close to its end is not used
+DEFAULT_TOKEN_LIFE_S = 86400        # when the token answer has no expires_in
+TOKEN_REFUSED_CODES = frozenset({"EGW00121", "EGW00123"})  # 유효하지 않은 token / 기간이 만료된 token
 
 # 국내주식기간별시세(일/주/월/년) [v1_국내주식-016]: at most 100 rows a call, newest first.
 DAILY_PATH = "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
@@ -68,9 +84,10 @@ class KisClient:
 
     ``app_key``/``app_secret``: the 실전 account's. ``max_calls_per_sec``: the
     most call starts in a second. ``timeout_s``: one HTTP request's limit (a
-    timeout is tried again like a 5xx). ``sleep``, ``clock`` and ``transport``
-    (an httpx transport) are for tests. Close it with ``close()`` or use it as
-    a context manager.
+    timeout is tried again like a 5xx). ``token_cache``: the shared token file,
+    or None to keep the token in memory only. ``sleep``, ``clock`` (pacing),
+    ``wall_clock`` (token ends) and ``transport`` (an httpx transport) are for
+    tests. Close it with ``close()`` or use it as a context manager.
     """
 
     def __init__(
@@ -81,8 +98,10 @@ class KisClient:
         max_calls_per_sec: float,
         base_url: str = DEFAULT_BASE_URL,
         timeout_s: float = 10.0,
+        token_cache: Optional[Union[str, os.PathLike]] = None,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
+        wall_clock: Callable[[], float] = time.time,
         transport: Any = None,
     ) -> None:
         if not app_key or not app_secret:
@@ -96,9 +115,14 @@ class KisClient:
         self._interval = 1.0 / max_calls_per_sec
         self._sleep = sleep
         self._clock = clock
+        self._wall_clock = wall_clock
         self._transport = transport
         self._http: Any = None
+        self._token_cache = Path(token_cache) if token_cache else None
         self._token: Optional[str] = None
+        self._token_from_cache = False    # the token was read from the cache file
+        self._cache_refused = False       # KIS refused the cached token: do not read the file again
+        self._old_tokens: list[str] = []  # refused tokens, still masked in texts
         # (message, code, status) of the failed token request: the client does not ask again
         self._token_failure: Optional[tuple[str, Optional[str], Optional[int]]] = None
         self._token_lock = threading.Lock()
@@ -180,24 +204,39 @@ class KisClient:
     # ── plumbing ─────────────────────────────────────────────────────────────
 
     def _get(self, path: str, tr_id: str, params: dict, *, what: str) -> dict:
-        """One data call: the JSON body when KIS answers rt_cd 0, else KisError."""
-        headers = {
-            "content-type": "application/json; charset=utf-8",
-            "authorization": f"Bearer {self._access_token()}",
-            "appkey": self._app_key,
-            "appsecret": self._app_secret,
-            "tr_id": tr_id,
-            "custtype": "P",  # 개인
-        }
-        status, body = self._call("GET", path, what=what, params=params, headers=headers)
-        if body.get("rt_cd") != "0":
+        """One data call: the JSON body when KIS answers rt_cd 0, else KisError.
+
+        When KIS refuses a token that came from the cache, the call is made once more with a
+        newly issued token (``_drop_refused_token``).
+        """
+        for attempt in range(2):
+            token = self._access_token()
+            headers = {
+                "content-type": "application/json; charset=utf-8",
+                "authorization": f"Bearer {token}",
+                "appkey": self._app_key,
+                "appsecret": self._app_secret,
+                "tr_id": tr_id,
+                "custtype": "P",  # 개인
+            }
+            try:
+                status, body = self._call("GET", path, what=what, params=params, headers=headers)
+            except KisError as exc:
+                if attempt == 0 and exc.code in TOKEN_REFUSED_CODES and self._drop_refused_token(token):
+                    continue
+                raise
+            if body.get("rt_cd") == "0":
+                return body
+            code = body.get("msg_cd") or None
+            if attempt == 0 and code in TOKEN_REFUSED_CODES and self._drop_refused_token(token):
+                continue
             problem = _kis_message(body) or "the answer has no rt_cd 0"
-            raise KisError(self._mask(f"KIS {what} failed: {problem}"),
-                           code=body.get("msg_cd") or None, status=status)
-        return body
+            raise KisError(self._mask(f"KIS {what} failed: {problem}"), code=code, status=status)
+        raise AssertionError("unreachable: the second attempt returns or raises")
 
     def _access_token(self) -> str:
-        """The client's token: asked for once, then reused.
+        """The client's token: from the cache file when it holds a usable one, else asked for
+        once, then reused.
 
         A failed token request is final for the client. That failure goes up as it came;
         every later call raises KisError at once (the same code and status, the first
@@ -210,6 +249,10 @@ class KisClient:
                 message, code, status = self._token_failure
                 raise KisError(f"{message} (the client's one token request failed earlier; "
                                "KIS is not asked again)", code=code, status=status)
+            cached = None if self._cache_refused else self._read_token_cache()
+            if cached is not None:
+                self._token, self._token_from_cache = cached, True
+                return cached
             try:
                 self._token = self._issue_token()
             except KisError as exc:
@@ -218,10 +261,27 @@ class KisClient:
             except Exception as exc:
                 self._token_failure = (self._mask(f"KIS access token failed: {_describe(exc)}"), None, None)
                 raise
+            self._token_from_cache = False
             return self._token
 
+    def _drop_refused_token(self, refused: str) -> bool:
+        """KIS refused ``refused``. True when the call may be made again: the token came from the
+        cache file, so it is dropped and the next ``_access_token`` asks KIS once (the file is not
+        read again), or another thread replaced it already. False for a token this client asked
+        KIS for itself: it is not asked again."""
+        with self._token_lock:
+            if self._token != refused:
+                return self._token is not None or self._token_failure is None
+            if not self._token_from_cache:
+                return False
+            self._old_tokens.append(refused)
+            self._token, self._token_from_cache, self._cache_refused = None, False, True
+            logger.warning("KIS refused the cached access token; asking for a new one")
+            return True
+
     def _issue_token(self) -> str:
-        """One token request, paced and retried like any call: the token, else KisError."""
+        """One token request, paced and retried like any call: the token, else KisError. A new
+        token is written to the cache file when there is one."""
         status, body = self._call("POST", TOKEN_PATH, what="access token", json={
             "grant_type": "client_credentials",
             "appkey": self._app_key,
@@ -232,7 +292,60 @@ class KisClient:
             problem = _kis_message(body) or "the answer has no access_token"
             raise KisError(self._mask(f"KIS access token failed: {problem}"),
                            code=body.get("error_code") or None, status=status)
+        self._write_token_cache(token, body.get("expires_in"))
         return token
+
+    def _read_token_cache(self) -> Optional[str]:
+        """A usable token from the cache file, else None: no file, an unreadable one, another app
+        key's token, or one ending within TOKEN_CACHE_MARGIN_S."""
+        if self._token_cache is None:
+            return None
+        try:
+            data = json.loads(self._token_cache.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError) as exc:
+            logger.warning("KIS token cache unreadable (%s); asking for a new token", type(exc).__name__)
+            return None
+        if not isinstance(data, dict) or data.get("app_key_tail") != self._app_key[-6:]:
+            return None
+        token = data.get("access_token")
+        try:
+            expires_at = float(data.get("expires_at"))
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(token, str) or not token or expires_at <= self._wall_clock() + TOKEN_CACHE_MARGIN_S:
+            return None
+        return token
+
+    def _write_token_cache(self, token: str, expires_in: Any) -> None:
+        """Save a newly issued token to the cache file: written whole to a temporary file next to
+        it, then swapped in, so a reader never sees half a file. A failure is only a warning."""
+        if self._token_cache is None:
+            return
+        try:
+            life = int(expires_in)
+        except (TypeError, ValueError):
+            life = DEFAULT_TOKEN_LIFE_S
+        data = {"access_token": token, "app_key_tail": self._app_key[-6:],
+                "expires_at": self._wall_clock() + life}
+        temporary: Optional[str] = None
+        try:
+            self._token_cache.parent.mkdir(parents=True, exist_ok=True)
+            handle, temporary = tempfile.mkstemp(dir=self._token_cache.parent, prefix=".kis_token.",
+                                                 suffix=".tmp")
+            with os.fdopen(handle, "w", encoding="utf-8") as stream:
+                json.dump(data, stream)
+            os.replace(temporary, self._token_cache)
+            temporary = None
+        except OSError as exc:
+            logger.warning("KIS token cache not written (%s); the run goes on", type(exc).__name__)
+        finally:
+            if temporary is not None:
+                try:
+                    os.remove(temporary)
+                except OSError:
+                    pass
 
     def _call(self, method: str, path: str, *, what: str, **request: Any) -> tuple[int, dict]:
         """Send one request, paced and retried: (status, JSON body) of a 2xx answer.
@@ -261,7 +374,9 @@ class KisClient:
                 if 200 <= status < 300 and code != RATE_LIMIT_CODE:
                     return status, body
                 problem = " ".join(filter(None, [f"HTTP {status}", _kis_message(body)]))
-                retry = status == 429 or status >= 500 or code == RATE_LIMIT_CODE
+                # A refused token is not tried again with the same token (see ``_get``).
+                retry = ((status == 429 or status >= 500 or code == RATE_LIMIT_CODE)
+                         and code not in TOKEN_REFUSED_CODES)
             if not retry or attempt == MAX_RETRIES:
                 after = f" after {MAX_RETRIES} retries" if retry else ""
                 raise KisError(self._mask(f"KIS {what} failed{after}: {problem}"), code=code, status=status)
@@ -290,8 +405,8 @@ class KisClient:
         return self._http
 
     def _mask(self, text: str) -> str:
-        """``text`` with the app key, app secret and token replaced by ***."""
-        for secret in (self._app_key, self._app_secret, self._token):
+        """``text`` with the app key, app secret and tokens replaced by ***."""
+        for secret in (self._app_key, self._app_secret, self._token, *self._old_tokens):
             if secret:
                 text = text.replace(secret, "***")
         return text

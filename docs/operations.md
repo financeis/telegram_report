@@ -50,7 +50,7 @@
 ## 매일 주가 갱신
 
 준비(순서대로 — 앞 단계가 없으면 뒤 단계가 실패한다):
-1. `.env`에 `KIS_APP_KEY`, `KIS_APP_SECRET`(한국투자증권 실전 계정)을 넣는다. 없으면 `prices update`가 4로 멈춘다.
+1. `.env`에 `KIS_APP_KEY`, `KIS_APP_SECRET`(한국투자증권 실전 계정)을 넣는다. 없으면 `prices update`가 4로 멈춘다. 시크릿은 180자다 — 짧은 값이면 KIS가 `EGW00105 유효하지 않은 AppSecret`으로 토큰을 주지 않는다. `KIS_TOKEN_CACHE`에 masterdb의 토큰 파일 경로를 넣어 토큰을 같이 쓴다(KIS는 토큰을 자주 받는 앱키를 제한한다).
 2. 마이그레이션 008을 적용한다(아래 "DB 마이그레이션 적용"). 적용 전에는 `--codes` 확인 실행도 저장된 스냅샷을 읽다가 표가 없어 1로 끝난다.
 3. KIS 확인(아무것도 저장하지 않는다 — 스냅샷·실행 기록·상태 줄 모두 그대로):
    ```powershell
@@ -232,6 +232,7 @@ python -m research_desk peers inspect
 | `KIS_APP_KEY`, `KIS_APP_SECRET` | prices update | 필수(없으면 4) | 한국투자증권 Open API 실전 계정의 앱키·시크릿. 사용자의 masterdb 프로젝트와 같은 키다(위 운영 원칙 7) |
 | `KIS_BASE_URL` | prices update | `https://openapi.koreainvestment.com:9443` | KIS 실전 서비스 주소 |
 | `PRICES_MAX_CALLS_PER_SEC` | prices update | 10 | KIS 호출을 1초에 몇 번까지 시작할지(토큰 요청 포함). 0보다 큰 수가 아니면 파이썬 오류로 1 |
+| `KIS_TOKEN_CACHE` | prices update | 없음(토큰을 메모리에만 두고 실행마다 새로 받음) | KIS 접근 토큰 파일. masterdb와 같은 파일(`…\pykrx_investmentflow\data\state\kis_token.json`)을 가리키면 유효한 토큰을 같이 쓰고, 새로 받은 토큰도 그 파일에 쓴다. 토큰이 들어 있으므로 이 저장소 밖에 두고 커밋하지 않는다 |
 | `LLM_MODEL_PEERS` / `LLM_MODEL_PEERS_ESCALATION` | peers build | `claude-sonnet-5-5` / `gpt-5.4` | 프로필 추출 모델 / 근거율 0.8 미만일 때 한 번 더 추출할 모델(위 모델 표). 옛 이름 `OPENAI_MODEL_PEERS*`도 읽음 |
 | `PEERS_EMBED_MODEL` | peers build | `text-embedding-3-large` | 임베딩 모델. 1536차원을 낼 수 있는 OpenAI 모델만. 웹 테마 검색은 이 값이 아니라 공개 빌드에 기록된 모델을 쓴다 |
 | `PEERS_PROFILE_VERSION` | peers build | `peer-profile@1.2` | 프로필의 키. 바꾸면 다음 빌드가 모든 회사를 새로 추출한다(AI 비용). 화면은 공개 빌드의 버전을 따른다 |

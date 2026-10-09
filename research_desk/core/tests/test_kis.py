@@ -246,6 +246,138 @@ def test_threads_sharing_a_client_do_not_ask_again_after_a_failed_token(server, 
     assert [request.url.path for request in server.requests] == [kis.TOKEN_PATH]
 
 
+# ── token cache shared with the other project ────────────────────────────────
+
+WALL = 1_760_000_000.0   # "now" for token ends, in epoch seconds
+CACHED = "eyJcached.access-token.ABCDEF"
+REFUSED = {"EGW00121": "유효하지 않은 token 입니다.", "EGW00123": "기간이 만료된 token 입니다."}
+
+
+def cached_client(server: FakeKis, clock: FakeClock, cache: Path) -> KisClient:
+    return KisClient(APP_KEY, APP_SECRET, max_calls_per_sec=10, base_url=BASE_URL, token_cache=cache,
+                     transport=httpx.MockTransport(server.handle), sleep=clock.sleep, clock=clock,
+                     wall_clock=lambda: WALL)
+
+
+def write_cache(cache: Path, *, token: str = CACHED, tail: str = APP_KEY[-6:],
+                expires_at: float = WALL + 3600) -> None:
+    cache.write_text(json.dumps({"access_token": token, "app_key_tail": tail, "expires_at": expires_at}),
+                     encoding="utf-8")
+
+
+def token_requests(server: FakeKis) -> list[httpx.Request]:
+    return [request for request in server.requests if request.url.path == kis.TOKEN_PATH]
+
+
+def refusal(code: str, status: int = 200, extra: str = "") -> httpx.Response:
+    return httpx.Response(status, json={"rt_cd": "1", "msg_cd": code, "msg1": REFUSED[code] + extra})
+
+
+def test_a_valid_cached_token_is_used_without_asking_kis(server, clock, tmp_path):
+    cache = tmp_path / "kis_token.json"
+    write_cache(cache)
+    with cached_client(server, clock, cache) as client:
+        client.ensure_token()
+        client.quote("005930")
+
+    assert token_requests(server) == []
+    assert [r.headers["authorization"] for r in server.data_requests()] == [f"Bearer {CACHED}"]
+
+
+def test_without_a_cache_file_a_new_token_is_saved_in_the_shared_format(server, clock, tmp_path):
+    cache = tmp_path / "state" / "kis_token.json"   # the folder is made too
+    with cached_client(server, clock, cache) as client:
+        client.quote("005930")
+
+    assert len(token_requests(server)) == 1
+    assert json.loads(cache.read_text(encoding="utf-8")) == {
+        "access_token": TOKEN, "app_key_tail": APP_KEY[-6:], "expires_at": WALL + 86400}
+    assert [path.name for path in cache.parent.iterdir()] == ["kis_token.json"]   # no temporary file
+
+
+@pytest.mark.parametrize("change", [
+    {"tail": "zzzzzz"},                                 # another app key's token
+    {"expires_at": WALL + kis.TOKEN_CACHE_MARGIN_S},    # ends within the margin
+    {"expires_at": WALL - 1},                           # ended
+    {"token": ""},
+    {"expires_at": "soon"},
+])
+def test_an_unusable_cached_token_is_replaced(server, clock, tmp_path, change):
+    cache = tmp_path / "kis_token.json"
+    write_cache(cache, **change)
+    with cached_client(server, clock, cache) as client:
+        client.quote("005930")
+
+    assert len(token_requests(server)) == 1
+    assert json.loads(cache.read_text(encoding="utf-8"))["access_token"] == TOKEN
+
+
+def test_an_unreadable_cache_file_is_a_warning_and_a_new_token(server, clock, tmp_path, caplog):
+    cache = tmp_path / "kis_token.json"
+    cache.write_text("{half a file", encoding="utf-8")
+    with caplog.at_level(logging.WARNING, logger="research_desk.core.kis"):
+        with cached_client(server, clock, cache) as client:
+            client.quote("005930")
+
+    assert len(token_requests(server)) == 1
+    assert "unreadable" in caplog.text
+
+
+@pytest.mark.parametrize("answer", [refusal("EGW00123", status=500), refusal("EGW00121")],
+                         ids=["expired-500", "invalid-200"])
+def test_a_refused_cached_token_is_replaced_once_and_the_call_repeated(server, clock, tmp_path, answer):
+    cache = tmp_path / "kis_token.json"
+    write_cache(cache)
+    server.answers = [answer]
+    with cached_client(server, clock, cache) as client:
+        client.quote("005930")
+        client.quote("000660")
+
+    assert len(token_requests(server)) == 1
+    # one call with the refused token (no backoff retries with it), then the new token
+    assert [r.headers["authorization"] for r in server.data_requests()] == [
+        f"Bearer {CACHED}", f"Bearer {TOKEN}", f"Bearer {TOKEN}"]
+    assert json.loads(cache.read_text(encoding="utf-8"))["access_token"] == TOKEN
+
+
+def test_a_token_the_client_asked_for_itself_is_not_asked_again_when_refused(server, clock, tmp_path):
+    cache = tmp_path / "kis_token.json"   # no file: the client asks KIS
+    server.answers = [refusal("EGW00121")]
+    with cached_client(server, clock, cache) as client:
+        with pytest.raises(KisError) as caught:
+            client.quote("005930")
+
+    assert caught.value.code == "EGW00121"
+    assert len(token_requests(server)) == 1
+    assert len(server.data_requests()) == 1
+
+
+def test_a_cache_that_cannot_be_written_is_a_warning_and_the_run_goes_on(server, clock, tmp_path, caplog):
+    blocker = tmp_path / "state"
+    blocker.write_text("a file where the folder should be", encoding="utf-8")
+    with caplog.at_level(logging.WARNING, logger="research_desk.core.kis"):
+        with cached_client(server, clock, blocker / "kis_token.json") as client:
+            client.quote("005930")
+
+    assert "not written" in caplog.text
+    assert len(server.data_requests()) == 1
+
+
+def test_cache_texts_never_hold_a_token_or_the_keys(server, clock, tmp_path, caplog):
+    cache = tmp_path / "kis_token.json"
+    write_cache(cache)
+    echo = f" {CACHED} {TOKEN} {APP_KEY} {APP_SECRET}"
+    server.answers = [refusal("EGW00121", extra=echo), refusal("EGW00121", extra=echo)]
+    with caplog.at_level(logging.DEBUG, logger="research_desk.core.kis"):
+        with cached_client(server, clock, cache) as client:
+            with pytest.raises(KisError) as caught:
+                client.quote("005930")
+
+    for secret in (CACHED, TOKEN, APP_KEY, APP_SECRET):
+        assert secret not in str(caught.value)
+        assert secret not in caplog.text
+
+
 # ── daily prices ─────────────────────────────────────────────────────────────
 
 def test_daily_prices_fetches_100_rows_a_call_and_merges_the_pages(server, clock):

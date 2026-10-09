@@ -8,6 +8,9 @@ settings are the shared ones (``core.settings.supabase_url()`` / ``supabase_serv
 - ``KIS_BASE_URL``: default the real service (실전 서비스) address.
 - ``PRICES_MAX_CALLS_PER_SEC``: KIS calls started per second at most, default 10. A value that
   is not a number above 0 is a ValueError (a general error, not "not ready").
+- ``KIS_TOKEN_CACHE``: the access-token cache file shared with the user's other project that
+  uses the same app key (its format, see ``core.kis``). Unset: the token stays in memory and
+  every run asks KIS for one.
 """
 from __future__ import annotations
 
@@ -29,6 +32,7 @@ class PricesSettings:
     app_secret: Optional[str] = field(repr=False)   # KIS_APP_SECRET
     base_url: str                                   # KIS_BASE_URL
     max_calls_per_sec: float                        # PRICES_MAX_CALLS_PER_SEC
+    token_cache: Optional[str] = None               # KIS_TOKEN_CACHE
 
     @property
     def has_kis_keys(self) -> bool:
@@ -55,7 +59,11 @@ def max_calls_per_sec() -> float:
     return rate
 
 
+def token_cache() -> Optional[str]:
+    return core_settings.optional("KIS_TOKEN_CACHE") or None
+
+
 def load_settings() -> PricesSettings:
     """Current values from the process environment."""
     return PricesSettings(app_key=app_key(), app_secret=app_secret(), base_url=base_url(),
-                          max_calls_per_sec=max_calls_per_sec())
+                          max_calls_per_sec=max_calls_per_sec(), token_cache=token_cache())

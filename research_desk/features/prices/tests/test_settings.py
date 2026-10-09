@@ -1,4 +1,5 @@
-"""Prices settings (spec §8): KIS_APP_KEY, KIS_APP_SECRET, KIS_BASE_URL, PRICES_MAX_CALLS_PER_SEC.
+"""Prices settings (spec §8): KIS_APP_KEY, KIS_APP_SECRET, KIS_BASE_URL, PRICES_MAX_CALLS_PER_SEC,
+KIS_TOKEN_CACHE.
 
 Read when called (never at import); every variable read here is set or deleted by the test.
 """
@@ -10,7 +11,7 @@ from research_desk.core import kis as core_kis
 from research_desk.core import settings as core_settings
 from research_desk.features.prices import settings
 
-VARIABLES = ("KIS_APP_KEY", "KIS_APP_SECRET", "KIS_BASE_URL", "PRICES_MAX_CALLS_PER_SEC")
+VARIABLES = ("KIS_APP_KEY", "KIS_APP_SECRET", "KIS_BASE_URL", "PRICES_MAX_CALLS_PER_SEC", "KIS_TOKEN_CACHE")
 APP_KEY, APP_SECRET = "PSfakeAppKey0123456789", "fakeAppSecret/0123456789+abc=="
 
 
@@ -26,6 +27,7 @@ def test_defaults_without_any_setting():
     assert cfg.app_key is None and cfg.app_secret is None
     assert cfg.base_url == "https://openapi.koreainvestment.com:9443"
     assert cfg.max_calls_per_sec == 10.0
+    assert cfg.token_cache is None
     assert not cfg.has_kis_keys
 
 
@@ -38,19 +40,22 @@ def test_values_from_the_environment(clean):
     clean.setenv("KIS_APP_SECRET", APP_SECRET)
     clean.setenv("KIS_BASE_URL", "https://openapivts.koreainvestment.com:29443")
     clean.setenv("PRICES_MAX_CALLS_PER_SEC", "2.5")
+    clean.setenv("KIS_TOKEN_CACHE", "C:/shared/state/kis_token.json")
     cfg = settings.load_settings()
     assert (cfg.app_key, cfg.app_secret) == (APP_KEY, APP_SECRET)
     assert cfg.base_url == "https://openapivts.koreainvestment.com:29443"
     assert cfg.max_calls_per_sec == 2.5
+    assert cfg.token_cache == "C:/shared/state/kis_token.json"
     assert cfg.has_kis_keys
 
 
 def test_empty_values_count_as_unset(clean):
-    for name in ("KIS_APP_KEY", "KIS_APP_SECRET", "KIS_BASE_URL"):
+    for name in ("KIS_APP_KEY", "KIS_APP_SECRET", "KIS_BASE_URL", "KIS_TOKEN_CACHE"):
         clean.setenv(name, "")
     cfg = settings.load_settings()
     assert cfg.app_key is None and cfg.app_secret is None
     assert cfg.base_url == settings.DEFAULT_KIS_BASE_URL
+    assert cfg.token_cache is None
 
 
 @pytest.mark.parametrize("name", ["KIS_APP_KEY", "KIS_APP_SECRET"])

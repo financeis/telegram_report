@@ -13,7 +13,7 @@
 | 다시 분류 백업 `backups/requeue/*.csv` | `tag requeue --apply`가 되돌리기 전에 남긴 행 값(파일 이름, 분류 결과). 저장소 안이지만 git이 무시한다(`/backups/`) |
 | 관심 기업 파일 `~/.review_viewer/favorites.json` | 사용자 데이터. 웹앱만 읽고 쓴다 |
 | `KIS_APP_KEY`, `KIS_APP_SECRET` | 한국투자증권 실전 계좌에 묶인 Open API 앱키·시크릿. 이 앱은 시세 조회에만 쓰지만 같은 키로 그 계좌의 다른 API(주문 등)도 부를 수 있어 서비스 키와 같은 무게로 다룬다. 사용자의 다른 프로젝트(masterdb)와 같은 키다 |
-| KIS 접근 토큰 | `prices update` 실행마다 한 번 받아 그 실행의 메모리에만 둔다(하루짜리). 파일·DB·로그에 남기지 않는다 |
+| KIS 접근 토큰 | 하루짜리. `KIS_TOKEN_CACHE`가 있으면 masterdb와 같이 쓰는 토큰 파일(이 저장소 밖, masterdb가 git에서 빼 둔 `data/state/kis_token.json`)에서 유효한 토큰을 먼저 쓰고, 새로 받은 토큰은 그 파일에 쓴다 — KIS는 토큰을 자주 받는 앱키를 제한한다. 없으면 실행마다 한 번 받아 메모리에만 둔다. 어느 쪽이든 DB·로그·명령 출력에는 남기지 않는다 |
 | `DART_MONGO_URL`과 사업보고서 MongoDB(`FS.A001_v2`) | 주소에 비밀번호가 들어갈 수 있다. 데이터는 별도 DART 수집 프로그램의 것이고 이 앱은 읽기만 한다 |
 
 ## 접근 경로와 인증

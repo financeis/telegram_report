@@ -715,10 +715,11 @@ def test_the_kis_client_gets_the_keys_address_and_call_rate(monkeypatch):
 
     monkeypatch.setattr(core_kis, "KisClient", Recorder)
     cfg = SimpleNamespace(app_key=APP_KEY, app_secret=APP_SECRET, base_url="https://kis.example.invalid",
-                          max_calls_per_sec=2.5)
+                          max_calls_per_sec=2.5, token_cache="C:/shared/state/kis_token.json")
     assert isinstance(REAL_KIS_CLIENT(cfg), Recorder)
     assert made == [(APP_KEY, APP_SECRET, {"max_calls_per_sec": 2.5,
-                                          "base_url": "https://kis.example.invalid"})]
+                                          "base_url": "https://kis.example.invalid",
+                                          "token_cache": "C:/shared/state/kis_token.json"})]
 
 
 def test_the_clock_is_aware_utc():
