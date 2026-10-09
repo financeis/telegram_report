@@ -157,7 +157,7 @@ START -> extract_pdf -> llm_extract --oos_gate--+-> status_unreadable           
 - 정식 이름은 표지에 적힌 지금 회사명이다(한국어 정식 상호가 있으면 그것; 예: `DB증권`, `한국IR협의회`, `iM증권`, `에프앤가이드`, `한국거래소`). 증권사가 아닌 독립 리서치는 `data_provider`다. 기술분석보고서는 표지의 작성기관(한국기업평가·NICE신용평가·NICE평가정보·한국기술신용평가·서울평가정보 등)과 상관없이 `한국IR협의회`로 둔다(사용자 결정, 2026-10-10). IR자료의 발행처는 `해당기업`(`other`)이다.
 - AI의 답은 닫힌 목록이다. 요청 스키마의 `publisher_canon`이 정식 이름 enum이라, 스키마를 강제하는 경로(Claude 기본 경로, OpenAI·codex 엄격 스키마)는 다른 값을 낼 수 없다. 어느 경로든 `LLMExtraction`의 before 검증기가 정식 이름과 글자 그대로 같지 않은 답(별칭, 오타, 문장, 문자열이 아닌 값)을 None으로 바꾼다. 검증 오류를 내지 않는다 — 오류면 그 행이 배치마다 `pending`으로 되돌려지는 고리가 생긴다. 필드를 `Literal`로 바꾸지 않는다(스키마를 강제하지 않는 경로에서 오류가 난다).
 - AI는 발행처 종류를 내지 않는다. 저장하는 종류는 저장할 정식 이름의 사전 구역이다(`publisher_type_final`, 이름이 None이면 None). 응답에 옛 `publisher_type` 키가 섞여 와도 버려진다.
-- 파일 이름 표기: 파일 이름이 `_YYYYMMDD_<표기>_<숫자>.pdf`로 끝나면 그 `<표기>`다(글자가 하나 이상이고 글자·공백·`+ & . -`만). 표기가 사전의 정식 이름이나 별칭과 글자 그대로(대소문자까지) 같으면 그 항목의 정식 이름이 "파일 이름이 가리키는 발행처"다. 사전에 없는 표기는 아무것도 가리키지 않는다. 끝 모양이 다른 이름(예: 재전송된 `…_<숫자>_1.pdf`)은 표기가 없는 것이다.
+- 파일 이름 표기: 파일 이름이 `_YYYYMMDD_<표기>_<숫자>.pdf`로 끝나면 그 `<표기>`다(글자가 하나 이상이고 글자·공백·`+ & . -`만). 표기가 사전의 정식 이름이나 별칭과 글자 그대로(대소문자까지) 같으면 그 항목의 정식 이름이 "파일 이름이 가리키는 발행처"다. 사전에 없는 표기는 아무것도 가리키지 않는다. 끝 모양이 다른 이름(예: 번호 뒤에 `_1`이 더 붙은 `…_<숫자>_1.pdf`)은 표기가 없는 것이다.
 - 의심 표시(`publisher_suspect`, AI 결과가 있는 행만): 가리키는 발행처가 있는데 저장할 발행처가 그것과 다르면(None 포함) `filename_mismatch`, 가리키는 발행처가 없고 저장할 발행처가 None이면 `unknown`, 그 밖에는 없음. 비교는 정식 이름끼리다 — AI가 별칭(`Eugene`)을 답하면 None으로 저장되고 표기가 `Eugene`이면 `filename_mismatch`다. IR자료(`해당기업`)가 증권사 표기 파일이면 `filename_mismatch`가 붙는다(IR자료로 잘못 분류된 증권사 리포트를 찾는 신호).
 - 좁혀 둔 예전 결정(결정 기록 0011): PDF 속 글자를 코드로 대조해 발행처를 정하지 않는다(판단은 AI). 코드는 AI 답이 사전 정식 이름인지 확인만 한다. 파일 이름 표기는 저장할 값을 정하지 않고 의심 표시와 다시 분류 대상 고르기에만 쓴다. 영문·별칭·부서명이 섞인 발행처를 코드 대조로 맞추다 실패한 적이 있고, 파일 이름 표기로 저장하는 안은 사용자가 뺐다. "표기가 대부분 맞으니 그걸로 저장하자"로 바꾸지 않는다.
 
@@ -170,7 +170,7 @@ START -> extract_pdf -> llm_extract --oos_gate--+-> status_unreadable           
   |---|---|
   | `--unreadable` | `review_needed`이면서 메모가 `first_page_unreadable`로 시작하고, 지금 PDF 1쪽을 그림으로 만들 수 있는 행 |
   | `--publisher-not-in-dictionary` | 발행처가 NULL이 아니고 사전의 정식 이름이 아닌 행 |
-  | `--publisher-filename-mismatch` | 파일 이름이 가리키는 발행처가 있고 저장된 발행처가 그것과 다른 행(NULL 포함). 메모에 `publisher_suspect`가 있는 행(이미 지금 규칙으로 확인됨)과 메모가 `first_page_unreadable`·`llm_refusal`로 시작하는 행(AI 결과가 없음)은 빼다 |
+  | `--publisher-filename-mismatch` | 파일 이름이 가리키는 발행처가 있고 저장된 발행처가 그것과 다른 행(NULL 포함). 메모에 `publisher_suspect`가 있는 행(이미 지금 규칙으로 확인됨)과 메모가 `first_page_unreadable`·`llm_refusal`로 시작하는 행(AI 결과가 없음)은 뺀다 |
   | `--publisher-type-mismatch` | 발행처가 정식 이름인데 저장된 종류가 사전의 종류와 다른 행 |
   | `--krx-unmatched` | `review_needed`이면서 메모가 `krx_unmatched_in_scope`로 시작하는 행(종목표를 바꾼 뒤 쓰는 용도) |
 
