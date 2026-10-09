@@ -51,7 +51,7 @@ Design: [architecture.md](architecture.md) and the decision records in [tracking
 
    Then edit `.env`:
    - `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`: from https://my.telegram.org
-   - `TELEGRAM_CHANNEL`: channel username (default `sunstudy1004`)
+   - `TELEGRAM_CHANNEL`: the channel's username (a private channel also needs `TELEGRAM_CHANNEL_ID`; see `.env.example`)
    - `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`: from Supabase dashboard → Settings → API → `service_role` key (⚠️ secret — never commit)
    - `SUPABASE_DB_URL`: from Supabase project settings → Database → Connection string (URI); every `tag` command needs it
    - `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`: the key of each provider your models use (see [Analysis models](#analysis-models)); the peers features always need `OPENAI_API_KEY` for embeddings
