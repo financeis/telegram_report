@@ -22,8 +22,8 @@ from pydantic import BaseModel, Field, ValidationError
 
 from research_desk.core import llm
 from research_desk.core.llm import (
-    CodexExecError, LLMClient, StructuredResult, TransientLLMError, api_key_env,
-    call_with_retry, is_anthropic, is_codex,
+    CodexExecError, ImageInputUnsupported, LLMClient, StructuredResult, TransientLLMError,
+    api_key_env, call_with_retry, is_anthropic, is_codex, supports_images,
 )
 
 
@@ -249,6 +249,197 @@ async def test_openai_ignores_constrained_flag():
     assert parse.call_args.kwargs["response_format"] is Extraction
 
 
+# ── page images ──────────────────────────────────────────────────────────────
+
+# Not real PNGs: the request carries the bytes as given, base64-encoded.
+PNG_1 = b"\x89PNG\r\n\x1a\nfirst-page"
+PNG_2 = b"\x89PNG\r\n\x1a\nsecond-page"
+B64_1 = "iVBORw0KGgpmaXJzdC1wYWdl"
+B64_2 = "iVBORw0KGgpzZWNvbmQtcGFnZQ=="
+
+
+def _anthropic_image(b64):
+    return {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": b64}}
+
+
+def _openai_image(b64):
+    return {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}}
+
+
+def _text_message():
+    return _anthropic_message(content=[SimpleNamespace(type="text",
+                                                       text=make_extraction().model_dump_json())])
+
+
+def test_image_fixtures_are_the_base64_of_the_bytes():
+    import base64
+    assert base64.b64encode(PNG_1).decode() == B64_1
+    assert base64.b64encode(PNG_2).decode() == B64_2
+
+
+async def test_anthropic_constrained_attaches_images_before_the_text():
+    client, create = _client_with_anthropic(_text_message())
+    result = await client.parse(model="claude-haiku-5-5", system="SYS", user="USER",
+                                schema=Extraction, images=[PNG_1, PNG_2])
+    assert result.parsed == make_extraction()
+    kwargs = create.call_args.kwargs
+    assert kwargs["messages"] == [{"role": "user", "content": [
+        _anthropic_image(B64_1), _anthropic_image(B64_2), {"type": "text", "text": "USER"},
+    ]}]
+    # the system prompt and the output grammar are the same as the text path
+    assert kwargs["system"] == [{"type": "text", "text": "SYS",
+                                 "cache_control": {"type": "ephemeral"}}]
+    assert kwargs["output_config"]["format"]["type"] == "json_schema"
+
+
+async def test_anthropic_unconstrained_attaches_images_before_the_text():
+    client, create = _client_with_anthropic(_text_message())
+    await client.parse(model="claude-haiku-5-5", system="SYS", user="USER",
+                       schema=Extraction, constrained=False, images=[PNG_1])
+    kwargs = create.call_args.kwargs
+    assert kwargs["messages"] == [{"role": "user", "content": [
+        _anthropic_image(B64_1), {"type": "text", "text": "USER"},
+    ]}]
+    assert kwargs["system"][0]["text"].startswith("SYS\n\n<output_format>")
+    assert kwargs["system"][0]["cache_control"] == {"type": "ephemeral"}
+    assert kwargs["output_config"] == {"effort": "low"}
+
+
+async def test_anthropic_system_prompt_is_identical_across_rows_with_and_without_images():
+    """Per-row values (text, images) go in the user message only, so the cache holds."""
+    for constrained in (True, False):
+        client, create = _client_with_anthropic(_text_message())
+        await client.parse(model="claude-haiku-5-5", system="SYS", user="row 1",
+                           schema=Extraction, constrained=constrained)
+        await client.parse(model="claude-haiku-5-5", system="SYS", user="row 2",
+                           schema=Extraction, constrained=constrained, images=[PNG_1])
+        await client.parse(model="claude-haiku-5-5", system="SYS", user="row 3",
+                           schema=Extraction, constrained=constrained, images=[PNG_2])
+        systems = [c.kwargs["system"] for c in create.call_args_list]
+        assert systems[0] == systems[1] == systems[2]
+        assert systems[0][0]["cache_control"] == {"type": "ephemeral"}
+        configs = [c.kwargs["output_config"] for c in create.call_args_list]
+        assert configs[0] == configs[1] == configs[2]
+
+
+async def test_openai_attaches_images_after_the_text_as_data_urls():
+    client, parse = _client_with_openai(parsed=make_extraction())
+    await client.parse(model="gpt-5.4", system="S", user="U", schema=Extraction,
+                       temperature=0, images=[PNG_1, PNG_2])
+    kwargs = parse.call_args.kwargs
+    assert kwargs["messages"] == [
+        {"role": "system", "content": "S"},
+        {"role": "user", "content": [{"type": "text", "text": "U"},
+                                     _openai_image(B64_1), _openai_image(B64_2)]},
+    ]
+    assert kwargs["response_format"] is Extraction
+    assert kwargs["temperature"] == 0
+
+
+# Today's request shapes, written out in full: a call without images (no
+# argument, None, or an empty list) must send exactly these, byte for byte.
+def _today_anthropic_constrained():
+    return {
+        "model": "claude-haiku-5-5", "max_tokens": 16000,
+        "system": [{"type": "text", "text": "SYS", "cache_control": {"type": "ephemeral"}}],
+        "messages": [{"role": "user", "content": "USER"}],
+        "output_config": {"effort": "low", "format": {
+            "type": "json_schema", "schema": anthropic.transform_schema(Extraction)}},
+    }
+
+
+def _today_anthropic_unconstrained():
+    system = ("SYS\n\n<output_format>\n"
+              "Reply with one JSON object only (no prose, no code fence) that "
+              "validates against this JSON Schema:\n"
+              f"{json.dumps(Extraction.model_json_schema(), ensure_ascii=False)}\n"
+              "</output_format>")
+    return {
+        "model": "claude-haiku-5-5", "max_tokens": 16000,
+        "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+        "messages": [{"role": "user", "content": "USER"}],
+        "output_config": {"effort": "low"},
+    }
+
+
+NO_IMAGES = [{}, {"images": None}, {"images": []}, {"images": ()}]
+
+
+@pytest.mark.parametrize("no_images", NO_IMAGES)
+@pytest.mark.parametrize("constrained, expected", [
+    (True, _today_anthropic_constrained), (False, _today_anthropic_unconstrained)])
+async def test_anthropic_request_without_images_is_unchanged(no_images, constrained, expected):
+    client, create = _client_with_anthropic(_text_message())
+    await client.parse(model="claude-haiku-5-5", system="SYS", user="USER",
+                       schema=Extraction, constrained=constrained, **no_images)
+    assert create.call_args.args == ()
+    assert create.call_args.kwargs == expected()
+
+
+@pytest.mark.parametrize("no_images", NO_IMAGES)
+async def test_openai_request_without_images_is_unchanged(no_images):
+    client, parse = _client_with_openai(parsed=make_extraction())
+    await client.parse(model="gpt-5.4", system="S", user="U", schema=Extraction,
+                       temperature=0, **no_images)
+    assert parse.call_args.args == ()
+    assert parse.call_args.kwargs == {
+        "model": "gpt-5.4",
+        "messages": [{"role": "system", "content": "S"}, {"role": "user", "content": "U"}],
+        "response_format": Extraction,
+        "temperature": 0,
+    }
+
+
+def test_supports_images_per_provider():
+    # Claude (Anthropic API): every model takes images.
+    assert supports_images("claude-haiku-5-5")
+    assert supports_images("claude-opus-5-5")
+    # OpenAI API: current models take images; a few old text-only ones don't.
+    for model in ("gpt-5.4", "gpt-6-luna", "gpt-4o", "gpt-4.1-mini", "o3", "o4-mini"):
+        assert supports_images(model), model
+    for model in ("gpt-3.5-turbo", "gpt-4", "gpt-4-0613", "o1-mini", "o3-mini"):
+        assert not supports_images(model), model
+    # Codex CLI: attaches images with -i/--image; the model rule is OpenAI's.
+    assert supports_images("codex:gpt-6-luna")
+    assert supports_images("codex:gpt-5.4")
+    assert not supports_images("codex:o3-mini")
+
+
+def test_supports_images_needs_no_key_client_or_process(monkeypatch):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("supports_images must not create a client or run a process")
+
+    for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_BIN"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(llm.anthropic, "AsyncAnthropic", forbidden)
+    monkeypatch.setattr(llm.openai, "AsyncOpenAI", forbidden)
+    monkeypatch.setattr(llm.subprocess, "Popen", forbidden)
+    monkeypatch.setattr(llm.subprocess, "run", forbidden)
+    monkeypatch.setattr(llm, "_run_codex", forbidden)
+    monkeypatch.setattr(llm, "_codex_bin", forbidden)
+    assert supports_images("claude-haiku-5-5")
+    assert supports_images("gpt-5.4")
+    assert supports_images("codex:gpt-6-luna")
+
+
+async def test_images_for_a_text_only_model_raise_before_any_request():
+    client, parse = _client_with_openai(parsed=make_extraction())
+    with pytest.raises(ImageInputUnsupported, match="gpt-3.5-turbo"):
+        await client.parse(model="gpt-3.5-turbo", system="S", user="U",
+                           schema=Extraction, images=[PNG_1])
+    parse.assert_not_called()
+    # Without images the same model is called as before.
+    await client.parse(model="gpt-3.5-turbo", system="S", user="U", schema=Extraction)
+    parse.assert_awaited_once()
+
+
+def test_image_input_unsupported_is_not_a_runtime_error():
+    # Callers catch RuntimeError around require_key and CodexExecError; an
+    # unsupported-image call must not be mistaken for either.
+    assert not issubclass(ImageInputUnsupported, RuntimeError)
+    assert not issubclass(ImageInputUnsupported, llm.RETRYABLE_ERRORS)
+
+
 # ── keys ─────────────────────────────────────────────────────────────────────
 
 def test_missing_key_for_model_raises(monkeypatch):
@@ -376,6 +567,9 @@ def _fake_codex(monkeypatch, *, final_text, exit_code=0, stderr="", events=_TURN
         out = cmd[cmd.index("-o") + 1]
         with open(cmd[cmd.index("--output-schema") + 1], encoding="utf-8") as f:
             calls["schema"] = json.loads(f.read())
+        # Attached images exist only while codex runs (the temp dir goes after).
+        calls["images"] = [(cmd[i + 1], Path(cmd[i + 1]).read_bytes())
+                           for i, arg in enumerate(cmd) if arg == "-i"]
         if final_text is not None:
             with open(out, "w", encoding="utf-8") as f:
                 f.write(final_text)
@@ -411,6 +605,64 @@ async def test_codex_routing_builds_command_and_parses(monkeypatch):
     # strict schema, as the OpenAI API path sends
     assert calls["schema"]["additionalProperties"] is False
     assert set(calls["schema"]["required"]) == set(calls["schema"]["properties"])
+
+
+@pytest.mark.parametrize("no_images", NO_IMAGES)
+async def test_codex_command_without_images_is_unchanged(monkeypatch, no_images):
+    monkeypatch.setenv("CODEX_REASONING_EFFORT", "high")
+    calls = _fake_codex(monkeypatch, final_text=make_extraction().model_dump_json())
+    await LLMClient().parse(model="codex:gpt-6-luna", system="SYS", user="USER",
+                            schema=Extraction, **no_images)
+    tmp = calls["cwd"]
+    assert calls["cmd"] == [
+        "codex", "exec", "-m", "gpt-6-luna", "-c", "model_reasoning_effort=high",
+        "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check", "--ephemeral",
+        "-s", "read-only", "--output-schema", str(Path(tmp, "schema.json")),
+        "-o", str(Path(tmp, "last.json")), "--json", "-",
+    ]
+    assert calls["prompt"] == "SYS\n\nUSER"
+    assert calls["images"] == []
+
+
+async def test_codex_attaches_images_from_the_temp_workspace(monkeypatch):
+    """The installed codex CLI takes images: `codex exec --help` (codex-cli 0.162.0)
+    lists `-i, --image <FILE>...  Optional image(s) to attach to the initial prompt`.
+
+    `<FILE>...` takes several values, so each image gets its own `-i` and the run
+    is closed by another flag — the trailing `-` (prompt on stdin) must never be
+    read as an image path.
+    """
+    monkeypatch.setenv("CODEX_REASONING_EFFORT", "high")
+    extraction = make_extraction()
+    calls = _fake_codex(monkeypatch, final_text=extraction.model_dump_json())
+
+    result = await LLMClient().parse(model="codex:gpt-6-luna", system="SYS", user="USER",
+                                     schema=Extraction, images=[PNG_1, PNG_2])
+
+    assert result.parsed == extraction
+    assert [data for _, data in calls["images"]] == [PNG_1, PNG_2]  # in order
+    paths = [Path(p) for p, _ in calls["images"]]
+    assert all(p.parent == Path(calls["cwd"]) and p.suffix == ".png" for p in paths)
+    assert len(set(paths)) == 2
+    cmd = calls["cmd"]
+    for i, arg in enumerate(cmd):
+        if arg == "-i":
+            assert cmd[i + 2] in ("-i", "--output-schema")
+    assert cmd[-1] == "-"
+    assert calls["prompt"] == "SYS\n\nUSER"  # the text part is unchanged
+    # Everything else in the command is today's command.
+    without_images = [a for i, a in enumerate(cmd)
+                      if a != "-i" and (i == 0 or cmd[i - 1] != "-i")]
+    assert without_images[:4] == ["codex", "exec", "-m", "gpt-6-luna"]
+    assert "-i" not in without_images and len(without_images) == len(cmd) - 4
+
+
+async def test_codex_images_for_a_text_only_model_raise_before_running(monkeypatch):
+    calls = _fake_codex(monkeypatch, final_text=make_extraction().model_dump_json())
+    with pytest.raises(ImageInputUnsupported, match="codex:o3-mini"):
+        await LLMClient().parse(model="codex:o3-mini", system="S", user="U",
+                                schema=Extraction, images=[PNG_1])
+    assert calls == {}  # codex never ran
 
 
 async def test_codex_usage_comes_from_the_last_turn(monkeypatch):
