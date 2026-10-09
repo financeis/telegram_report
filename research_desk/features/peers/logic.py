@@ -21,8 +21,13 @@
   a build's table with ``percentile_of`` and its tier with ``tier_of``.
 - Build status (95 %), the six-hour rule for a running build, and retention (§6.5): the three
   latest public builds, newer unpublished ones and running ones stay.
+- The web side (§6.2–§6.4, §9, §10, §12.2): each company's best segment, one side's top matches,
+  grading, merging and ranking the peers list, shared terms, the same industry, the price
+  reaction, the candidate flag, theme search's normalized query, query terms, term ranking and
+  reciprocal rank fusion (RRF).
 
-The numbers are adjustable defaults, kept here as constants.
+The numbers are adjustable defaults, kept here as constants (the seed's 10 %p threshold and the
+six candidate conditions are the user's own choices).
 """
 from __future__ import annotations
 
@@ -33,7 +38,7 @@ from bisect import bisect_right
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from itertools import islice, product
-from typing import Any, Iterable, Mapping, Optional, Sequence
+from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
 import numpy as np
 
@@ -492,6 +497,7 @@ _SAMPLE_CHUNK = 4096
 TIER_VERY_HIGH = 99.5
 TIER_HIGH = 98.0
 TIER_RELATED = 95.0
+TIERS: tuple[str, ...] = ("very_high", "high", "related")
 
 
 def _unit_rows(vectors) -> np.ndarray:
@@ -665,3 +671,256 @@ def retention_plan(builds: Sequence[Mapping[str, Any]], profile_keys: Iterable[t
     embeddings = sorted(k for k in set(embedding_keys)
                         if k not in used_embeddings and k[1] != current_profile_version)
     return RetentionPlan(tuple(sorted(dropped)), tuple(profiles), tuple(embeddings))
+
+
+# ── the peers list (§6.2–§6.4) ───────────────────────────────────────────────
+
+COMPANY_TOP = 100        # companies by company similarity
+SEGMENT_TOP = 100        # companies by their best segment's similarity to the seed's chosen segment
+PEERS_MAX = 50           # the merged list (adjustable)
+SHARED_TERMS_MAX = 5
+# Shared-term bonus for ranking (§6.4): percentile points added per shared term. 0 = off.
+SHARED_TERM_BONUS = 0.0
+COVERAGE_DAYS = 365      # report counts over this many days (§7)
+
+
+def ordered_segments(rows: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    """Segment rows (``seg_no``, ``revenue_share_pct``) in §6.2 order: by revenue share, largest
+    first, unknown shares (-1) after the known ones, equal shares by segment number. The first
+    is the seed's default segment."""
+    by_number = sorted(rows, key=lambda row: row["seg_no"])
+    order = segment_order([row.get("revenue_share_pct") for row in by_number])
+    return [by_number[i] for i in order]
+
+
+def best_segments(rows: Iterable[Mapping[str, Any]]) -> list[dict]:
+    """One row per company from ``match_company_segments`` rows (one per segment): its most
+    similar segment (equal similarities: the lower segment number), nearest first, then by code."""
+    best: dict[str, Mapping[str, Any]] = {}
+    for row in rows:
+        code = row["stock_code"]
+        kept = best.get(code)
+        if (kept is None or row["similarity"] > kept["similarity"]
+                or (row["similarity"] == kept["similarity"] and row["seg_no"] < kept["seg_no"])):
+            best[code] = row
+    return sorted((dict(row) for row in best.values()), key=lambda row: (-row["similarity"], row["stock_code"]))
+
+
+def top_matches(rows: Iterable[Mapping[str, Any]], keep: Callable[[str], bool], k: int) -> list[dict]:
+    """The ``k`` nearest rows whose code passes ``keep(code)`` (nearest first, then by code)."""
+    ranked = sorted(rows, key=lambda row: (-row["similarity"], row["stock_code"]))
+    return [dict(row) for row in ranked if keep(row["stock_code"])][:k]
+
+
+def grade(similarity: float, table: Optional[Sequence[Sequence[float]]]) -> Optional[dict]:
+    """``{"similarity", "percentile", "tier"}`` from a build's percentile table; None below the
+    95th percentile value (not listed) or without a table."""
+    percentile = percentile_of(similarity, table)
+    tier = tier_of(percentile)
+    if tier is None:
+        return None
+    return {"similarity": similarity, "percentile": percentile, "tier": tier}
+
+
+def merge_peers(company_rows: Iterable[Mapping[str, Any]], segment_rows: Iterable[Mapping[str, Any]],
+                company_table: Optional[Sequence[Sequence[float]]],
+                segment_table: Optional[Sequence[Sequence[float]]], *,
+                shared_counts: Optional[Mapping[str, int]] = None, bonus: float = SHARED_TERM_BONUS,
+                limit: int = PEERS_MAX) -> list[dict]:
+    """The peers list (§6.3, §6.4): ``[{"code", "tier", "company_match", "segment_match"}]``.
+
+    ``company_rows`` (``stock_code``, ``similarity``) and ``segment_rows`` (one per company:
+    ``stock_code``, ``seg_no``, ``similarity``) are merged by company. A side is graded with its
+    own table; below the ``related`` tier it is no match (None). A company with no match on
+    either side is left out. The row tier is the higher of the two; the rank goes by the higher
+    of the two percentiles (plus ``bonus`` per shared term from ``shared_counts``), then the
+    other percentile, the company similarity, the segment similarity and the code. At most
+    ``limit`` rows.
+    """
+    sides: dict[str, dict] = {}
+    for row in company_rows:
+        sides.setdefault(row["stock_code"], {})["company"] = grade(row["similarity"], company_table)
+    for row in segment_rows:
+        graded = grade(row["similarity"], segment_table)
+        sides.setdefault(row["stock_code"], {})["segment"] = (
+            None if graded is None else {"seg_no": row["seg_no"], **graded})
+    shared_counts = shared_counts or {}
+    ranked = []
+    for code, side in sides.items():
+        company, segment = side.get("company"), side.get("segment")
+        percentiles = [m["percentile"] for m in (company, segment) if m is not None]
+        if not percentiles:
+            continue
+        best = max(percentiles)
+        other = min(percentiles) if len(percentiles) == 2 else -1.0
+        key = (-(best + bonus * shared_counts.get(code, 0)), -other,
+               -(company["similarity"] if company else -2.0),
+               -(segment["similarity"] if segment else -2.0), code)
+        ranked.append((key, {"code": code, "tier": tier_of(best), "company_match": company,
+                             "segment_match": segment}))
+    ranked.sort(key=lambda item: item[0])
+    return [peer for _, peer in ranked[:limit]]
+
+
+def _shared_keys(seed_terms: Optional[Iterable[str]], peer_terms: Optional[Iterable[str]],
+                 term_table: Mapping[str, Mapping[str, Any]]) -> list[str]:
+    peer = set(peer_terms or [])
+    keys = {key for key in seed_terms or [] if key in peer and key in term_table}
+    return sorted(keys, key=lambda key: (term_table[key]["companies"], key))
+
+
+def shared_terms(seed_terms: Optional[Iterable[str]], peer_terms: Optional[Iterable[str]],
+                 term_table: Mapping[str, Mapping[str, Any]], limit: int = SHARED_TERMS_MAX) -> list[dict]:
+    """``[{"term", "companies"}]``: the comparison keys both companies hold, rarest first (fewest
+    companies in the build's term table, then by key), at most ``limit``, shown with the term
+    table's display. Keys missing from the term table are left out; none shared → []."""
+    return [{"term": term_table[key]["display"], "companies": term_table[key]["companies"]}
+            for key in _shared_keys(seed_terms, peer_terms, term_table)[:limit]]
+
+
+def shared_count(seed_terms: Optional[Iterable[str]], peer_terms: Optional[Iterable[str]],
+                 term_table: Mapping[str, Mapping[str, Any]]) -> int:
+    """How many keys of the term table both companies hold (for the shared-term bonus)."""
+    return len(_shared_keys(seed_terms, peer_terms, term_table))
+
+
+def same_industry(seed: Optional[str], peer: Optional[str]) -> Optional[bool]:
+    """True when the stock list's ``산업명(중)`` is the same, False when it differs, None when
+    either is blank."""
+    seed, peer = (seed or "").strip(), (peer or "").strip()
+    if not seed or not peer:
+        return None
+    return seed == peer
+
+
+# ── the price reaction (§9) and the candidate flag (§10) ─────────────────────
+
+WINDOWS: tuple[str, ...] = ("1w", "1m", "3m")      # 5, 21 and 63 trading days
+DEFAULT_WINDOW = "1m"
+JUDGE_MIN_EXCESS = 10.0     # the seed must beat its market by at least 10 %p (the user's value)
+RHO_PARTIAL = 0.25
+RHO_REACTED = 0.6
+REACTIONS: tuple[str, ...] = ("none", "partial", "reacted", "undetermined")
+MIN_AVG_VALUE_20D = 500_000_000   # 5억 원
+NOT_CANDIDATE_REASONS: tuple[str, ...] = ("has_reports", "reacted", "undetermined", "not_traded",
+                                          "low_liquidity", "holding", "weak_similarity")
+# Flags that mean the stock is not trading or its numbers are not this run's.
+_NO_TRADE_FLAGS = ("halted", "no_data")
+
+
+def judgeable(seed_excess: Optional[float]) -> bool:
+    """Whether reactions are judged: the seed's excess return is at least ``JUDGE_MIN_EXCESS``."""
+    return seed_excess is not None and seed_excess >= JUDGE_MIN_EXCESS
+
+
+def is_trading(price: Optional[Mapping[str, Any]]) -> bool:
+    """A snapshot that says the stock trades (``traded`` true) with this run's numbers (no
+    ``halted`` / ``no_data`` flag). No snapshot is not trading."""
+    if price is None or price.get("traded") is not True:
+        return False
+    return not any(flag in _NO_TRADE_FLAGS for flag in price.get("flags") or [])
+
+
+def reaction(seed_excess: Optional[float], seed_as_of: Optional[str],
+             peer_price: Optional[Mapping[str, Any]], window: str) -> str:
+    """The peer's reaction to the seed's rise over ``window`` (§9).
+
+    ``undetermined`` when the seed is not judged (``judgeable``), the peer has no snapshot, is
+    not trading (``is_trading``), has no excess return for the window, or its ``as_of`` differs
+    from the seed's. Else ρ = peer excess ÷ seed excess: ``none`` below 0.25, ``partial`` from
+    0.25, ``reacted`` from 0.6.
+    """
+    if not judgeable(seed_excess) or not is_trading(peer_price):
+        return "undetermined"
+    peer_excess = (peer_price.get("excess") or {}).get(window)
+    if peer_excess is None or seed_as_of is None or peer_price.get("as_of") != seed_as_of:
+        return "undetermined"
+    rho = peer_excess / seed_excess
+    if rho < RHO_PARTIAL:
+        return "none"
+    if rho < RHO_REACTED:
+        return "partial"
+    return "reacted"
+
+
+def candidacy(*, label: Optional[str], reaction: str, price: Optional[Mapping[str, Any]],
+              is_holding: Optional[bool], tier: Optional[str]) -> tuple[bool, list[str]]:
+    """``(candidate, reasons)`` (§10). A candidate meets all six conditions: no stock report
+    (label ``none``), reaction ``none`` or ``partial``, trading (``is_trading``), a 20-day average
+    trading value of at least 5억 원, not a holding company, and a row tier of ``related`` or
+    above. Each unmet condition adds its code, in ``NOT_CANDIDATE_REASONS`` order; an unknown
+    value never meets its condition."""
+    reasons = []
+    if label != "none":
+        reasons.append("has_reports")
+    if reaction == "reacted":
+        reasons.append("reacted")
+    elif reaction not in ("none", "partial"):
+        reasons.append("undetermined")
+    if not is_trading(price):
+        reasons.append("not_traded")
+    value = price.get("avg_value_20d") if price is not None else None
+    if value is None or value < MIN_AVG_VALUE_20D:
+        reasons.append("low_liquidity")
+    if is_holding is True:
+        reasons.append("holding")
+    if tier not in TIERS:
+        reasons.append("weak_similarity")
+    return not reasons, reasons
+
+
+# ── theme search (§12.2) ─────────────────────────────────────────────────────
+
+RRF_K = 60
+QUERY_TERM_MIN_CHARS = 2
+# Query pieces part at spaces, commas and middle dots.
+_QUERY_PIECES = re.compile(rf"[\s,，、{re.escape(MIDDLE_DOTS)}]+")
+
+
+def normalize_query(query: str, synonyms: Synonyms) -> str:
+    """The query with runs of white space made one space and synonym spellings made standard: the
+    whole query when it is one spelling, else each word (parted as in ``Synonyms.key``) that is
+    one. This text is embedded."""
+    text = " ".join((query or "").split())
+    whole = synonyms.display(synonyms.key(text))
+    if whole is not None:
+        return whole
+    parts = _WORDS.split(text)
+    parts[::2] = [(synonyms.display(synonyms.key(word)) or word) if word else word for word in parts[::2]]
+    return "".join(parts)
+
+
+def query_terms(query: str, synonyms: Synonyms) -> list[tuple[str, str]]:
+    """``[(comparison key, as written)]``: the whole query, then each piece of it (parted at
+    spaces, commas and middle dots) of at least two characters; each key once, empty keys left
+    out."""
+    whole = (query or "").strip()
+    pieces = [whole] + [piece for piece in _QUERY_PIECES.split(whole)
+                        if len(piece.strip()) >= QUERY_TERM_MIN_CHARS]
+    terms: dict[str, str] = {}
+    for piece in pieces:
+        key = synonyms.key(piece)
+        if key and key not in terms:
+            terms[key] = piece.strip()
+    return list(terms.items())
+
+
+def term_ranking(matched: Mapping[str, Sequence[str]], term_table: Mapping[str, Mapping[str, Any]]) -> list[str]:
+    """Codes ranked by their matched query keys: more keys first, then fewer companies holding
+    them (summed over the keys, from the term table; a key missing from it counts as one), then
+    by code."""
+    def companies(key: str) -> int:
+        entry = term_table.get(key)
+        return entry["companies"] if entry else 1
+
+    return sorted(matched, key=lambda code: (-len(matched[code]), sum(companies(k) for k in matched[code]), code))
+
+
+def rrf(rankings: Iterable[Sequence[str]], k: int = RRF_K) -> list[tuple[str, float]]:
+    """Reciprocal rank fusion: ``[(code, Σ 1 / (k + rank))]`` over the rankings (rank from 1),
+    highest first, equal scores by code."""
+    scores: dict[str, float] = {}
+    for ranking in rankings:
+        for rank, code in enumerate(ranking, 1):
+            scores[code] = scores.get(code, 0.0) + 1.0 / (k + rank)
+    return sorted(scores.items(), key=lambda item: (-item[1], item[0]))
