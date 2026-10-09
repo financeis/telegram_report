@@ -116,7 +116,7 @@ def _empty_report(model: str) -> dict:
 def _aggregate(results: list[dict], *, model: str, batch_size: int, dry_run: bool) -> dict:
     """The batch report. ``review_reasons`` counts only the four review-reason names
     (not page_image / publisher_suspect notes); a dry run also lists each row (``rows``)."""
-    auto =sum(1 for r in results if r.get("tagging_status") == "auto")
+    auto = sum(1 for r in results if r.get("tagging_status") == "auto")
     review = sum(1 for r in results if r.get("tagging_status") == "review_needed")
     transient = sum(1 for r in results if r.get("error") == "transient")
     deadline = sum(1 for r in results if r.get("error") == "deadline_exceeded")
