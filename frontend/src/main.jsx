@@ -33,6 +33,7 @@ import Coverage, { StockActivity } from "./Coverage";
 import ReviewQueue from "./ReviewQueue";
 import Peers from "./peers/Peers";
 import ThemeSearch from "./peers/ThemeSearch";
+import StatusLine from "./freshness/StatusLine";
 
 const number = (value) =>
   value == null
@@ -530,6 +531,7 @@ function App() {
         </div>
       </aside>
       <main className="main">
+        <StatusLine />
         <header className="topbar">
           <div>
             워크스페이스 <ChevronRight size={13} /> {pageLabel}{" "}
