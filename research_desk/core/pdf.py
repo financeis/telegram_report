@@ -106,4 +106,6 @@ def render_page_png(path: StrPath, page: int, dpi: float = 120) -> bytes:
             raise PageNotFound(f"page {page} is not in the document ({doc.page_count} pages)")
         zoom = dpi / 72
         pixmap = doc[page - 1].get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
-        return pixmap.tobytes("png")
+        png = pixmap.tobytes("png")
+        del pixmap   # free MuPDF's pixmap while the lock is still held
+        return png
