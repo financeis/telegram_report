@@ -4,7 +4,7 @@
 
 ## 처음 설치 (순서대로)
 
-1. 파이썬 가상 환경과 패키지. 수집·분류만 쓰면 `requirements.txt`, 웹앱까지 쓰면 `requirements-workspace.txt`(FastAPI·uvicorn 추가), 테스트·커밋 검사까지 쓰면 `requirements-dev.txt`(pytest 추가, 앞의 둘 포함).
+1. 파이썬 가상 환경과 패키지. 수집·분류·주가 갱신(`prices update`)·`peers inspect`만 쓰면 `requirements.txt`(MongoDB용 pymongo, KIS용 httpx 포함), 웹앱과 유사도 계산(`peers build`)까지 쓰면 `requirements-workspace.txt`(FastAPI·uvicorn 추가 — `peers build`는 실행 중에 리포트 기능을 거쳐 FastAPI를 불러온다), 테스트·커밋 검사까지 쓰면 `requirements-dev.txt`(pytest 추가, 앞의 둘 포함).
    ```powershell
    python -m venv .venv
    .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
@@ -30,8 +30,11 @@
 | `python -m research_desk tag requeue <조건…> [--apply]` | 이미 분류된 `auto`·`review_needed` 행 가운데 조건에 맞는 것을 `pending`으로 되돌림(다시 분류는 평소 백필). 조건 `--unreadable`, `--publisher-not-in-dictionary`, `--publisher-filename-mismatch`, `--publisher-type-mismatch`, `--krx-unmatched` 중 하나 이상. 기본은 미리 보기(아무것도 쓰지 않음), `--apply`면 백업 CSV를 먼저 쓰고 한 트랜잭션으로 되돌림. AI를 부르지 않는다. 아래 "다시 분류 대기" |
 | `python -m research_desk web [--view reports\|market\|review]` | 웹앱을 `http://127.0.0.1:8520/?view=<view>`에서 실행(Ctrl+C로 종료) |
 | `python -m research_desk stocks set-version --as-of YYYY-MM-DD` | 종목표 버전 정보 파일 갱신 |
+| `python -m research_desk prices update` | 종목표 전 종목의 주가를 KIS에서 받아 주가 스냅샷과 실행 기록을 갱신(아래 "매일 주가 갱신"). `--codes 005930,080220`은 그 종목만 받아 계산 결과를 출력하고 아무것도 저장하지 않는 확인용 |
+| `python -m research_desk peers build` | 사업보고서로 회사 프로필·임베딩을 만들고 유사도 계산 결과를 공개(아래 "유사 기업 계산"). `--fiscal-year N`, `--codes …`·`--limit n`(대상 줄이기), `--pilot`(시험 실행: 공개하지 않고 회사마다 비슷한 회사 상위 10 출력) |
+| `python -m research_desk peers inspect` | 회계연도·프로필 버전·상태별 프로필 수와 토큰, 최근 빌드 10개를 JSON으로 |
 
-종료 코드: `collect`는 0 성공 / 1 전체 실패 / 2 일부 실패. `tag`·`stocks`는 0 정상 / 4 준비 문제(아무것도 바꾸지 않았다 — 찍힌 안내대로 고친 뒤 다시 실행한다. 고치지 않고 재시도만 해서는 안 풀린다) / 1 그 밖의 오류. 인자 오류는 모두 2.
+종료 코드: `collect`는 0 성공 / 1 전체 실패 / 2 일부 실패. `tag`·`stocks`·`prices`·`peers`는 0 정상 / 4 준비 문제(아무것도 바꾸지 않았다 — 안내대로 고친 뒤 다시 실행한다. 재시도로는 안 풀린다) / 1 그 밖의 오류. `prices update`는 실행이 `failed`(받지 못한 종목이 20% 초과)여도 1, `peers build`는 `incomplete`·분류 작업 진행 중·다른 빌드 진행 중도 1, `tag requeue --apply`는 이 PC에서 백필·재처리·수집·웹앱이 돌고 있어 거절할 때 1이다(아무것도 바꾸지 않았다 — 그 작업이 끝나거나 끈 뒤 다시 실행한다). 인자 오류는 모두 2.
 
 ## 웹앱 (Research Desk)
 
@@ -41,6 +44,59 @@
 - 서버를 켤 때 `frontend/dist`가 있어야 `/assets`가 연결된다. 빌드 없이 켜면 `/`가 "프론트엔드를 먼저 빌드해 주세요" 503이다 — 빌드 후 서버를 다시 켠다.
 - 한 기능의 준비가 실패하면(DB 설정 없음, 종목표를 못 읽음, 분석 모델 키 없음) 그 기능 화면만 "○○ 기능을 지금 쓸 수 없습니다: 이유"로 막히고 나머지는 동작한다. 빠진 파일을 채우거나 `.env`에 빠진 값을 넣으면 다음 요청에 회복된다. 이미 있던 `.env` 값을 바꾼 것은 서버를 다시 켜야 한다.
 - 검토 되돌리기는 서버 메모리에만 있어서, 서버를 다시 켜면 직전 처리를 되돌릴 수 없다.
+- 유사 기업 탭과 테마 검색은 공개된 유사도 계산 결과(`peers build`가 `done`으로 끝난 빌드)가 있어야 동작한다. 없으면 `유사 기업 기능을 지금 쓸 수 없습니다: 아직 공개된 유사도 계산 결과가 없습니다(…)`. 새 빌드가 `done`이 되면 웹앱을 다시 켜지 않아도 다음 요청부터 쓴다. 테마 검색에는 `OPENAI_API_KEY`도 있어야 한다.
+- 모든 화면 맨 위 상태 줄이 주가·리포트 기준일을 보여 준다. 빨간색이면 문장을 보고 원인을 찾는다: 주가가 밀렸으면 작업 스케줄러의 마지막 실행 결과와 `price_update_runs`의 최근 행, 리포트가 밀렸으면 수집(`collect`)이 멈췄는지와 분류 대기(`tag inspect`의 `pending`). 회색 `자료 기준일 확인 불가`면 DB 설정을 본다.
+
+## 매일 주가 갱신
+
+준비(순서대로 — 앞 단계가 없으면 뒤 단계가 실패한다):
+1. `.env`에 `KIS_APP_KEY`, `KIS_APP_SECRET`(한국투자증권 실전 계정)을 넣는다. 없으면 `prices update`가 4로 멈춘다.
+2. 마이그레이션 008을 적용한다(아래 "DB 마이그레이션 적용"). 적용 전에는 `--codes` 확인 실행도 저장된 스냅샷을 읽다가 표가 없어 1로 끝난다.
+3. KIS 확인(아무것도 저장하지 않는다 — 스냅샷·실행 기록·상태 줄 모두 그대로):
+   ```powershell
+   python -m research_desk prices update --codes 005930,080220
+   ```
+   두 종목의 계산 결과 JSON과 `확인용 실행이라 아무것도 저장하지 않았습니다: …` 한 줄이 나오고 0이면 KIS 접속이 된다. 저장된 스냅샷이 아직 없으면 초과수익률은 비어 나온다(정상). `market_cap`·`traded`·`flags`를 HTS 화면과 한 번 대조한다.
+4. 전체 실행을 한 번 손으로 돌린다: `powershell -File scripts\run-prices.ps1`. 마지막 줄이 `주가 갱신이 끝났습니다.`이고 종료 코드 0이면 된다. 상태 줄의 주가 기준일이 바뀐다.
+5. 윈도우 작업 스케줄러에 등록한다. 기본 작업 폴더(git worktree가 아닌 저장소 폴더)의 루트에서:
+   ```powershell
+   $repo = (Get-Location).Path
+   schtasks /Create /TN "ResearchDesk-prices-update" /SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 18:30 /TR "powershell -NoProfile -ExecutionPolicy Bypass -File $repo\scripts\run-prices.ps1"
+   ```
+   경로에 공백이 있으면 `/TR` 안의 경로를 `\"…\"`로 감싼다. 시각은 사용자의 masterdb 프로젝트의 KIS 수집 시각과 겹치지 않게 고른다(아래 운영 원칙 7). 18:30이 아닌 시각으로 바꾸면 상태 줄의 기준 시각(20:00, `features/freshness/logic.py`의 `CUTOFF`)이 실행이 끝난 뒤인지 확인한다. 확인: `schtasks /Run /TN "ResearchDesk-prices-update"` 뒤 상태 줄과 `schtasks /Query /TN "ResearchDesk-prices-update" /V /FO LIST`의 마지막 결과(0이면 성공, 1 실패, 4 준비 문제).
+
+결과 읽기:
+- 0: `ok`(모두 받음) 또는 `partial`(받지 못한 종목 20% 이하 — 그 종목은 이전 값에 `no_data` 표시).
+- 1: `failed`(20% 초과 — 스냅샷은 하나도 바뀌지 않음), 접근 토큰을 못 받음, 실행 중 오류. 요약 줄과 `price_update_runs`의 `message`(못 받은 종목과 첫 실패 이유)를 본다. 다시 돌리면 처음부터 다시 받는다.
+- 4: 준비 문제. 찍힌 이유대로 고친다.
+- PC가 꺼져 있거나 잠들어 스케줄러가 그 시각을 건너뛰면 실행 기록이 없고, 상태 줄이 그날 20:00부터 빨간색이 된다. 손으로 `scripts\run-prices.ps1`을 돌리면 된다.
+
+## 유사 기업 계산 (연 1회)
+
+준비(모두 갖춘 뒤 시작한다):
+- 마이그레이션 008 적용, `python -m research_desk peers inspect`가 0으로 끝남(표가 보인다).
+- 로컬 MongoDB가 켜져 있고 `FS.A001_v2`(`DART_MONGO_*`)에 그 회계연도 사업보고서가 `parser_version` 0.2.0 이상으로 들어 있음 — 별도 저장소의 DART 수집 프로그램이 채운다.
+- `.env`: 프로필 모델과 재처리 모델의 키(기본 `claude-haiku-5-5` → `ANTHROPIC_API_KEY`, `gpt-5.4` → `OPENAI_API_KEY`), 임베딩용 `OPENAI_API_KEY`.
+- 웹 패키지 설치(`requirements-workspace.txt`). 없으면 분류 진행 확인에서 `ModuleNotFoundError`로 1.
+- 종목표가 버전 정보와 맞음(아니면 4, 분류와 같은 안내).
+- 텔레그램 수집·분류가 따라잡혀 있음 — 리포트 수가 그만큼 정확하다(빌드가 막지는 않지만 화면의 "리포트 없음"이 틀린다).
+- 분류 백필이 돌고 있지 않음(아래 운영 원칙 6).
+
+순서:
+1. 시험 실행: `python -m research_desk peers build --pilot --codes 080220,032580,005930`처럼 몇 곳(또는 `--limit 50`). 화면에는 나오지 않고, 대상 회사마다 회사·부문 유사도 상위 10 표와 요약 JSON이 찍힌다. 이웃 목록이 그럴듯한지, `failed`·`kept_previous`가 없는지 본다. 시험 실행의 프로필은 저장되어 다음 실행이 재사용한다(AI를 다시 부르지 않음).
+   - 동의어는 `research_desk/features/peers/synonyms.yaml`에 더한다(AI를 다시 부르지 않고, 다음 공개 빌드가 반영한다). 프롬프트·응답 모양을 고치는 것은 코드 변경이고, 프로필 버전 기본값(`PEERS_PROFILE_VERSION`)을 함께 올려야 한다 — 다음 빌드가 모든 회사를 다시 추출한다.
+   - 프로필 모델(`LLM_MODEL_PEERS`)은 임시 기본값이다. 모델끼리 비교할 때는 모델마다 `.env`의 `PEERS_PROFILE_VERSION`을 다른 시험용 값(예: `peer-profile@1.0-try-gpt`)으로 두고 같은 회사로 시험 실행한다 — 같은 프로필 버전이면 모델을 바꿔도 저장된 프로필을 재사용해 새 모델이 불리지 않는다. 고른 뒤에는 시험용 값을 지우고 사용자와 정한 모델로 본 실행을 한다.
+2. 비용·시간 보고: 요약 JSON의 `tokens`(입력·출력·임베딩)와 `peers inspect`의 상태별 토큰 합계를 회사 수로 나눠, 전체 대상 회사 수만큼의 토큰·비용·시간을 어림해 사용자에게 보고하고 승인받는다.
+3. 전체 실행: `python -m research_desk peers build`. 회사 수와 모델에 따라 몇 시간이 걸릴 수 있다. 끝에 요약 JSON:
+   - `"status": "done"`(0): 공개됨. 웹앱을 다시 켜지 않아도 다음 요청부터 쓴다.
+   - `"status": "incomplete"`(1): 성공이 대상의 95% 미만. 실패 원인(`peers inspect`, 빌드 기록의 `message`)을 본 뒤 그대로 다시 실행하면 성공한 회사는 재사용하고 나머지만 한다.
+   - Ctrl+C·오류(1): 빌드는 `failed`로 닫힌다. 다시 실행하면 이미 만든 프로필을 재사용한다.
+4. 화면 확인: 제주반도체(080220) 기업 화면의 `유사 기업` 탭, `테마로 기업 찾기`에서 "레거시 DRAM", 상태 줄.
+
+주의:
+- 시험은 늘 `--pilot`으로 한다. `--codes`·`--limit`만 주고 `--pilot`을 빼면, 줄인 대상의 95%가 성공하는 순간 그 빌드가 공개(`done`)되어 화면이 바로 그것을 쓴다(기준 표시가 `FY… · n/n곳`으로 작게 보인다). 백분위표·용어표는 그 버전의 `ok` 프로필 전체로 계산되므로 결과가 틀리지는 않지만, 공개 빌드 보존 3개 중 하나를 차지한다.
+- 빌드는 한 번에 하나다. 다른 빌드가 6시간 안에 진행했으면 새 실행은 1로 끝난다. 프로세스가 죽어 `running`으로 남은 빌드는 6시간이 지나면 다음 실행이 `failed`로 정리한다.
+- 같은 회계연도·프로필 버전으로 빌드가 도는 동안, 다시 추출된 회사(보고서 정정, 파서 버전 변경)는 그 빌드가 끝날 때까지 지금 공개된 빌드의 화면에서 "이 종목은 유사 기업 자료가 없습니다."로 보일 수 있다.
 
 ## 운영 원칙 (위반 금지)
 
@@ -85,6 +141,15 @@ powershell -File scripts\run-batches.ps1 -Iterations N -BatchSize 10
   - 잠금 뒤 재측정: 2026-10-10 재분류 백필(첫 묶음의 앞부분)에서 44번 실행 중 0번 — 2026-10-09 백필의 937번 중 131번보다 크게 줄었다. 실행 수가 아직 적으니 남은 백필에서도 센다.
 - `tag run`·`tag escalate` 시작 때 LangGraph의 `LangChainPendingDeprecationWarning` — 기능 영향 없음.
 
+### 6. 유사도 계산과 분류 백필을 겹쳐 돌리지 않는다
+- 둘 다 AI를 동시 2개로 부른다(`PEERS_MAX_CONCURRENT_LLM`, `MAX_CONCURRENT_LLM`). 겹치면 4개가 되어 분당 토큰 한도를 넘는다. `PEERS_MAX_CONCURRENT_LLM`도 원칙 1과 같은 절차 없이 올리지 않는다.
+- `peers build`는 분류 작업이 진행 중이면 시작하지 않는다(종료 코드 1, `분류 작업이 진행 중이라…`). 그러나 이 확인은 정상 `tag run`이 지금 가져간 행만 본다. 반복 분류 스크립트의 배치 사이(다음 배치가 뜨는 몇 초)나 `tag escalate`·`tag run --row-ids`가 도는 중이면 통과한다. 백필 창이 열려 있으면 빌드를 시작하지 않는다.
+- 반대 방향은 자동으로 막지 않는다. 유사도 계산이 도는 동안(`peers inspect`의 `builds`에 `running`이 있으면) 분류 백필을 시작하지 않는다.
+
+### 7. KIS 수집은 masterdb와 같은 시간에 돌리지 않는다
+- `KIS_APP_KEY`는 사용자의 다른 프로젝트(masterdb)와 같은 키다. 같은 키로는 초당 호출 한도와 접근 토큰 발급(1분에 한 번쯤)을 나눠 쓴다. 겹치면 토큰을 못 받아 `prices update` 실행 전체가 `failed`(1)로 끝나거나, 한도 초과 재시도가 늘어 실패 종목이 생긴다.
+- 작업 스케줄러 시각을 정하거나 손으로 돌리기 전에 masterdb 쪽 KIS 수집 시각을 확인한다. 토큰 실패 직후 다시 돌릴 때는 1분 이상 기다린다.
+
 ## 모니터링
 
 ```powershell
@@ -93,7 +158,12 @@ python -m research_desk tag inspect
 
 # LLM 호출 오류 기록 (LangSmith — 로그인 필요, 프로젝트 이름은 .env의 LANGSMITH_PROJECT, 운영은 telegram_report)
 langsmith trace list --project telegram_report --error --last-n-minutes 30
+
+# 유사도 계산: 회계연도·프로필 버전·상태별 프로필 수와 토큰, 최근 빌드 10개(상태·대상·성공·실패·시각·메시지)
+python -m research_desk peers inspect
 ```
+
+- 예약 작업은 웹앱의 상태 줄로 본다(주가 기준일·리포트 기준일, 밀리면 빨간색과 이유). 주가 실행의 자세한 기록은 Supabase SQL 편집기에서 `select * from price_update_runs order by started_at desc limit 5;`(상태·성공·실패 수·메시지).
 
 **정상 기준 (2026-05, 이전 분류 모델 기준):**
 - 신뢰도: high ≈79% / medium ≈18% / low ≈3%
@@ -116,6 +186,9 @@ langsmith trace list --project telegram_report --error --last-n-minutes 30
 | 태깅 | `LLM_MODEL_DEFAULT` | `claude-haiku-5-5` | Anthropic (`ANTHROPIC_API_KEY`) |
 | 태깅 재처리(`tag escalate`) | `LLM_MODEL_ESCALATION` | `gpt-5.4` | OpenAI (`OPENAI_API_KEY`) |
 | 재무 분석·리포트 비교(웹앱) | `LLM_MODEL_PHASE2` | `gpt-6-luna` (운영 `.env`는 `codex:gpt-6-luna`) | `codex:` 접두사 → 로컬 `codex exec` |
+| 유사 기업 프로필 추출(`peers build`) | `LLM_MODEL_PEERS` | `claude-haiku-5-5` (임시 — 시험 실행 뒤 사용자와 정함) | 모델 이름이 정함 |
+| 프로필 재추출(근거율 0.8 미만일 때 한 번) | `LLM_MODEL_PEERS_ESCALATION` | `gpt-5.4` | 모델 이름이 정함 |
+| 임베딩(`peers build`, 웹 테마 검색) | `PEERS_EMBED_MODEL` | `text-embedding-3-large` (1536차원으로 받음) | OpenAI (`OPENAI_API_KEY`) |
 
 - **모델 이름이 공급자를 정한다:** `claude-*` → Anthropic API, `codex:<모델>` → 로컬 Codex CLI(ChatGPT 로그인 한도, API 키 불필요), 그 밖 → OpenAI API. 바꾸거나 되돌릴 때는 `.env`의 모델 이름만 고치고 워커·웹앱을 다시 켠다. 옛 이름 `OPENAI_MODEL_*`도 `LLM_MODEL_*`이 없을 때 읽는다.
 - 분류 명령은 시작할 때 **실제로 쓸 모델**의 키만 확인한다(`tag run`은 태깅 모델, `tag escalate`는 재처리 모델, `--model`을 주면 그 모델). `tag inspect`·`tag reset-worker`·`tag requeue`는 키가 필요 없다.
@@ -126,6 +199,8 @@ langsmith trace list --project telegram_report --error --last-n-minutes 30
 - 사고 깊이: Claude는 `ANTHROPIC_EFFORT`(기본 `medium`), Codex는 `CODEX_REASONING_EFFORT`(기본 `high`. `medium`은 빠르지만 재무 지표가 약 40% 적게 나온다). `codex` 실행 파일 위치는 `CODEX_BIN`(없으면 PATH).
 - Codex 로그인이 만료되면 `codex login`으로 다시 로그인한다. 사용 한도를 넘으면 한도가 풀릴 때까지 기다리거나, `.env`의 `LLM_MODEL_PHASE2`를 API 모델(`gpt-6-luna`)로 바꾸고 웹앱을 다시 켠다.
 - 모델을 바꿔도 저장된 분석은 원래 모델 정보를 유지한 채 재사용된다. 모델 변경이 일괄 재분석을 일으키지 않는다.
+- 유사 기업: `peers build`는 시작할 때 프로필 모델과 재처리 모델 둘 다의 키(codex 모델이면 CLI)와 `OPENAI_API_KEY`를 확인한다. 프로필 모델을 바꿔도 이미 `ok`인 프로필은 재사용되므로(같은 보고서·파서 버전), 새 모델로 다시 만들려면 프로필 버전을 올린다. 임베딩 모델은 1536차원을 낼 수 있는 OpenAI 모델(`text-embedding-3-small`·`-large`)만 쓴다. 바꾸면 다음 빌드가 임베딩만 새로 만들고(AI 추출 없음), 웹의 테마 검색은 공개 빌드에 기록된 모델을 쓴다.
+- 프로필 추출은 Claude 모델에서도 응답 모양을 형식 강제(grammar)로 받는다(`constrained=True`). 재무 분석처럼 스키마가 커서 거절될 수 있는지는 첫 시험 실행에서 확인한다.
 
 ## 설정 목록 (`.env`)
 
@@ -138,12 +213,12 @@ langsmith trace list --project telegram_report --error --last-n-minutes 30
 | `INITIAL_CUTOFF_DAYS` | collect | 30 | DB가 비어 있을 때 첫 실행이 거슬러 가는 날 수 |
 | `MAX_CONCURRENT_DOWNLOADS` | collect | 4 | 동시 다운로드 수. 재시도와 새 수집이 한 한도를 나눠 쓴다. FloodWait 경고가 없을 때 백필에서 8까지 |
 | `LOG_LEVEL` | collect | INFO | `-v`면 DEBUG |
-| `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` | collect(필수), 웹의 DB 기능 | — | 없으면 웹의 리포트·커버리지·검토·비교가 사용 불가 |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` | collect·prices update·peers build·peers inspect(필수, 없으면 `prices`·`peers`는 4), 웹의 DB 기능 | — | 없으면 웹의 리포트·커버리지·검토·비교·유사 기업·상태 줄이 사용 불가 |
 | `SUPABASE_DB_URL` | 모든 `tag` 명령 | 필수 | Postgres 직접 연결 주소. 없으면 `SUPABASE_DB_URL is required`, 4 |
 | `STORAGE_BASE_DIR` | collect, tag, web | `./reports` | PDF 저장 폴더. 세 단계가 같은 값을 써야 한다 |
-| `KRX_CSV_PATH` | tag run/escalate, web, stocks set-version | `docs/stock_data/KRX_stocks_data.csv` | 종목표. 버전 정보 파일은 같은 폴더의 `<이름>.version.json` |
+| `KRX_CSV_PATH` | tag run/escalate, web, stocks set-version, prices update, peers build | `docs/stock_data/KRX_stocks_data.csv` | 종목표. 버전 정보 파일은 같은 폴더의 `<이름>.version.json`. 버전이 안 맞으면 `tag run/escalate`·`peers build`는 4, `prices update`와 웹은 그대로 동작 |
 | `LLM_MODEL_DEFAULT` / `LLM_MODEL_ESCALATION` / `LLM_MODEL_PHASE2` | tag run / tag escalate / 웹 분석·비교 | 위 모델 표 | 옛 이름 `OPENAI_MODEL_*`도 읽음 |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | 모델 이름이 정한 공급자 | 쓰는 공급자 것만 | |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | 모델 이름이 정한 공급자 | 쓰는 공급자 것만 | 유사 기업 기능(`peers build`의 임베딩, 웹 테마 검색)은 모델과 상관없이 `OPENAI_API_KEY`가 필요하다 |
 | `ANTHROPIC_EFFORT` / `CODEX_REASONING_EFFORT` / `CODEX_BIN` | AI 호출 | medium / high / PATH의 codex | |
 | `MAX_CONCURRENT_LLM` | tag | **2** | 위 운영 원칙 1 |
 | `TAGGER_BATCH_SIZE_DEFAULT` | tag | **10** | 위 운영 원칙 2 |
@@ -152,6 +227,18 @@ langsmith trace list --project telegram_report --error --last-n-minutes 30
 | `PHASE2_MAX_INPUT_TOKENS` | 웹 분석 | 30000 | 넣을 PDF 글자의 토큰 어림 한도(글자 수 ÷ 3) |
 | `PHASE2_SUMMARY_VERSION` | 웹 분석 | `llm-summary@1.0` | 화면에 보일 분석 결과 버전. 바꾸면 기존 분석이 화면에서 사라진다 |
 | `LANGSMITH_TRACING`, `LANGSMITH_API_KEY`, `LANGSMITH_PROJECT`, `LANGSMITH_ENDPOINT` | AI 호출 기록 | 선택 | `LANGSMITH_TRACING=true`이고 키가 있으면 LangGraph 실행과 LLM 호출을 LangSmith에 기록 |
+| `KIS_APP_KEY`, `KIS_APP_SECRET` | prices update | 필수(없으면 4) | 한국투자증권 Open API 실전 계정의 앱키·시크릿. 사용자의 masterdb 프로젝트와 같은 키다(위 운영 원칙 7) |
+| `KIS_BASE_URL` | prices update | `https://openapi.koreainvestment.com:9443` | KIS 실전 서비스 주소 |
+| `PRICES_MAX_CALLS_PER_SEC` | prices update | 10 | KIS 호출을 1초에 몇 번까지 시작할지(토큰 요청 포함). 0보다 큰 수가 아니면 파이썬 오류로 1 |
+| `LLM_MODEL_PEERS` / `LLM_MODEL_PEERS_ESCALATION` | peers build | `claude-haiku-5-5` / `gpt-5.4` | 프로필 추출 모델 / 근거율 0.8 미만일 때 한 번 더 추출할 모델(위 모델 표). 옛 이름 `OPENAI_MODEL_PEERS*`도 읽음 |
+| `PEERS_EMBED_MODEL` | peers build | `text-embedding-3-large` | 임베딩 모델. 1536차원을 낼 수 있는 OpenAI 모델만. 웹 테마 검색은 이 값이 아니라 공개 빌드에 기록된 모델을 쓴다 |
+| `PEERS_PROFILE_VERSION` | peers build | `peer-profile@1.0` | 프로필의 키. 바꾸면 다음 빌드가 모든 회사를 새로 추출한다(AI 비용). 화면은 공개 빌드의 버전을 따른다 |
+| `PEERS_FISCAL_YEAR` | peers build | 2025 | `--fiscal-year`가 없을 때의 회계연도 |
+| `PEERS_MAX_CONCURRENT_LLM` | peers build | **2** | 빌드 중 AI 동시 호출. 위 운영 원칙 6 |
+| `PEERS_PER_COMPANY_TIMEOUT_S` | peers build | 120 | 회사 하나의 추출(재추출 포함) 시간 한도(초). 넘으면 그 회사는 실패 |
+| `DART_MONGO_URL` / `DART_MONGO_DB` / `DART_MONGO_COLLECTION` | peers build | `mongodb://localhost:27017/` / `FS` / `A001_v2` | 사업보고서 텍스트 MongoDB(읽기만). 별도 저장소의 DART 수집 프로그램이 채운다. 주소에 비밀번호가 들어갈 수 있다 |
+
+숫자 설정(`PRICES_*`, `PEERS_*`)이 숫자가 아니면 그 명령은 준비 문제(4)가 아니라 파이썬 오류(1)로 끝난다.
 
 `.env`에 남아 있는 `HEARTBEAT_ENABLED`·`HEARTBEAT_INTERVAL_S`·`PHASE2_MAX_CONCURRENT`는 아무도 읽지 않는다. 지워도 된다.
 
@@ -169,7 +256,7 @@ langsmith trace list --project telegram_report --error --last-n-minutes 30
 
 ### 발행처 사전을 고친 뒤 (순서대로)
 1. **백필이 도는 동안에는 사전(`research_desk/tagger/vocabulary/publishers.yaml`)을 고치지 않는다.** 사전 원문이 AI 요청에 그대로 들어가서, 고치는 순간 같은 백필 안에서 다른 요청이 섞인다. 사전을 고쳐 커밋한 뒤 다음 단계로 간다.
-2. **백필·재처리·수집·웹앱을 끈다.** `--apply`가 이 PC의 프로세스 목록을 보고 하나라도 돌고 있으면 아무것도 바꾸지 않고 4로 멈추며 끌 것과 PID를 알려 준다. 사각지대: 관리자 권한으로 띄운 프로세스는 명령줄이 보이지 않아 찾지 못한다 — 백필·웹앱은 이 문서대로 일반 터미널에서 띄우고, 관리자 창에서 띄운 것이 있으면 직접 끈다.
+2. **백필·재처리·수집·웹앱을 끈다.** `--apply`가 이 PC의 프로세스 목록을 보고 하나라도 돌고 있으면 아무것도 바꾸지 않고 1로 멈추며 끌 것과 PID를 알려 준다(목록 자체를 못 읽으면 4). 사각지대: 관리자 권한으로 띄운 프로세스는 명령줄이 보이지 않아 찾지 못한다 — 백필·웹앱은 이 문서대로 일반 터미널에서 띄우고, 관리자 창에서 띄운 것이 있으면 직접 끈다.
 3. **미리 보기.** 고친 내용에 맞는 조건을 고른다: 이름을 바꾸거나 뺐으면 `--publisher-not-in-dictionary`, 구역(종류)을 옮겼으면 `--publisher-type-mismatch`, 별칭·파일 이름 표기를 더했으면 `--publisher-filename-mismatch`. 그림 경로가 생기기 전에 못 읽음으로 간 행은 `--unreadable`.
    ```powershell
    python -m research_desk tag requeue --publisher-not-in-dictionary --publisher-filename-mismatch --publisher-type-mismatch
@@ -177,23 +264,27 @@ langsmith trace list --project telegram_report --error --last-n-minutes 30
    JSON의 `selected`(조건별 건수), `total`(되돌릴 행 수), `publisher_values`(그 행들의 지금 발행처 값), `unknown_filename_tags`(사전에 없는 파일 이름 표기 — 사전 보충 후보)를 본다. `--unreadable`을 골랐다면 `skipped.unreadable_no_page`가 지나치게 크지 않은지 본다(크면 `STORAGE_BASE_DIR`가 틀렸을 수 있다).
 4. **적용.** 같은 조건에 `--apply`를 붙인다. 대상을 다시 고르고, 바뀔 행을 `backups\requeue\requeue-YYYYMMDD-HHMMSS.csv`에 먼저 쓴 뒤, 한 트랜잭션에서 되돌리고 건수를 확인한다. 보고의 `requeued`(되돌린 수)와 `backup_file`(백업 위치)을 기록해 둔다. `requeued`가 `total`보다 작으면 그사이 바뀐 행이 빠진 것이다.
 5. **백필.** `powershell -File scripts\run-batches.ps1 -Iterations <남은 대기 건수 ÷ 10 올림> -BatchSize 10`. 되돌린 행은 먼저 수집된 순서로 잡혀 새 리포트보다 먼저 처리된다. 다시 분류될 때까지 그 리포트는 웹 목록에서 빠진다.
-6. **(필요하면) 저장된 비교 비우기.** 발행처가 바뀐 리포트의 저장된 비교 해석문은 옛 발행처 판정(같은 증권사/다른 증권사)으로 쓰인 글이고, 저절로 지워지지 않는다(`tag requeue`는 분석 결과 표를 건드리지 않는다). 비우려면 백업 CSV와 지금 값을 비교해 발행처가 바뀐 리포트를 고르고, 그 리포트가 `report_id` 또는 `prev_report_id`인 `report_summaries` 행의 비교 칸 네 개(`prev_report_id`, `prev_match_type`, `diff_narrative`, `comparison_details`)만 `docs/engineering-notes.md`의 "운영 DB 데이터 고치기" 점검표대로(백업 → 한 트랜잭션 → 바뀐 행 수 확인 → 커밋) NULL로 비운다. 분석 결과의 다른 칸은 건드리지 않는다. 비교 버튼을 다시 누르면 새로 만들어진다.
+6. **(필요하면) 저장된 비교 비우기.** 발행처가 바뀐 리포트의 저장된 비교 해석문은 옛 발행처 판정(같은 증권사/다른 증권사)으로 쓰인 글이고, 저절로 지워지지 않는다(`tag requeue`는 분석 결과 표를 건드리지 않는다). 비우려면 백업 CSV와 지금 값을 비교해 발행처가 바뀐 리포트를 고르고, 그 리포트가 `report_id` 또는 `prev_report_id`인 `report_summaries` 행의 비교 칸 네 개(`prev_report_id`, `prev_match_type`, `diff_narrative`, `comparison_details`)만 운영 데이터 고치기 순서대로(백업 → 한 트랜잭션 → 바뀐 행 수 확인 → 커밋) NULL로 비운다. 분석 결과의 다른 칸은 건드리지 않는다. 비교 버튼을 다시 누르면 새로 만들어진다.
 
 ### 알아 둘 것
 - 백업 폴더 `backups/requeue/`는 저장소 안에 있지만 git이 무시한다(`.gitignore`의 `/backups/`). 커밋하지 않는다. 백업은 기록용이고, 백업에서 되돌리는 명령은 없다. 대상이 0건이면 백업 파일을 만들지 않는다.
 - 한 번 돌린 뒤 같은 조건으로 또 돌려도 같은 행이 계속 되돌려지지 않는다: 그림을 만들 수 없는 행은 `--unreadable`이 고르지 않고, 의심 표시가 이미 붙은 행과 못 읽음·거부 행은 `--publisher-filename-mismatch`가 고르지 않는다.
 - 사람이 승인한 행은 되돌리지 않으므로 사전에서 이름이 바뀌거나 빠진 옛 발행처(예: `DB금융투자`, `KIRS`, `미래대우증권`)를 그대로 가진다.
-- 실패할 때: 4(준비 문제)는 아무것도 바꾸지 않았으니 안내대로 고친 뒤 다시 실행한다. 1은 stderr 한 줄로 이유를 알리고, 백업 실패와 건수 불일치는 아무것도 바꾸지 않은 상태다.
+- 실패할 때: 4(준비 문제)는 아무것도 바꾸지 않았으니 안내대로 고친 뒤 다시 실행한다. 1은 stderr 한 줄로 이유를 알린다 — 실행 중인 작업 때문에 거절했을 때, 백업 실패, 건수 불일치는 모두 아무것도 바꾸지 않은 상태다.
 
 ## DB 마이그레이션 적용
 
 - `migrations/NNN_*.sql`을 Supabase SQL 편집기나 직접 연결로 **한 번** 실행한다. 자동 적용 장치는 없다.
 - 데이터를 바꾸는 파일(예: `007_normalize_taxonomy_version.sql`)은 `BEGIN`/`COMMIT` 없이 쓰여 있다. 적용할 때 반복 분류·수집·웹앱을 멈추고, 바뀔 행을 백업한 뒤, 트랜잭션 안에서 실행하고 바뀐 행 수를 확인한 다음 커밋한다.
 - 001~006은 표 구조를 만들고 바꾸는 파일이다(003은 v1 분류 결과도 모두 지운다). 파일 안에 트랜잭션이 들어 있는 것도 있으니 그대로 실행하고, 이미 적용한 DB에 다시 돌리지 않는다.
+- 008(`008_peers_prices_freshness.sql`)은 주가 표 두 개, 유사 기업 표 다섯 개, 벡터 탐색 함수 두 개를 만든다. 데이터는 바꾸지 않고 다시 실행해도 깨지지 않는다(멈출 작업도, 백업할 행도 없다).
+  1. 먼저 SQL 편집기에서 pgvector 확장의 위치를 본다: `select extnamespace::regnamespace from pg_extension where extname = 'vector';`. 결과가 없거나 `extensions`면 적용한다. `public`이면 적용하지 않고 사용자와 정한다 — 008의 표와 함수가 `extensions.vector` 타입을 써서 실패한다.
+  2. 파일 전체를 한 번 실행한다(맨 앞의 확장 만들기 뒤는 한 트랜잭션이고, 끝에서 PostgREST에 표를 다시 읽게 한다).
+  3. 확인: `python -m research_desk peers inspect`가 빈 목록(`"profiles": []`, `"builds": []`)을 찍고 0으로 끝나면 표가 REST로 보인다.
 
 ## 테스트
 
 ```powershell
 .venv\Scripts\python.exe -m pytest
 ```
-`research_desk/` 아래 테스트만 모은다(구조 검사 포함). DB·AI·텔레그램에 접속하지 않고 `.env`를 읽지 않는다. 커밋 검사가 같은 것을 돌린다. 파이프로 결과를 받아 읽을 때는 `$env:PYTHONIOENCODING='utf-8'`을 먼저 둔다(한국어 메시지가 `\uXXXX`로 깨지지 않게).
+`research_desk/` 아래 테스트만 모은다(구조 검사 포함). DB·AI·텔레그램·MongoDB·KIS에 접속하지 않고 `.env`를 읽지 않는다. 커밋 검사가 같은 것을 돌린다. 파이프로 결과를 받아 읽을 때는 `$env:PYTHONIOENCODING='utf-8'`을 먼저 둔다(한국어 메시지가 `\uXXXX`로 깨지지 않게).

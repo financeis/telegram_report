@@ -7,15 +7,29 @@ Every command is registered here, in one place, by its area's registration funct
 - ``web``: ``research_desk.web.server.register``
 - ``stocks set-version --as-of YYYY-MM-DD``: ``register_stocks`` below (core settings and
   ``domain.stocks``)
+- ``prices update [--codes …]``: the prices window's ``register_jobs``
+- ``peers build [--fiscal-year N] [--codes …] [--limit n] [--pilot]`` / ``peers inspect``: the
+  peers window's ``register_jobs``
+
+The help lists them in that order: ``{collect,tag,web,stocks,prices,peers}``.
 
 A new background command is its area's ``register`` function plus one line in ``build_parser``.
+A feature's command comes through its window (``from research_desk.features.<feature> import
+register_jobs``) plus that one line (spec §13). Such a window binds only names that load no
+FastAPI; a web router it has is handed out by its ``web_router()`` when the web app is made.
+
+Every command, ``--help`` and a run without a command import this module, and with it every
+registration module and those windows. What a command needs when it runs is imported inside the
+command function: ``python -m research_desk`` without a command loads neither FastAPI, uvicorn,
+``research_desk.web.app``, LangGraph, pymongo nor the peers web side
+(``research_desk.features.peers.router`` / ``.service``) — ``tests/test_cli.py`` checks it.
 
 ``main(argv)`` parses the arguments and returns the exit code of the command's ``func(args)``.
 No command, an unknown command or bad arguments: argparse's usage message and exit code 2.
 ``--help`` on any command: 0. Exit code 4 means "not ready": a problem that stays until a setting
 or file is fixed (a missing setting, a stock list that does not match its version); nothing was
 changed. A state that clears by waiting (another job running, e.g. ``tag requeue --apply`` while a
-backfill runs) is 1, not 4. ``tag`` and ``stocks`` use 4.
+backfill runs) is 1, not 4. ``tag``, ``stocks``, ``prices`` and ``peers`` use 4.
 
 ``stocks set-version`` (spec §8) records the stock list's content hash under the version
 ``KRX@<as-of>``, the as-of date of the stock data. It re-reads ``.env``, takes ``KRX_CSV_PATH``
@@ -35,6 +49,8 @@ from typing import Optional, Sequence
 from research_desk.collector.cli import register as register_collect
 from research_desk.core import settings
 from research_desk.domain.stocks import StockListError, write_version
+from research_desk.features.peers import register_jobs as register_peers
+from research_desk.features.prices import register_jobs as register_prices
 from research_desk.tagger.cli import register as register_tag
 from research_desk.web.server import register as register_web
 
@@ -77,6 +93,8 @@ def build_parser() -> argparse.ArgumentParser:
     register_tag(commands)
     register_web(commands)
     register_stocks(commands)
+    register_prices(commands)
+    register_peers(commands)
     return parser
 
 

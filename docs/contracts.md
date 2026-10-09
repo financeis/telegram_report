@@ -1,6 +1,6 @@
 # 바깥과의 약속
 
-이 시스템의 소비자는 둘이다: 화면(`frontend/`, 브라우저)이 쓰는 **웹 API**, 그리고 운영자와 `scripts/*.ps1`이 쓰는 **명령**. 아래 주소·요청 값·응답 키·상태 코드·문구는 화면과 스크립트가 그대로 의존한다. 바꾸려면 소비자 쪽을 같이 바꾼다.
+이 시스템의 소비자는 둘이다: 화면(`frontend/`, 브라우저)이 쓰는 **웹 API**, 그리고 운영자·`scripts/*.ps1`·윈도우 작업 스케줄러가 쓰는 **명령**. 아래 주소·요청 값·응답 키·상태 코드·문구는 화면과 스크립트가 그대로 의존한다. 바꾸려면 소비자 쪽을 같이 바꾼다.
 
 ## 웹 API — 공통 약속
 
@@ -9,7 +9,7 @@
 - **오류 모양.** 허용 호스트 거절(400)만 본문이 일반 글자 `Invalid host header`이고, 나머지 오류 응답 본문은 언제나 `{"detail": ...}`이다.
   - 업무 오류(404·409·422)는 `detail`이 아래 각 주소에 적은 고정 한국어 문장이다.
   - 요청 값 형식·범위 오류(정수가 아닌 id, 범위 밖 `days`, 정해진 값이 아닌 `unit`·`action` 등)는 422이고 `detail`은 FastAPI 기본 형식(오류 항목 목록)이다.
-  - **기능 사용 불가:** 한 기능이 준비에 실패하면 그 기능의 주소만 503 `{"detail": "<기능 이름> 기능을 지금 쓸 수 없습니다: <이유>"}`. 기능 이름은 `기업 목록`, `리포트`, `분석`, `비교`, `커버리지`, `검토` 중 하나다. 다른 기능의 공개 창구를 거쳐 전해진 실패는 실패한 기능의 이름으로 보인다(예: 커버리지 화면에서 `리포트 기능을 지금 쓸 수 없습니다: …`). 이유에는 경로·키 값·오류 추적이 없다. 원인을 고치면 다음 요청에서 회복한다.
+  - **기능 사용 불가:** 한 기능이 준비에 실패하면 그 기능의 주소만 503 `{"detail": "<기능 이름> 기능을 지금 쓸 수 없습니다: <이유>"}`. 기능 이름은 `기업 목록`, `리포트`, `분석`, `비교`, `커버리지`, `검토`, `주가`, `유사 기업` 중 하나다. 다른 기능의 공개 창구를 거쳐 전해진 실패는 실패한 기능의 이름으로 보인다(예: 커버리지 화면에서 `리포트 기능을 지금 쓸 수 없습니다: …`, 상태 줄 주소에서 `주가 기능을 지금 쓸 수 없습니다: …`). 이유에는 경로·키 값·오류 추적이 없다. 원인을 고치면 다음 요청에서 회복한다.
   - **예기치 못한 오류:** 503 `{"detail": "데이터를 불러오거나 분석하지 못했습니다. 연결 상태를 확인하고 다시 시도해 주세요."}`.
 - **리포트 공개 모양**(여러 응답이 쓰는 리포트 객체): 키는 `id, title, file_name, published_at, publisher, report_type, stock_codes, company_names, sectors_major, sectors_minor, products, summary, pdf_url`. `pdf_url`은 `/api/reports/{id}/pdf`. `summary`는 그 리포트의 현재 버전(`llm-summary@1.0`) 분석 결과 객체이거나 `null`. `file_path`·저장 경로·키는 절대 들어가지 않는다.
 - **종목 코드.** 주소의 `{code}`는 종목표 조회(기업 정보, 관심 기업 존재 확인)에서만 6자리가 되도록 앞을 0으로 채운다. DB 조회에는 받은 그대로 쓴다.
@@ -76,8 +76,52 @@
 ### `POST /api/review/undo/{token}` (검토)
 → `{"report_id": id}`. 오류: 409 `되돌릴 작업이 없거나 서버가 재시작되었습니다.` / 409 `후속 작업이 처리한 보고서라 되돌릴 수 없습니다.` / 409 `후속 작업이 시작되어 되돌릴 수 없습니다.` / 행이 사라짐 404 `검토할 보고서가 없습니다.`
 
+### `GET /api/stocks/{code}/peers?window=1w|1m|3m&segment=<번호>` (유사 기업)
+인자: `code`는 `^[0-9A-Z]{6}$`만 받는다(앞에 0을 채우지 않는다 — `5930`은 422). `window`는 `1w`|`1m`|`3m`(기본 `1m`). `segment`는 0 이상 정수(기본: 시드 사업부문 중 매출 비중이 가장 큰 것, 비중 미상은 뒤).
+확인 순서(앞에서 막히면 뒤는 없다): 형식 오류 422(FastAPI 기본 형식, 아무것도 준비하지 않음) → 준비 실패 503 → 공개된 유사도 계산 결과 없음 503 → 종목표에 없는 코드 404 `종목을 찾을 수 없습니다.` → 공개 빌드에 시드의 프로필이나 회사 임베딩이 없음 404 `이 종목은 유사 기업 자료가 없습니다.` → 시드에 없는 부문 번호 422 `그 사업부문이 없습니다.`
+503 이유(`유사 기업 기능을 지금 쓸 수 없습니다: …`): `DB 접속 설정(SUPABASE_URL, SUPABASE_SERVICE_KEY)이 없습니다`, `종목표 파일을 읽을 수 없습니다`, `아직 공개된 유사도 계산 결과가 없습니다(python -m research_desk peers build)`. 리포트 수·주가를 읽다 난 준비 실패는 `리포트`·`주가` 이름 그대로 온다. 주가 표가 비어 있는 것은 실패가 아니다(`price: null`).
+→
+```
+{"seed": {"code", "name", "market", "sector_minor",
+          "profile": {"niche_industry", "summary", "keywords": [...],
+                      "segments": [{"no", "name", "revenue_share_pct", "products": [...]}]},
+          "is_holding", "is_financial", "info_quality", "coverage", "price"},
+ "basis": {"fiscal_year", "build_id", "built_at", "companies_profiled", "companies_eligible"},
+ "window", "segment": {"no", "name", "revenue_share_pct"} | null,
+ "price_as_of", "seed_excess_pct", "judgeable",
+ "peers": [{"rank", "code", "name", "market", "sector_minor", "one_line", "tier",
+            "company_match": {"similarity", "percentile", "tier"} | null,
+            "segment_match": {"segment", "revenue_share_pct", "similarity", "percentile", "tier"} | null,
+            "segments": [{"no", "name", "revenue_share_pct"}],
+            "shared_terms": [{"term", "companies"}],
+            "same_industry", "is_holding", "is_financial", "info_quality",
+            "coverage", "price", "reaction", "candidate", "not_candidate_reasons": [...]}]}
+```
+- `coverage` = `{"stock_reports", "sector_mentions", "other_research", "last_stock_report_date": "YYYY-MM-DD"|null, "brokers", "label": "none"|"few"|"covered"}`(최근 365일).
+- `price` = `{"as_of", "close", "market_cap", "avg_value_20d", "traded", "returns": {"1w", "1m", "3m"}, "excess": {"1w", "1m", "3m"}, "flags": [...]}`, 그 종목 스냅샷이 없으면 `null`. 수익률·초과수익률은 % 실수(12.3 = +12.3%), 금액은 원 단위 정수, 모르는 값은 `null`. `flags`의 값은 `no_data`, `short_history`, `halted`, `admin_issue`.
+- `tier`: `very_high`|`high`|`related`. `reaction`: `none`|`partial`|`reacted`|`undetermined`. `not_candidate_reasons`: `has_reports`, `reacted`, `undetermined`, `not_traded`, `low_liquidity`, `holding`, `weak_similarity` 중 해당하는 것을 이 순서로, 후보면 `[]`.
+- `revenue_share_pct`가 -1이면 비중 미상. `one_line`은 틈새 업종, 없으면 요약(둘 다 없으면 `""`). `same_industry`는 종목표 `산업명(중)`이 같으면 true, 다르면 false, 한쪽이 비면 null. 피어의 `segments`는 그 피어의 사업부문 전체(매출 비중 순). `shared_terms`는 최대 5개.
+- `segment`는 고른 시드 부문이고, 시드에 부문이 없으면 null이다(그때 모든 `segment_match`도 null).
+- `price_as_of`는 시드 스냅샷의 기준일, `seed_excess_pct`는 고른 기간의 시드 초과수익률(%p)이고 없으면 각각 null. `judgeable`은 `seed_excess_pct`가 10 이상일 때만 true다. false면 모든 피어의 `reaction`이 `undetermined`이고, 화면은 `seed_excess_pct`가 있으면 `시드가 시장보다 10%p 이상 오르지 않아 반응을 판정하지 않습니다`를, null이면 `기준 회사의 주가 자료가 없어 반응을 판정하지 않습니다`를 보여 준다.
+- `basis`: 응답에 쓴 공개 빌드. `built_at`은 그 빌드의 끝 시각, `companies_eligible`·`companies_profiled`는 그 빌드의 대상·성공 회사 수.
+- `peers`는 순위 순 최대 50개이고 비어 있을 수 있다. 새 빌드가 공개되면 서버를 다시 켜지 않아도 다음 요청부터 그 빌드를 쓴다.
+- AI를 부르지 않는다.
+
+### `POST /api/peers/search` 본문 `{"q": 문자열, "window": "1w"|"1m"|"3m", "limit": 정수}` (유사 기업)
+- `q`는 앞뒤 공백을 뺀 뒤 2~100자(필수). `window` 기본 `1m`. `limit`은 JSON 정수 1~50(기본 30, `"30"` 같은 글자나 소수는 422). 어기면 아무것도 준비하지 않고 422(FastAPI 기본 형식).
+- AI(질의 임베딩)를 부르는 주소라 POST다. 다른 출처의 쓰기 거절이 그대로 걸린다.
+→ `{"query": 앞뒤 공백을 뺀 q, "basis": 위와 같음, "window", "price_as_of": 결과들의 주가 기준일 중 가장 늦은 것|null, "results": [{"rank", "code", "name", "market", "sector_minor", "one_line", "matched_terms": [표기…], "segment_match": {"segment", "revenue_share_pct"}|null, "coverage", "price"}]}`. 결과는 최대 `limit`개이고 `coverage`·`price`는 위와 같은 모양이다. 시드가 없으므로 `reaction`·`candidate`가 없다. `matched_terms`는 질의 용어와 완전히 일치한 그 회사의 용어(빌드 용어표의 표기, 없으면 질의에 쓴 표기), `segment_match`는 그 회사의 가장 가까운 사업부문(부문 순위에 든 회사만, 아니면 null).
+- 오류: 위의 503 세 이유, 그리고 이 주소만 `유사 기업 기능을 지금 쓸 수 없습니다: OPENAI_API_KEY가 설정되지 않았습니다`(같은 질의가 서버 캐시에 있으면 키 없이도 답한다). 임베딩 호출의 시간 초과(15초)·거부는 예기치 못한 오류의 503 문장이다.
+
+### `GET /api/freshness` (자료 기준일)
+인자 없음.
+→ `{"prices": {"as_of": "YYYY-MM-DD"|null, "last_run_at": 시각|null, "last_run_status": "running"|"ok"|"partial"|"failed"|null, "stale": bool, "note": 문장|null}, "reports": {"latest_at": 시각|null, "stale": bool}, "checked_at": 시각}`. 시각은 한국 시간 ISO, 초까지(`2026-10-08T09:12:00+09:00` 꼴).
+- `as_of`는 마지막 성공(`ok`·`partial`) 주가 실행의 기준일, `last_run_at`·`last_run_status`는 가장 최근 실행(상태와 상관없이)의 시작 시각과 상태, `latest_at`은 분석 대상 리포트 중 가장 최근 `sent_at`.
+- `prices.stale`은 `note`가 있을 때만 true다. `note`는 다음 중 처음 맞는 하나: `주가가 아직 한 번도 갱신되지 않았습니다` / `마지막 주가 갱신이 실패했습니다` / `주가가 {M}월 {D}일 기준으로 밀려 있습니다. 휴장일이면 정상입니다`. `reports`에는 문장이 없다.
+- 오류: 503 `주가 기능을 지금 쓸 수 없습니다: …`(주가를 먼저 읽는다) 또는 `리포트 기능을 지금 쓸 수 없습니다: …`. 아무것도 기억하지 않으므로 원인을 고치면 다음 요청에 회복한다. 화면은 실패하면 회색 `자료 기준일 확인 불가`를 보여 준다.
+
 ### `GET /`, `GET /assets/*` (화면 파일)
-`frontend/dist`의 빌드 결과. `/`는 `index.html`을 `Cache-Control: no-cache`로 준다. 빌드가 없으면 `/`는 503 `프론트엔드를 먼저 빌드해 주세요: cd frontend && npm run build`. `/assets`는 서버를 켤 때 `frontend/dist`가 있었을 때만 연결된다.
+`frontend/dist`의 빌드 결과. 화면은 주소의 `?view=`로 보기를 고른다: `reports`(기본)·`market`·`review`·`compare`(보고서 비교. 보고서 두 건을 고르기 전에는 리포트 목록이 보인다)·`themes`(테마로 기업 찾기, `&q=<검색어>`를 받는다). `web --view`는 앞의 셋만 받는다. `/`는 `index.html`을 `Cache-Control: no-cache`로 준다. 빌드가 없으면 `/`는 503 `프론트엔드를 먼저 빌드해 주세요: cd frontend && npm run build`. `/assets`는 서버를 켤 때 `frontend/dist`가 있었을 때만 연결된다.
 
 ## 명령 — `python -m research_desk <명령>`
 
@@ -90,9 +134,12 @@
 | `tag inspect` | 없음 | `{"pending", "processing", "auto", "review_needed", "verified", "oos_total", "last_24h"}` | 0 / 4 / 1 |
 | `tag escalate` | `--since ISO시각`(필수), `--model M`, `--max-concurrent-llm N` | 대상 없음 `{"escalated": 0, "since": "<받은 값>"}`, 있으면 run과 같은 보고(`worker_id` 키 없음) | 0 / 4 / 1 |
 | `tag reset-worker` | `--worker-id W`(필수) | `{"worker_id", "reset_count", "ids"}` | 0 / 4 / 1 |
-| `tag requeue` | 대상 조건 `--unreadable`, `--publisher-not-in-dictionary`, `--publisher-filename-mismatch`, `--publisher-type-mismatch`, `--krx-unmatched` 중 하나 이상(없으면 2), `--apply`(없으면 미리 보기) | stdout에 JSON 하나(아래 "`tag requeue` 보고") | 0 정상(대상 0건 포함) / 4 준비 문제(아무것도 바꾸지 않음) / 1 그 밖의 오류(stdout 비움, stderr 한 줄) / 2 인자 오류 |
+| `tag requeue` | 대상 조건 `--unreadable`, `--publisher-not-in-dictionary`, `--publisher-filename-mismatch`, `--publisher-type-mismatch`, `--krx-unmatched` 중 하나 이상(없으면 2), `--apply`(없으면 미리 보기) | stdout에 JSON 하나(아래 "`tag requeue` 보고") | 0 정상(대상 0건 포함) / 4 준비 문제(아무것도 바꾸지 않음) / 1 실행 중인 작업 때문에 거절(아무것도 바꾸지 않음)·그 밖의 오류(stdout 비움, stderr 한 줄) / 2 인자 오류 |
 | `web` | `--view reports\|market\|review`(기본 reports) | 첫 줄 `Research Desk: http://127.0.0.1:8520/?view=<view>`, 그 뒤 서버 실행 | 0 (Ctrl+C까지 돈다) |
 | `stocks set-version` | `--as-of YYYY-MM-DD`(필수) | 성공 시 stdout에 새 버전 `KRX@YYYY-MM-DD` | 0 / 4(날짜 형식·종목표 형식 오류, 버전 정보 파일은 그대로) |
+| `prices update` | `--codes 005930,080220`(확인용. 쉼표로 나눈 숫자·영문 대문자 6자리, 소문자는 대문자로 바꿈, 그 밖은 2) | 전체 실행: 끝에 요약 한 줄 `주가 갱신 {완료\|일부 완료\|실패}({ok\|partial\|failed}): 기준일 {YYYY-MM-DD\|없음}, 성공 N종목, 실패 M종목[. 설명]` — ok·partial은 stdout, failed는 stderr. `--codes`: stdout에 종목별 계산 결과 JSON `{코드: 스냅샷 행 \| {"stock_code", "flags": ["no_data"], "error"}}`, 이어서 요약 한 줄 `확인용 실행이라 아무것도 저장하지 않았습니다: 기준일 …, 받음 N종목, 못 받음 M종목[. 저장된 스냅샷이 없어 초과수익률을 비웠습니다]`(모두 받으면 stdout, 아니면 stderr) | 0 ok·partial(`--codes`는 모두 받음) / 1 failed·실행 중 오류·접근 토큰 실패(`--codes`는 하나라도 못 받음) / 4 준비 문제. Ctrl+C는 실행 기록을 failed로 닫고 인터프리터의 중단 코드로 끝난다(PowerShell에서 -1073741510) |
+| `peers build` | `--fiscal-year N`(기본 `PEERS_FISCAL_YEAR`), `--codes 005930,080220`(쉼표·공백으로 나눔, 대문자로 바꿈, 숫자·영문 대문자 6자리가 아니면 2), `--limit n`(1 이상 정수, 대상 중 종목코드 순 앞 n곳), `--pilot` | stdout에 요약 JSON `{"build_id", "status", "fiscal_year", "profile_version", "embed_model", "eligible", "profiled", "failed", "reused", "extracted", "kept_previous": [{"stock_code", "reason"}], "embedded": {"companies", "segments"}, "tokens": {"input", "output", "embedding"}}`. `--pilot`은 그 앞에 대상 회사마다 회사·부문 유사도 상위 10 표를 찍는다. 대상이 아닌 `--codes`는 stderr `대상이 아니어서 뺀 종목: …` | 0 done·pilot / 1 incomplete·대상 없음·분류 작업 진행 중·다른 빌드 진행 중·실행 중 오류·Ctrl+C / 4 준비 문제 |
+| `peers inspect` | 없음 | `{"profiles": [{"fiscal_year", "profile_version", "status", "count", "input_tokens", "output_tokens"}], "tokens": {"input", "output"}, "builds": [최근 빌드 10개, 백분위표·용어표 제외]}` | 0 / 4(DB 설정 없음) |
 
 ### 분류 배치 보고 (`tag run`, `tag escalate`)
 
@@ -119,19 +166,34 @@
 
 ### 준비 문제(4)의 stderr 문구
 
-4는 아무것도 바꾸지 않았고, 안내대로 고친 뒤 다시 실행하면 되는 문제다. `tag run`·`tag escalate`는 행을 가져가기 전에 이 중 하나를 찍고 끝난다:
+4는 다시 실행해도 저절로 풀리지 않는 준비 문제다(아무것도 바꾸지 않았다 — 안내대로 고친 뒤 다시 실행한다). `tag run`·`tag escalate`는 행을 가져가기 전에 이 중 하나를 찍고 끝난다:
 - 키 누락: `<변수> is required` (예: `ANTHROPIC_API_KEY is required`)
 - `SUPABASE_DB_URL` 누락: `SUPABASE_DB_URL is required` (`tag inspect`·`tag reset-worker`도 같다)
 - codex CLI 없음: `codex CLI not found for model <모델>`
 - 종목표 파일 없음·못 읽음·머리줄 틀림: `종목표 파일을 읽을 수 없습니다: <이유>`
 - 종목표 지문 불일치·버전 정보 없음: `종목표 파일 내용이 버전 정보와 다릅니다. 종목표를 바꿨다면 python -m research_desk stocks set-version --as-of <자료 기준일, YYYY-MM-DD>를 실행한 뒤 다시 시작하세요.`
 
-`tag requeue`는 DB에 닿기 전에 이 순서로 확인하고, 하나라도 걸리면 그 한 줄을 찍고 4로 끝난다(어떤 행도 바꾸지 않았다):
-- `SUPABASE_DB_URL is required`
-- 발행처 사전을 못 읽음·사전 규칙 위반: `발행처 사전을 읽을 수 없습니다: <이유>`
-- `--unreadable`인데 분류 모델(`LLM_MODEL_DEFAULT`)이 그림을 못 받음: `지금 분류 모델 <모델>은(는) 그림을 받지 못해 --unreadable 행을 되돌려도 다시 못 읽음이 됩니다. LLM_MODEL_DEFAULT를 그림을 받는 모델로 바꾼 뒤 다시 실행하세요.`
-- `--apply`인데 이 PC에서 작업이 돌고 있음: `실행 중인 작업이 있어 아무것도 바꾸지 않았습니다. 다음을 끈 뒤 다시 실행하세요: <작업> PID <번호>` — 작업 이름은 `백필(run-batches.ps1 또는 research_desk tag run)`, `재처리(research_desk tag escalate)`, `수집(research_desk collect)`, `웹앱(research_desk web)`이고, 여럿이면 ` / `로 잇는다.
-- `--apply`인데 프로세스 목록을 못 읽음: `프로세스 목록을 읽을 수 없어 실행 중인 작업을 확인하지 못했습니다. 아무것도 바꾸지 않았습니다: <이유>`
+**`prices update`의 stderr 문구.**
+- 준비 문제(4, 이 순서로 확인하고 KIS·DB를 부르지 않는다): `주가 갱신을 시작하지 않았습니다. 이유: <이유>`. 이유는 `DB 접속 설정(SUPABASE_URL, SUPABASE_SERVICE_KEY)이 없습니다` → `KIS 접속 설정(KIS_APP_KEY, KIS_APP_SECRET)이 없습니다` → `종목표 파일을 읽을 수 없습니다 (<원인>)`. 종목표 버전 불일치는 보지 않는다.
+- 접근 토큰을 못 받음(1): 전체 실행은 요약 줄 끝이 `KIS 접근 토큰을 받지 못했습니다 (<이유>). 아무 종목도 받지 않았고 스냅샷을 바꾸지 않았습니다`, `--codes`는 stdout 없이 `확인용 실행이라 아무것도 저장하지 않았습니다: KIS 접근 토큰을 받지 못했습니다 (<이유>). 아무 종목도 받지 않았습니다`.
+- 받지 못한 종목마다 경고 한 줄 `주가를 받지 못했습니다: <코드> (<이유>)`. 실패가 20%를 넘으면 요약 줄 끝이 `못 받은 종목이 20%를 넘어 스냅샷을 바꾸지 않았습니다[. 기준을 넘은 뒤 남은 N종목은 받지 않았습니다]`, partial이면 `못 받은 종목은 이전 값을 유지합니다`.
+- `PRICES_MAX_CALLS_PER_SEC`가 0보다 큰 수가 아니면 파이썬 오류와 함께 1(호출 전).
+
+**`peers build`의 stderr 문구.**
+- 준비 문제(4, 이 순서로 확인하고 빌드를 시작하지 않는다): `DB 접속 설정(SUPABASE_URL, SUPABASE_SERVICE_KEY)이 없습니다` → 프로필 모델·재처리 모델의 키 `<변수>가 설정되지 않았습니다`(codex 모델이면 `codex CLI를 찾을 수 없습니다(모델 <모델>). 설치한 뒤 codex login으로 로그인하세요`) → `OPENAI_API_KEY가 설정되지 않았습니다` → `사업보고서 DB(MongoDB)에 접속하지 못했습니다. MongoDB가 켜져 있는지와 DART_MONGO_URL을 확인하세요` → `종목표 파일을 읽을 수 없습니다: <이유>` 또는 분류 명령과 같은 종목표 버전 불일치 문장 → `동의어표(features/peers/synonyms.yaml)를 읽을 수 없습니다: <이유>` → `<연도> 회계연도 사업보고서 중 parser_version 0.2.0 이상인 문서가 없습니다. DART 수집을 먼저 하세요` → 리포트 기능의 준비 실패 `리포트 기능을 지금 쓸 수 없습니다: …`.
+- 시작하지 않음(1): `분류 작업이 진행 중이라 유사도 계산을 시작하지 않았습니다. 분류가 끝난 뒤 다시 실행하세요.` / `다른 유사도 계산(빌드 <번호>)이 진행 중입니다(마지막 진행 <시각>). 끝난 뒤 다시 실행하세요.`
+- 6시간 넘게 진행이 없는 `running` 빌드는 stderr에 아무것도 찍지 않고 `failed`로 바꾼 뒤 새 빌드를 시작한다. 그 빌드 기록의 `message`는 `6시간 넘게 진행이 없어 실패로 정리했습니다.`다(`peers inspect`로 본다).
+- 대상 회사가 하나도 없으면 `대상 회사가 없습니다.`, 빌드는 failed로 닫히고 요약 JSON도 찍힌다(1).
+- 실행 중 오류: 파이썬 오류 내용, 이어서 `유사도 계산 중 오류가 났습니다(<오류>). <빌드 안내>`(1). Ctrl+C: `유사도 계산이 중단되었습니다. <빌드 안내>`(1). 빌드 안내는 `빌드 번호 <번호>의 상태를 실패(failed)로 바꿨습니다.` 또는 `빌드는 시작하지 않았습니다.` 또는 상태를 못 바꿨을 때 `빌드 번호 <번호>의 상태를 바꾸지 못했습니다. 6시간이 지나면 다음 실행이 실패로 정리합니다.` 또는 빌드를 마감한 뒤에 난 오류·중단이면 `빌드 번호 <번호>는 그 전에 <상태> 상태로 마감됐습니다.`(빌드는 그 상태 그대로다).
+- 빌드를 마친 뒤 오래된 빌드 정리가 실패하면 `경고: 빌드는 마쳤지만 오래된 빌드 정리 중 오류가 났습니다(다음 빌드 때 다시 정리합니다): <오류>` — 종료 코드는 빌드 상태대로다.
+- 숫자 설정(`PEERS_FISCAL_YEAR`, `PEERS_MAX_CONCURRENT_LLM`, `PEERS_PER_COMPANY_TIMEOUT_S`)이 숫자가 아니면 파이썬 오류와 함께 1(준비 확인 전). 웹 패키지(FastAPI)가 없으면 분류 진행 확인에서 `ModuleNotFoundError`로 1.
+
+**`tag requeue`의 stderr 문구.** DB에 닿기 전에 이 순서로 확인하고, 하나라도 걸리면 그 한 줄을 찍고 끝난다(어떤 행도 바꾸지 않았다). 종료 코드는 줄마다 적었다:
+- `SUPABASE_DB_URL is required` (4)
+- 발행처 사전을 못 읽음·사전 규칙 위반: `발행처 사전을 읽을 수 없습니다: <이유>` (4)
+- `--unreadable`인데 분류 모델(`LLM_MODEL_DEFAULT`)이 그림을 못 받음: `지금 분류 모델 <모델>은(는) 그림을 받지 못해 --unreadable 행을 되돌려도 다시 못 읽음이 됩니다. LLM_MODEL_DEFAULT를 그림을 받는 모델로 바꾼 뒤 다시 실행하세요.` (4)
+- `--apply`인데 프로세스 목록을 못 읽음: `프로세스 목록을 읽을 수 없어 실행 중인 작업을 확인하지 못했습니다. 아무것도 바꾸지 않았습니다: <이유>` (4)
+- `--apply`인데 이 PC에서 작업이 돌고 있음: `실행 중인 작업이 있어 아무것도 바꾸지 않았습니다. 다음을 끈 뒤 다시 실행하세요: <작업> PID <번호>` (1 — 그 작업이 끝나거나 꺼지면 풀리는 상태) — 작업 이름은 `백필(run-batches.ps1 또는 research_desk tag run)`, `재처리(research_desk tag escalate)`, `수집(research_desk collect)`, `웹앱(research_desk web)`이고, 여럿이면 ` / `로 잇는다.
 
 ## 스크립트 — `scripts/*.ps1` (Windows PowerShell 5.1)
 
@@ -139,5 +201,6 @@
 |---|---|---|
 | `run-batches.ps1` | `-Iterations N`(기본 5), `-BatchSize N`(0이면 설정 기본값), `-MaxRetries N`(기본 2), `-RetrySleepS N`(기본 3), `-Python <경로>`; 환경 변수 `RESEARCH_DESK_PY` | 0 모두 완료 / 1 한 배치가 모든 시도에 실패 / 2 파이썬 못 찾음 / 3 `tag reset-worker` 실패 / 4 준비 문제(되돌리기·재시도 없이 즉시) |
 | `start-workspace.ps1` | `-SkipBuild` | 빌드·실행 실패 시 예외로 끝남 |
+| `run-prices.ps1` | `-Python <경로>`; 환경 변수 `RESEARCH_DESK_PY` | `prices update`의 종료 코드 그대로: 0 ok·partial / 1 failed·실행 중 오류 / 4 준비 문제(Ctrl+C면 그 중단 코드). 파이썬을 못 찾으면 명령을 실행하지 않고 4(`run-batches.ps1`의 2와 다르다). 명령이 종료 코드 없이 끝나면 1 |
 
 `run-batches.ps1`은 `tag run`의 종료 코드만 본다: 0이면 다음 배치, 4면 즉시 멈춤, 그 밖이면 같은 작업자 ID로 `tag reset-worker` 후 새 작업자 ID로 재시도. 종료 코드 0·1·4로 끝날 때 출력의 마지막 줄은 `Summary: success=<n> failed_attempts=<n>`이다(2·3은 오류 문구로 끝난다).

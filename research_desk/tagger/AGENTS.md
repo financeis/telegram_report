@@ -50,14 +50,14 @@
   3. 종목표(`KRX_CSV_PATH`, 기본은 저장소에 함께 들어 있는 종목표, 현재 폴더 기준)를 못 읽음(없음, UTF-8 아님, 머리줄 틀림, 폴더): `종목표 파일을 읽을 수 없습니다: <이유>`.
   4. 버전 정보 파일이 없거나 형식이 틀리거나 내용 지문이 다름: `종목표 파일 내용이 버전 정보와 다릅니다. 종목표를 바꿨다면 python -m research_desk stocks set-version --as-of <자료 기준일, YYYY-MM-DD>를 실행한 뒤 다시 시작하세요.`
 - `inspect`·`reset-worker`는 `SUPABASE_DB_URL`만 본다(모델 키·codex·종목표를 읽지 않는다).
-- `requeue`는 조건 옵션이 하나도 없으면 `.env`를 읽기도 전에 argparse 사용법 오류 2로 끝난다(`대상 조건을 하나 이상 고르세요: --unreadable, --publisher-not-in-dictionary, --publisher-filename-mismatch, --publisher-type-mismatch, --krx-unmatched`). 그다음 확인은 모두 DB에 닿기 전이고, 실패하면 stderr 한 줄·stdout 비움·4다.
+- `requeue`는 조건 옵션이 하나도 없으면 `.env`를 읽기도 전에 argparse 사용법 오류 2로 끝난다(`대상 조건을 하나 이상 고르세요: --unreadable, --publisher-not-in-dictionary, --publisher-filename-mismatch, --publisher-type-mismatch, --krx-unmatched`). 그다음 확인은 모두 DB에 닿기 전이고, 실패하면 stderr 한 줄·stdout 비움이다. 1~3과 4의 프로세스 목록을 못 읽음은 준비 문제라 4, 4의 작업이 돌고 있음은 그 작업이 끝나거나 꺼지면 풀리는 상태라 1이다(`peers build`가 분류 중일 때 1인 것과 같은 규칙, `requeue.RequeueJobsRunning`).
   1. `SUPABASE_DB_URL is required`.
   2. 발행처 사전을 그때 새로 읽는다. 못 읽거나 사전 규칙을 어기면 `발행처 사전을 읽을 수 없습니다: <이유>`.
   3. `--unreadable`이면 `tag run`이 쓸 모델(`LLM_MODEL_DEFAULT` > 옛 이름 > `claude-haiku-5-5`, `--model`은 없다)이 그림을 받는지 이름으로 본다(`core.llm.supports_images`). 못 받으면 `지금 분류 모델 <모델>은(는) 그림을 받지 못해 --unreadable 행을 되돌려도 다시 못 읽음이 됩니다. LLM_MODEL_DEFAULT를 그림을 받는 모델로 바꾼 뒤 다시 실행하세요.` 모델 키는 보지 않는다(이 명령은 AI를 부르지 않는다).
   4. `--apply`이면 이 PC에서 백필·재처리·수집·웹앱이 도는지 본다(아래 "다시 분류 대기"). 돌고 있으면 `실행 중인 작업이 있어 아무것도 바꾸지 않았습니다. 다음을 끈 뒤 다시 실행하세요: <작업> PID <번호>[, <번호>][ / <작업> PID …]`, 프로세스 목록을 못 읽으면 `프로세스 목록을 읽을 수 없어 실행 중인 작업을 확인하지 못했습니다. 아무것도 바꾸지 않았습니다: <이유>`. 미리 보기는 프로세스를 보지 않는다.
 - `requeue`가 DB에 닿은 뒤의 실패는 traceback 대신 stderr 한 줄(`requeue.failure_line`)과 1이고 stdout은 비어 있다. 백업을 못 씀(`백업 파일을 쓰지 못해 아무것도 바꾸지 않았습니다: <이유>`)과 건수 불일치(`되돌린 행 수(<n>)가 다시 확인한 행 수(<m>)와 달라 모두 취소했습니다. 아무것도 바뀌지 않았습니다.`)는 아무것도 바꾸지 않은 채 끝나고, 그 밖의 오류는 `tag requeue를 마치지 못했습니다: <예외 이름>: <내용>`이다(트랜잭션 안에서 났으면 모두 되돌려진다).
 - 문구는 글자 그대로 둔다(사람이 터미널에서 보고 따라 하고, 테스트가 고정한다). 영어 문구를 한국어로 옮기지 않는다.
-- 4는 "아무것도 바꾸지 않았고, 안내대로 고친 뒤 다시 실행하면 되는 문제"다. 분류 명령에서는 어떤 행도 가져가지 않았다는 뜻이고, `requeue`에서는 어떤 행도 되돌리지 않았다는 뜻이다. 반복 실행 스크립트는 4를 받으면 되돌리기·재시도 없이 바로 멈추고, 그 밖의 0 아닌 코드에는 자기가 넘긴 `--worker-id`로 `reset-worker`를 부른 뒤 다시 시도한다. 그래서 새 준비 확인은 `_prepare_tagging` 안(DB 풀을 열기 전)에 `NotReadyToRun`으로 넣고, 행을 가져간 뒤의 실패에 4를 쓰면 안 된다 — 스크립트가 되돌리기를 건너뛰어 그 행이 `processing`에 묶인다. `--worker-id`·`reset-worker`의 이름과 동작도 이 스크립트가 쓰므로 바꾸지 않는다. 웹 기능용 `core.settings.NotReady`(503)는 이 칸에서 쓰지 않는다.
+- 4는 "다시 돌려도 안 풀리는 준비 문제, 행은 안 건드림"이다. 분류 명령에서는 어떤 행도 가져가지 않았다는 뜻이고, `requeue`에서는 어떤 행도 되돌리지 않았다는 뜻이다. 기다리면 풀리는 상태(다른 작업이 돌고 있음)는 4가 아니라 1이다. 반복 실행 스크립트는 4를 받으면 되돌리기·재시도 없이 바로 멈추고, 그 밖의 0 아닌 코드에는 자기가 넘긴 `--worker-id`로 `reset-worker`를 부른 뒤 다시 시도한다. 그래서 새 준비 확인은 `_prepare_tagging` 안(DB 풀을 열기 전)에 `NotReadyToRun`으로 넣고, 행을 가져간 뒤의 실패에 4를 쓰면 안 된다 — 스크립트가 되돌리기를 건너뛰어 그 행이 `processing`에 묶인다. `--worker-id`·`reset-worker`의 이름과 동작도 이 스크립트가 쓰므로 바꾸지 않는다. 웹 기능용 `core.settings.NotReady`(503)는 이 칸에서 쓰지 않는다.
 - 그 밖의 예외는 1이다. 숫자 설정 형식 오류(`MAX_CONCURRENT_LLM`·`LOCK_TTL_MINUTES`·`PER_ROW_DEADLINE_S`, `run`은 `TAGGER_BATCH_SIZE_DEFAULT`도 — 옵션으로 덮어써도 읽는다)와 `--row-ids` 형식 오류는 DB 전에 `ValueError`로 1, `escalate --since` 형식 오류는 풀을 연 뒤 행을 건드리기 전에 1이다. 인자 오류는 argparse의 2, `--help`는 0.
 
 **보고(JSON)**
@@ -77,6 +77,7 @@
 - `--batch-size 0`·`--max-concurrent-llm 0`은 설정값으로 돌아간다.
 - 세마포어는 LLM 호출만이 아니라 행 하나의 그래프 전체(PDF 읽기·그리기 → LLM → 쓰기)와 되돌리기를 감싼다. 행 시간 한도 `PER_ROW_DEADLINE_S`는 칸을 얻은 뒤부터 잰다.
 - PDF 접근(글자 읽기·그림 그리기)은 `core.pdf`의 프로세스 전체 잠금 하나로 줄 선다. 두 행이 동시에 돌아도 PyMuPDF 안에는 한 호출만 있고 다른 행은 잠금을 기다린다. AI 호출은 줄 세우지 않는다(동시 2 그대로). 잠금을 기다리는 시간도 그 행의 `PER_ROW_DEADLINE_S`에 들어간다. PyMuPDF 호출 하나가 멈추면 그 프로세스의 뒤 PDF 호출이 모두 기다리다가, 그 배치의 남은 행이 시간 초과로 `pending`에 돌아간다.
+- 가져가기 표시(`tagging_status='processing'`과 `tagging_locked_at`)는 이 칸 밖에서도 읽힌다. 리포트 기능의 `tagging_in_progress()`가 "최근 30분 안에 잠긴 `processing` 행이 있으면 분류 중"으로 보고, 유사도 계산(`peers build`)이 그동안 시작하지 않는다(AI 동시 호출이 겹치지 않게). 상태 이름이나 잠금 시각을 찍는 방식을 바꾸면 그 확인이 조용히 틀린다. 정상 `run`만 이 표시를 남기고 `--dry-run`·`--row-ids`·`escalate`는 남기지 않는다는 점도 그 확인의 전제다.
 - 잠금 시각은 가져갈 때 배치 전체에 한 번 찍히고, 칸을 기다리는 행도 그동안 `processing`이다. 그래서 `LOCK_TTL_MINUTES`는 배치 하나의 최장 시간(⌈배치 크기 ÷ 동시 처리 수⌉ × `PER_ROW_DEADLINE_S`; 기본 ⌈10 ÷ 2⌉ × 90초 = 7.5분)보다 길어야 한다. 짧으면 다른 작업자가 시작하면서 아직 기다리는 행을 `pending`으로 돌려 다시 가져가고, 같은 행이 두 번 분류된다.
 - DB 풀 최대 10, SDK 재시도 2회, 요청 시간 한도 60초는 설정이 아닌 고정값(`settings.py`)이다. 60초 × 3번은 행 한도 90초보다 길어서, 느린 호출은 행 한도가 먼저 끊는다.
 
@@ -159,7 +160,7 @@ START -> extract_pdf -> llm_extract --oos_gate--+-> status_unreadable           
 - AI는 발행처 종류를 내지 않는다. 저장하는 종류는 저장할 정식 이름의 사전 구역이다(`publisher_type_final`, 이름이 None이면 None). 응답에 옛 `publisher_type` 키가 섞여 와도 버려진다.
 - 파일 이름 표기: 파일 이름이 `_YYYYMMDD_<표기>_<숫자>.pdf`로 끝나면 그 `<표기>`다(글자가 하나 이상이고 글자·공백·`+ & . -`만). 표기가 사전의 정식 이름이나 별칭과 글자 그대로(대소문자까지) 같으면 그 항목의 정식 이름이 "파일 이름이 가리키는 발행처"다. 사전에 없는 표기는 아무것도 가리키지 않는다. 끝 모양이 다른 이름(예: 번호 뒤에 `_1`이 더 붙은 `…_<숫자>_1.pdf`)은 표기가 없는 것이다.
 - 의심 표시(`publisher_suspect`, AI 결과가 있는 행만): 가리키는 발행처가 있는데 저장할 발행처가 그것과 다르면(None 포함) `filename_mismatch`, 가리키는 발행처가 없고 저장할 발행처가 None이면 `unknown`, 그 밖에는 없음. 비교는 정식 이름끼리다 — AI가 별칭(`Eugene`)을 답하면 None으로 저장되고 표기가 `Eugene`이면 `filename_mismatch`다. IR자료(`해당기업`)가 증권사 표기 파일이면 `filename_mismatch`가 붙는다(IR자료로 잘못 분류된 증권사 리포트를 찾는 신호).
-- 좁혀 둔 예전 결정(결정 기록 0019): PDF 속 글자를 코드로 대조해 발행처를 정하지 않는다(판단은 AI). 코드는 AI 답이 사전 정식 이름인지 확인만 한다. 파일 이름 표기는 저장할 값을 정하지 않고 의심 표시와 다시 분류 대상 고르기에만 쓴다. 영문·별칭·부서명이 섞인 발행처를 코드 대조로 맞추다 실패한 적이 있고, 파일 이름 표기로 저장하는 안은 사용자가 뺐다. "표기가 대부분 맞으니 그걸로 저장하자"로 바꾸지 않는다.
+- 좁혀 둔 예전 결정: PDF 속 글자를 코드로 대조해 발행처를 정하지 않는다(판단은 AI). 코드는 AI 답이 사전 정식 이름인지 확인만 한다. 파일 이름 표기는 저장할 값을 정하지 않고 의심 표시와 다시 분류 대상 고르기에만 쓴다. 영문·별칭·부서명이 섞인 발행처를 코드 대조로 맞추다 실패한 적이 있고, 파일 이름 표기로 저장하는 안은 사용자가 뺐다. "표기가 대부분 맞으니 그걸로 저장하자"로 바꾸지 않는다.
 
 **다시 분류 대기(`tag requeue`)**
 
@@ -218,7 +219,7 @@ START -> extract_pdf -> llm_extract --oos_gate--+-> status_unreadable           
   - 리포트 종류·제외 사유·발행처 종류 값: `domain/vocabulary.yaml` + CHECK 제약 마이그레이션 + `llm_schemas.py` Literal + (제외 사유면) `state.py` Literal·`mark_oos_reason`·`status_oos`·`orchestrator`의 `oos` 키 + 프롬프트의 정의문. 발행처 종류면 `publishers.yaml`의 구역 이름도.
   - 검토 사유: `decide_status`(또는 상태 노드)에 메모 형식대로, `_aggregate`의 인식 목록, 패리티 사례. 검토 사유가 아닌 표시(그림·의심처럼)는 `apply_final_rules`에 두고 `review_reasons`에 넣지 않는다.
   - 종목표 교체는 이 칸이 아니라 `stocks set-version`이다. 옛 종목표에 없어 `krx_unmatched_in_scope`로 쌓인 행은 저절로 풀리지 않으니 `tag requeue --krx-unmatched`(또는 `escalate --since`, 검토의 재분류)로 다시 분류한다.
-- **무해한 경고(디버깅하지 않는다).** `LLMExtraction` 직렬화 때의 Pydantic serializer 경고, LangGraph를 불러올 때의 `LangChainPendingDeprecationWarning`. Windows 비정상 종료 코드 `-1073741569`(드물게 `-1073741784`)는 반복 실행 스크립트가 그 작업자의 행을 되돌리고 다시 시도한다(데이터 손실 없음). 2026-10-09 백필에서 자주 났고, PDF를 두 스레드에서 동시에 읽은 것이 원인으로 추정돼 PDF 접근을 프로세스 안에서 줄 세웠다(`core.pdf` 잠금, 2026-10-10). 잠금 뒤 재측정 결과: 2026-10-10 재분류 백필(첫 묶음의 앞부분)에서 44번 실행 중 0번 — 2026-10-09 백필의 937번 중 131번보다 크게 줄었다. 실행 수가 아직 적으니 남은 백필에서도 센다.
+- **무해한 경고(디버깅하지 않는다).** `LLMExtraction` 직렬화 때의 Pydantic serializer 경고, LangGraph를 불러올 때의 `LangChainPendingDeprecationWarning`. Windows 비정상 종료 코드 `-1073741569`(드물게 `-1073741784`)는 반복 실행 스크립트가 그 작업자의 행을 되돌리고 다시 시도한다(데이터 손실 없음). 2026-10-09 백필에서 자주 났고, PDF를 두 스레드에서 동시에 읽은 것이 원인으로 추정돼 PDF 접근을 프로세스 안에서 줄 세웠다(`core.pdf` 잠금, 2026-10-10). 잠금 뒤 크게 줄었다.
 
 ## 테스트
 

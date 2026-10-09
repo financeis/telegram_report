@@ -3,7 +3,8 @@
 ## 맡는 일
 
 - `create_app(dist=None)`(`app.py`): FastAPI 앱 하나에 공통 장치, 오류 응답, `/api/health`, 기능 라우터(`FEATURES` 순서), 화면 파일을 붙인다.
-- `FEATURES`: 기능 등록 목록. 웹 주소가 있는 기능은 여기 이름 하나로 앱에 연결된다.
+- `FEATURES`: 기능 등록 목록. 웹 주소가 있는 기능은 여기 이름 하나로 앱에 연결된다. 지금 순서는 `companies, reports, compare, coverage, review, peers, freshness`다.
+- `feature_router(feature)`: 기능 창구에서 라우터를 받는 한 가지 방법. 창구에 `web_router`가 있으면 그것을 불러 받고, 없으면 `feature.router`를 쓴다.
 - `web` 명령(`server.py`): `python -m research_desk web [--view reports|market|review]`.
 - 직접 맡는 주소: `GET /api/health`, `GET /`, `/assets/*`, `GET /openapi.json`.
 - 웹 입구 한 곳의 보안 장치(허용 호스트, 다른 출처의 쓰기 거절). 다른 기기 접속이 필요해져 로그인 같은 접근 제어를 붙이게 되면, 기능마다가 아니라 여기 한 곳에 붙인다. 방식은 그때 정한다.
@@ -29,7 +30,8 @@
   - 그 밖의 예기치 못한 예외 → 트레이스백과 함께 로그(`logger.exception`)에 남기고 503 `{"detail": "데이터를 불러오거나 분석하지 못했습니다. 연결 상태를 확인하고 다시 시도해 주세요."}`. 예외 문장은 경로·키를 담을 수 있으므로 응답에 넣지 않는다.
   - 기능이 낸 `HTTPException`(404·409·422)은 FastAPI 기본 처리 그대로 `{"detail": …}`다.
 - `GET /api/health` → `{"status": "ok"}`. 아무것도 확인하지 않는다. DB나 종목표 확인을 넣으면 "어떤 기능이 고장 나도 늘 200"이 깨진다.
-- `FEATURES`에는 웹 주소가 있는 기능의 창구만 넣고, 목록 순서대로 `include_router(feature.router)`한다. 주소가 없는 `analysis`는 넣지 않는다. 목록 순서가 곧 주소 등록 순서이고 테스트가 고정하므로, 새 기능은 끝에 더한다. 앱의 주소 표(메서드·경로)는 정해진 목록과 정확히 같아야 하고, 같은 주소가 두 번 붙으면 안 된다.
+- `FEATURES`에는 웹 주소가 있는 기능의 창구만 넣고, 목록 순서대로 `include_router(feature_router(feature))`한다. 주소가 없는 `analysis`·`prices`는 넣지 않는다. 목록 순서가 곧 주소 등록 순서이고 테스트가 고정하므로, 새 기능은 끝에 더한다. 앱의 주소 표(메서드·경로)는 정해진 목록과 정확히 같아야 하고, 같은 주소가 두 번 붙으면 안 된다.
+- `feature_router`는 `web_router`를 먼저 본다. 명령이 있는 기능(peers)은 창구가 FastAPI를 불러오지 않도록 라우터를 묶지 않고 `web_router()`로 넘긴다. 그런데 `web_router()`를 한 번 부르면 `peers.router`가 라우터가 아니라 하위 모듈이 되므로, 순서를 뒤집어 `feature.router`를 먼저 보면 모듈을 라우터로 넘기게 된다. 기능별로 `include_router(peers.router)` 같은 줄을 따로 쓰지 않는다.
 - 화면 파일
   - 기본 위치 `DEFAULT_DIST`는 이 파일 위치에서 계산한 `<저장소>/frontend/dist` 절대 경로다. 현재 폴더 기준이 아니다.
   - 앱을 만들 때 `dist` 폴더가 있으면 `/assets`에 `dist/assets`를 연결한다. `dist`는 있는데 `dist/assets`가 없으면 Starlette `StaticFiles`가 RuntimeError를 내 앱 생성, 곧 서버 시작이 실패한다. 화면을 다시 빌드하면 풀린다.
@@ -45,11 +47,13 @@
   - 저장소 루트에서 실행한다. PDF 폴더(`./reports`)와 종목표 기본 경로가 현재 폴더 기준이다.
 - FastAPI는 `web` 명령이 돌 때만 불러온다.
   - `cli.py`는 어느 명령이든 `research_desk.web.server`를 import한다. 그래서 `server.py` 최상위는 `argparse`와 `core.settings`만 import하고, `uvicorn`과 `.app`(FastAPI와 모든 기능)은 `serve()` 안에서 import한다. `web/__init__.py`는 아무것도 import하지 않는다.
-  - 이유: FastAPI·uvicorn은 `requirements-workspace.txt`에만 있다. `collect`·`tag`는 웹 패키지 없이 돌고 가볍게 시작해야 한다. `research_desk/tests/test_cli.py`가 새 프로세스로 `python -m research_desk`를 돌려 `fastapi`·`uvicorn`·`research_desk.web.app`이 불러와지지 않았는지 확인한다.
+  - 이유: FastAPI·uvicorn은 `requirements-workspace.txt`에만 있다. `collect`·`tag`·`stocks`·`prices`·`peers inspect`는 웹 패키지 없이 돌고 가볍게 시작해야 한다. `research_desk/tests/test_cli.py`가 새 프로세스로 `python -m research_desk`를 돌려 `fastapi`·`uvicorn`·`research_desk.web.app`(과 LangGraph·pymongo·유사 기업 웹 쪽)이 불러와지지 않았는지 확인한다.
+  - 예외: `peers build`는 실행 중에 리포트 기능 창구를 거쳐 FastAPI를 불러오므로, `web`처럼 웹 패키지가 설치돼 있어야 돈다. 명령 없는 실행과 다른 명령은 그대로 웹 패키지에 기대지 않는다.
 
 ## 이 칸의 방식
 
-- 새 기능 등록은 `app.py`의 `from research_desk.features import …` 줄과 `FEATURES` 목록에 창구 이름을 더하는 것으로 끝난다. 다른 연결 코드는 쓰지 않는다. 새 주소는 `/api/`로 시작하고 기존 주소와 겹치지 않아야 한다.
+- 새 기능 등록은 `app.py`의 `from research_desk.features import …` 줄과 `FEATURES` 목록에 창구 이름을 더하는 것으로 끝난다(라우터를 `router`로 묶은 창구든 `web_router()`를 둔 창구든 같다). 다른 연결 코드는 쓰지 않는다. 새 주소는 `/api/`로 시작하고 기존 주소와 겹치지 않아야 한다.
+- 앱을 만들 때(`create_app`) `web_router()`가 불리므로 그 기능의 라우터·서비스 모듈과 FastAPI가 이때 올라온다. 서비스 객체를 만들거나 설정을 읽지는 않는다(그 기능의 `get_service`가 처음 요청 때 만든다).
 - 기능 서비스는 각 기능의 `get_service`(라우터의 의존 함수)로 들어온다. web이 서비스를 만들거나 끼우지 않는다.
 - 미들웨어·오류 처리기·`/api/health`·화면 라우트는 모두 `create_app()` 안에서 등록한다. 앱은 부를 때마다 새로 만들어진다.
 
@@ -60,6 +64,6 @@
 - 앱은 늘 `create_app(dist=<임시 폴더>)`로 만든다(`dist` fixture: `index.html`과 `assets/app.js`). 기본 폴더를 쓰는 경로는 `monkeypatch.setattr(app_module, 'DEFAULT_DIST', …)`로 돌린다. 실제 `frontend/dist`가 있든 없든 결과가 같아야 한다. `web` 명령 테스트는 `uvicorn.run`을 바꿔 끼워 서버를 띄우지 않는다.
 - 기능의 답이 필요하면 `app.dependency_overrides[<기능의 service 모듈>.get_service]`에 `fakes.py`의 가짜를 끼운다. compare는 의존 함수 없이 `reports.get_report` 창구를 거치므로 `reports_service._service`를 바꾼다. 테스트는 구조 검사에서 빠지므로 기능 하위 모듈을 import해도 된다.
 - 예기치 못한 예외의 503을 보려면 `TestClient(app, raise_server_exceptions=False)`로 만든다. 기본값이면 예외가 테스트 안으로 다시 올라온다.
-- 주소 표는 `fakes.py`의 `SPEC_ROUTES`와 `test_app.py`의 순서 목록으로 고정돼 있다. HEAD는 Starlette가 `/openapi.json` 옆에 붙이는 것 하나뿐이다. 새 기능의 주소는 거기에 더하고 기존 항목은 바꾸지 않는다. 새 요청 본문 모델은 `/openapi.json` 스키마 이름 목록에 더한다.
-- `test_isolation.py`는 실제 기능 서비스로, DB 설정이 없을 때와 종목표가 없을 때 멈추는 기능과 멈추지 않는 기능, 원인을 고친 뒤 재시작 없는 회복, 응답에 경로가 없음을 본다. 새 기능은 자기 준비 조건을 여기에 더한다.
+- 주소 표는 `fakes.py`의 `SPEC_ROUTES`와 `test_app.py`의 순서 목록으로 고정돼 있다. HEAD는 Starlette가 `/openapi.json` 옆에 붙이는 것 하나뿐이다. 새 기능의 주소는 거기에 더하고 기존 항목은 바꾸지 않는다. 새 요청 본문 모델은 `/openapi.json` 스키마 이름 목록에 더한다(`PeerSearchBody`처럼). `feature_router`는 `web_router`만 있는 창구, `router`만 있는 창구, 둘 다 있는 창구(`web_router`가 이긴다), 실제 기능 창구들로 시험한다.
+- `test_isolation.py`는 실제 기능 서비스로, DB 설정이 없을 때와 종목표가 없을 때 멈추는 기능과 멈추지 않는 기능, 원인을 고친 뒤 재시작 없는 회복, 응답에 경로가 없음을 본다. 새 기능은 자기 준비 조건을 여기에 더한다(유사 기업은 공개 빌드 없음과 검색의 `OPENAI_API_KEY` 없음까지, 상태 줄은 주가 창구의 `주가` 503).
 - 꼭 지킬 검증: 허용 출처 넷과 쓰기 메서드(POST·PUT·PATCH·DELETE), 다른 호스트 400, 두 검사의 순서, `NotReady` 503(동기·비동기 핸들러·의존 함수)과 경고 한 줄, 일반 503과 트레이스백 로그와 비밀 미노출, health는 늘 200, 화면 파일·`no-cache`·빌드 안내 503·`index.html`을 요청마다 찾음, 기본 화면 폴더, `/openapi.json` 켜짐·docs 꺼짐, 앱을 만들 때 설정을 읽지 않음.

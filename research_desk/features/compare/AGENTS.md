@@ -29,7 +29,7 @@
 **순서.** `(published_at or '', id)` 오름차순으로 정렬해 앞 문서를 `left`, 뒷 문서를 `right`로 둔다. 날짜가 없는 보고서가 앞, 같은 날이면 `id`가 작은 쪽이 앞이다. 요청에서 어느 쪽에 넣었든 결과는 같다. 모든 "이전/현재"가 이 순서를 따른다. 수치의 `previous`는 앞 문서, `current`는 뒷 문서이고, 화면은 `previous_evidence`를 `left`의 PDF, `current_evidence`를 `right`의 PDF 쪽 링크로 연다. 순서를 뒤집으면 근거 링크가 엉뚱한 문서를 연다.
 
 **같은 발행처.** 두 `publisher`가 모두 있고(빈 문자열은 없는 것) 같을 때만 `same_publisher = True`다. 하나라도 모르면 다른 발행처로 본다. 분류기는 발행처를 발행처 사전의 정식 이름이나 빈 값으로만 저장한다(사전에 없거나 AI가 정식 이름으로 답하지 못하면 빈 값). 모르는 둘을 같은 데스크로 묶으면 안 된다. 비교는 저장된 글자 그대로다 — 이름을 맞추는 일은 분류기와 사전의 몫이고 compare는 별칭을 풀지 않는다. 사전 규칙상 기술분석보고서는 표지의 작성기관과 상관없이 `한국IR협의회`로 저장되므로, 작성기관이 다른 두 기술분석보고서도 같은 발행처가 된다.
-- `same_publisher`는 GET마다 지금 값으로 다시 계산한다. 반면 저장된 해석문과 `prev_match_type`·`comparison_details.previous_publisher`는 만들 때의 발행처로 쓰인 기록이라, 나중에 다시 분류해 발행처가 바뀌어도 저절로 바뀌거나 지워지지 않는다. compare는 그것을 감지하지 않는다. 필요하면 운영 절차로 비운다(`docs/operations.md`의 "발행처 사전을 고친 뒤").
+- `same_publisher`는 GET마다 지금 값으로 다시 계산한다. 반면 저장된 해석문과 `prev_match_type`·`comparison_details.previous_publisher`는 만들 때의 발행처로 쓰인 기록이라, 나중에 다시 분류해 발행처가 바뀌어도 저절로 바뀌거나 지워지지 않는다. compare는 그것을 감지하지 않는다. 필요하면 발행처 사전을 고친 뒤의 운영 절차로 비운다.
 
 **수치 대조** (`compare_financials(앞 요약, 뒷 요약)`).
 - 짝 열쇠는 (`metric`, `fiscal_period`, `unit`, `currency`, `accounting_basis`, `value_type`, `scenario`) 7개이고, 문자열 그대로 모두 같아야 한다. 단위 환산, 연도 넘김(2026 → 2027), 비슷한 이름 맞추기를 하지 않는다.
