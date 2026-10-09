@@ -87,15 +87,26 @@ publishers vocabulary:
 """
 
 
-def user_message(*, file_name: str, caption: str | None, sent_at_iso: str, pdf_text: str) -> str:
-    """Build the user message for llm_extract."""
+# Stands where the PDF text goes when the PDF has no text and its page picture is
+# attached to the request instead. Fixed for every row (editing it changes the request).
+PAGE_IMAGE_NOTE = "(글자를 읽을 수 없는 PDF라 페이지를 그림으로 첨부했다. 첨부한 그림을 보고 추출한다.)"
+
+
+def user_message(*, file_name: str, caption: str | None, sent_at_iso: str,
+                 pdf_text: str = "", page_image: bool = False) -> str:
+    """Build the user message for llm_extract.
+
+    With ``page_image`` the page picture rides along with the request, so the fixed
+    PAGE_IMAGE_NOTE takes the place of the PDF text (``pdf_text`` is not used).
+    """
     cap = caption if caption else "(없음)"
+    body = PAGE_IMAGE_NOTE if page_image else pdf_text
     return (
         f"파일명: {file_name}\n"
         f"caption: {cap}\n"
         f"sent_at (UTC): {sent_at_iso}\n"
         f"PDF 첫 페이지(들):\n"
         f"---\n"
-        f"{pdf_text}\n"
+        f"{body}\n"
         f"---"
     )

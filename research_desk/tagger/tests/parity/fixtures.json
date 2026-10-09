@@ -610,5 +610,83 @@
       "publisher": "해당기업",
       "publisher_type": "other"
     }
+  },
+  {
+    "case": "picture_only_단일종목",
+    "input": {
+      "file_name": "scan_005930_20260517_Kiwoom_1096336.pdf",
+      "caption": null,
+      "sent_at": "2026-05-17T05:00:00+00:00",
+      "pdf_text": ""
+    },
+    "llm_mock": {
+      "report_type": "단일종목",
+      "title": "삼성전자 2Q26 Preview",
+      "published_at": "2026-05-17",
+      "stock_codes_raw": ["005930"],
+      "company_names_raw": ["삼성전자"],
+      "publisher_canon": "키움증권",
+      "analysts": ["홍길동"],
+      "oos_signals": {
+        "foreign_primary_coverage": false,
+        "etf_or_fund": false,
+        "digital_asset": false,
+        "private_company_likely": false
+      },
+      "self_confidence": "high",
+      "notes": null
+    },
+    "expected": {
+      "report_type": "단일종목",
+      "publisher": "키움증권",
+      "publisher_type": "broker",
+      "analysts": ["홍길동"],
+      "title": "삼성전자 2Q26 Preview",
+      "stock_codes": ["005930"],
+      "company_names": ["삼성전자"],
+      "stock_codes_raw": ["005930"],
+      "company_names_raw": ["삼성전자"],
+      "sectors_major": ["반도체"],
+      "sectors_minor": ["메모리반도체"],
+      "out_of_scope_reason": null,
+      "tagging_status": "auto"
+    }
+  },
+  {
+    "case": "picture_only_oos_foreign",
+    "input": {
+      "file_name": "scan_disney_1q26.pdf",
+      "caption": null,
+      "sent_at": "2026-05-18T05:00:00+00:00",
+      "pdf_text": ""
+    },
+    "llm_mock": {
+      "report_type": "기타",
+      "title": "Disney (DIS) 1Q26 Preview",
+      "published_at": "2026-05-18",
+      "stock_codes_raw": [],
+      "company_names_raw": ["Disney"],
+      "publisher_canon": "키움증권",
+      "analysts": ["최선아"],
+      "oos_signals": {
+        "foreign_primary_coverage": true,
+        "etf_or_fund": false,
+        "digital_asset": false,
+        "private_company_likely": false
+      },
+      "self_confidence": "high",
+      "notes": null
+    },
+    "expected": {
+      "report_type": "기타",
+      "publisher": "키움증권",
+      "publisher_type": "broker",
+      "stock_codes": [],
+      "company_names": [],
+      "stock_codes_raw": [],
+      "company_names_raw": ["Disney"],
+      "out_of_scope_reason": "foreign",
+      "tagging_status": "auto"
+    }
   }
 ]
