@@ -7,7 +7,7 @@
 | 파이썬 코드 구조 | 모든 파이썬 코드가 `research_desk/` 한 패키지(`core`, `domain`, `collector`, `tagger`, `features/{companies, reports, analysis, compare, coverage, review, prices, peers, freshness}`, `web`, 명령 입구)에 있다. 옛 `langgraph_tagger/`·루트 모듈·옛 명령은 없다 | 전체 테스트 통과, `python -m langgraph_tagger`는 "No module named" |
 | 칸 경계 자동 검사 | import 경계·외부 도구 위치(pymongo·bson·httpx 포함)·옛 코드 금지·표 주인 규칙(주가·유사 기업 표 포함)을 구조 검사가 매 테스트에서 확인 | `research_desk/tests/test_architecture.py` 통과 |
 | 커밋 검사 | 커밋·병합 커밋마다 전체 테스트, 실패하면 막음 | 규칙 위반 파일을 넣은 커밋이 막히는 것을 임시 작업 폴더에서 확인 |
-| 수집(`collect`) | 동작·인자·종료 코드가 예전 `main.py`와 같다 | 테스트 통과(가짜 텔레그램·DB). 실제 텔레그램 접속으로는 아직 돌리지 않았다 |
+| 수집(`collect`) | 동작·인자·종료 코드가 예전 `main.py`와 같다 | 테스트 통과(가짜 텔레그램·DB). 2026-10-09 실제 텔레그램 접속으로 돌려 9월 초 메시지부터 그날까지 따라잡았다(링크 만료로 실패한 메시지는 다음 실행에서 다시 받음, 빠진 번호 없음을 `--dry-run --backfill-days 40`으로 확인) |
 | 분류(`tag run/inspect/escalate/reset-worker`) | 그림·의심 표시가 없는 행은 예전 분류기와 같은 판정·저장 값. 준비 문제는 행을 가져가기 전에 종료 코드 4 | 테스트 통과(parity 고정 사례 포함). 실제 DB로 `tag inspect` 정상. 2026-10-09 실운영 백필에서 `tag run`을 돌렸다(비정상 종료가 잦아 아래 PDF 잠금을 넣었다) |
 | 종목표 버전 | 버전 정보 파일(`KRX@2026-05-08` + 내용 지문), `stocks set-version`, 불일치 시 분류 중단 | 테스트 통과. 운영 DB의 분류된 행이 모두 `KRX@2026-05-08`(마이그레이션 007 적용, 바뀐 행 백업 후 실행) |
 | 기존 웹앱 기능(기업 목록·리포트·분석·비교·커버리지·검토) | 주소·응답·문구가 예전 웹앱과 같고, 기능별로 준비 실패가 격리된다 | 테스트 통과. 예전 앱과 `/openapi.json`이 같은 내용. 실제 설정으로 프로세스 안에서 GET 8개(health, workspace, 리포트 목록, 기업 활동, market, review, `/`, 화면 파일 1개) 모두 200 |
@@ -50,4 +50,4 @@
 
 ## 막힌 것
 
-- 유사 기업 전체 계산(3번의 6·7)은 별도 저장소의 DART 수집 프로그램이 `FS.A001_v2`를 채워야 시작할 수 있다.
+- 유사 기업 전체 계산(6번의 6·7)은 별도 저장소의 DART 수집 프로그램이 `FS.A001_v2`를 채워야 시작할 수 있다.
