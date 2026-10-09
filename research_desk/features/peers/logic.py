@@ -12,7 +12,7 @@
 - Input assembly (§5.1): labelled blocks from the business-report sections, each cut at its cap,
   the whole input at ``INPUT_CAP``; ``truncated`` says whether anything was cut.
 - Grounding and caps (§5.2, §5.4): terms missing from the input are dropped and counted; then
-  lists are de-duplicated by key and cut to their caps.
+  lists are de-duplicated by key and cut to their caps, segments in revenue-share order first.
 - Embedding texts (§6.1), unit vectors, the seed segment order (§6.2).
 - Percentile tables, interpolation and tiers (§6.3): the web reads a similarity's percentile from
   a build's table with ``percentile_of`` and its tier with ``tier_of``.
@@ -300,6 +300,7 @@ PROFILE_CAPS = {"products": 12, "keywords": 15, "applications": 8, "customers": 
 SEGMENT_CAPS = {"products": 6, "keywords": 6}
 SEGMENTS_MAX = 6
 ROLES_MAX = 2
+NO_ROLE = "기타"              # stored when the AI gives no role (spec §5.2: 1 to 2 roles)
 NICHE_MAX_CHARS = 40
 SUMMARY_MAX_CHARS = 160
 
@@ -363,7 +364,9 @@ def _share(value: float) -> float:
 
 def cap_profile(profile: CompanyProfile, synonyms: Synonyms) -> CompanyProfile:
     """Lists de-duplicated by key and cut to their caps, texts to their lengths, nameless segments
-    dropped, impossible shares turned into -1 (spec §5.2: limits are cut in code)."""
+    dropped, impossible shares turned into -1 (spec §5.2: limits are cut in code). Segments are
+    put in revenue-share order (largest first, unknown after the known, ties as given) before
+    the first ``SEGMENTS_MAX`` are kept; no role at all becomes ``[NO_ROLE]``."""
     segments = []
     for segment in profile.segments:
         name = segment.name.strip()
@@ -375,12 +378,13 @@ def cap_profile(profile: CompanyProfile, synonyms: Synonyms) -> CompanyProfile:
             keywords=_tidy(segment.keywords, SEGMENT_CAPS["keywords"], synonyms),
             revenue_share_pct=_share(segment.revenue_share_pct),
         ))
+    by_share = [segments[i] for i in segment_order([s.revenue_share_pct for s in segments])]
     update: dict[str, Any] = {f: _tidy(getattr(profile, f), cap, synonyms) for f, cap in PROFILE_CAPS.items()}
     update.update(
         niche_industry=profile.niche_industry.strip()[:NICHE_MAX_CHARS],
         summary=profile.summary.strip()[:SUMMARY_MAX_CHARS],
-        roles=list(dict.fromkeys(profile.roles))[:ROLES_MAX],
-        segments=segments[:SEGMENTS_MAX],
+        roles=list(dict.fromkeys(profile.roles))[:ROLES_MAX] or [NO_ROLE],
+        segments=by_share[:SEGMENTS_MAX],
     )
     return profile.model_copy(update=update)
 

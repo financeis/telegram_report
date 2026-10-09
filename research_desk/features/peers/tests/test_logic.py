@@ -284,8 +284,27 @@ def test_caps_drop_nameless_segments_and_impossible_shares():
     p = profile(segments=[seg(name=' ', share=50), seg(name='A', share=120.0),
                           seg(name='B', share=-3), seg(name='C', share=0.0), seg(name='D', share=-1)])
     capped = logic.cap_profile(p, SYN)
+    # Unknown shares (-1, also for impossible ones) go after the known ones, in their own order.
     assert [(s.name, s.revenue_share_pct) for s in capped.segments] == [
-        ('A', -1.0), ('B', -1.0), ('C', 0.0), ('D', -1.0)]
+        ('C', 0.0), ('A', -1.0), ('B', -1.0), ('D', -1.0)]
+
+
+def test_segments_are_ordered_by_share_before_the_cap_of_six():
+    small = [seg(name=f'소{i}', share=5.0) for i in range(6)]
+    capped = logic.cap_profile(profile(segments=small + [seg(name='주력', share=70.0)]), SYN)
+    assert [(s.name, s.revenue_share_pct) for s in capped.segments] == [
+        ('주력', 70.0), ('소0', 5.0), ('소1', 5.0), ('소2', 5.0), ('소3', 5.0), ('소4', 5.0)]
+
+
+def test_segments_with_unknown_shares_come_last_and_ties_keep_their_order():
+    p = profile(segments=[seg(name='미상', share=-1), seg(name='작음', share=10.0), seg(name='큼', share=60.0),
+                          seg(name='작음2', share=10.0)])
+    assert [s.name for s in logic.cap_profile(p, SYN).segments] == ['큼', '작음', '작음2', '미상']
+
+
+def test_no_role_given_is_stored_as_other():
+    assert logic.cap_profile(profile(roles=[]), SYN).roles == ['기타']
+    assert logic.cap_profile(profile(roles=['부품', '부품']), SYN).roles == ['부품']
 
 
 # ── embedding texts (§6.1) ───────────────────────────────────────────────────
