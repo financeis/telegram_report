@@ -11,3 +11,6 @@
 | [0007](0007-tagging-concurrency-2-batch-10.md) | 분류 LLM 동시 호출 2, 백필 배치 10 | 2026-05 |
 | [0008](0008-analysis-model-codex-luna.md) | 재무 분석·비교 모델은 `codex:gpt-6-luna`, Claude에서는 형식 강제 없이 검증 | 2026-10-08 |
 | [0009](0009-analysis-without-routes.md) | 분석 기능은 웹 주소 없이 받은 행만 분석하고, 분석 주소는 리포트 기능이 맡는다 | 2026-10-08 |
+| [0010](0010-page-picture-for-text-less-pdfs.md) | 글자 없는 PDF는 첫 장 그림을 AI에게 보여 준다 | 2026-10-10 |
+| [0011](0011-closed-publisher-list-filename-tag-only-for-suspects.md) | 발행처는 사전의 닫힌 목록 안에서 AI가 고르고, 파일 이름 표기는 의심 표시·다시 분류 대상 고르기에만 쓴다 | 2026-10-10 |
+| [0012](0012-requeue-to-pending-for-retagging.md) | 다시 분류는 대기 줄로 되돌리는 `tag requeue`로 한다 | 2026-10-10 |

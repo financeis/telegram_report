@@ -14,17 +14,30 @@ Inputs (`pdf_text`, `caption`, `sent_at`) and `llm_mock` payloads are
 informed by the v2 spec rules and the KRX index entries shipped with
 the repo.
 
-The 12 cases below cover the 6 v2 `report_type`s, all 5 OOS reasons
-(`foreign` / `fund` / `digital` / `private` / `ir_self`), and the
-`krx_name_code_mismatch` boundary scenario. Reference docs:
+The 19 cases below cover the 6 v2 `report_type`s, all 5 OOS reasons
+(`foreign` / `fund` / `digital` / `private` / `ir_self`) and the
+`krx_name_code_mismatch` boundary scenario (the first 12 cases, whose
+expected values did not change when the picture and publisher rules came
+in), then the publisher checks (a filename tag pointing to another
+publisher, an alias answer stored as null, no tag and no publisher, an
+IR자료 with a broker's filename tag) and picture-only PDFs (no text on the
+page, so page 1 is drawn and sent to the AI). Reference docs:
 
 - `docs/superpowers/specs/2026-05-09-langgraph-tagger-v2-design.md`
   for the v2 policy (oos_gate / mark_oos_reason / decide_status).
 - `research_desk/tagger/llm_schemas.py` for the LLMExtraction v2 fields.
 - `research_desk/tagger/sql.py::UPDATE_SQL` for the 19-arg payload.
 - `research_desk/tagger/vocabulary/publishers.yaml` for canonical publisher
-  names. The LLM emits `publisher_canon` / `publisher_type` directly
-  in v2 (no system-side alias resolution).
+  names. The LLM answers `publisher_canon` only: one canonical name or
+  null. Anything else (an alias such as `Eugene`, a typo) is stored as
+  null without an error, and `publisher_type` comes from the dictionary
+  section of the stored name, never from the LLM. The filename tag
+  (`_YYYYMMDD_<tag>_<digits>.pdf`) only adds `publisher_suspect:*` notes.
+- `research_desk/tagger/nodes/decide_status.py::apply_final_rules` for the
+  rules applied last: a row read from the page picture (`page_image`) or
+  with a suspect publisher is at most `medium` (`low` stays `low`), and its
+  notes are the base note, then `page_image`, then
+  `publisher_suspect:<why>`, joined by `;`.
 - `docs/stock_data/KRX_stocks_data.csv` for KRX validation / enrichment.
   Stock codes referenced (`005930` 삼성전자, `000660` SK하이닉스) are
   both present in the snapshot used by tests, with sector_major=반도체
@@ -46,6 +59,13 @@ The 12 cases below cover the 6 v2 `report_type`s, all 5 OOS reasons
 | `oos_digital`                | digital_asset=true                                      | auto / high          |
 | `oos_private`                | private_company_likely=true + KRX 미매칭                | auto / medium        |
 | `oos_ir_self`                | report_type='IR자료' → 자동 OOS ir_self                 | auto / high          |
+| `publisher_filename_mismatch` | tag `MERITZ`, AI 키움증권 → stored 키움증권 + `publisher_suspect:filename_mismatch` | auto / medium |
+| `publisher_alias_answer_null` | AI answers the alias `Eugene` → stored null, tag `Eugene` → `publisher_suspect:filename_mismatch` | auto / medium |
+| `publisher_unknown_null`     | no filename tag, AI null → `publisher_suspect:unknown`  | auto / medium        |
+| `oos_ir_self_broker_filename_tag` | IR자료 (해당기업) with tag `MERITZ` → ir_self + `publisher_suspect:filename_mismatch` | auto / medium |
+| `picture_only_단일종목`      | no text → page 1 picture, KRX-matched 단일종목, tag `Kiwoom` agrees → `page_image` | auto / medium |
+| `picture_only_oos_foreign`   | no text → page 1 picture, foreign_primary_coverage=true → `page_image` | auto / medium |
+| `picture_only_unmatched_suspect_review` | no text → page 1 picture, KRX 미매칭 단일종목, AI null, no tag → `krx_unmatched_in_scope:ipo_pending_or_unknown;page_image;publisher_suspect:unknown` | review_needed / low |
 
 ## Field semantics
 
@@ -53,9 +73,10 @@ The 12 cases below cover the 6 v2 `report_type`s, all 5 OOS reasons
 (no `_contains` suffix in v2 — assertions are exact equality, except
 list-valued columns which compare element-wise after `list()` cast).
 
-OOS rows preserve the LLM-emitted `report_type` / `publisher` /
-`publisher_type` / `title` / `analysts` / `stock_codes_raw` /
-`company_names_raw` (audit) but force `stock_codes` / `company_names` /
+OOS rows preserve the LLM-emitted `report_type` / `title` / `analysts` /
+`stock_codes_raw` / `company_names_raw` (audit) and the checked
+`publisher` / `publisher_type` (a canonical name and its dictionary
+section, or null), but force `stock_codes` / `company_names` /
 `sectors_*` / `products` to empty.
 
 For `단일종목_mismatch_medium` the KRX entry name overwrites
@@ -64,4 +85,6 @@ so reviewers can audit the discrepancy.
 
 The PDF body in each fixture is synthesized by the test driver via
 PyMuPDF with `fontname="korea"` so Hangul roundtrips through
-`extract_pdf` cleanly.
+`extract_pdf` cleanly. The `picture_only_*` cases have an empty
+`pdf_text`: the page has no text, so `extract_pdf` draws page 1 and the
+mock model (`gpt-5.4-mini`, which takes images) answers from the picture.

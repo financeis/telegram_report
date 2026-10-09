@@ -3,7 +3,7 @@
 Every command is registered here, in one place, by its area's registration function:
 
 - ``collect``: ``research_desk.collector.cli.register``
-- ``tag`` (run / inspect / escalate / reset-worker): ``research_desk.tagger.cli.register``
+- ``tag`` (run / inspect / escalate / reset-worker / requeue): ``research_desk.tagger.cli.register``
 - ``web``: ``research_desk.web.server.register``
 - ``stocks set-version --as-of YYYY-MM-DD``: ``register_stocks`` below (core settings and
   ``domain.stocks``)
@@ -12,8 +12,9 @@ A new background command is its area's ``register`` function plus one line in ``
 
 ``main(argv)`` parses the arguments and returns the exit code of the command's ``func(args)``.
 No command, an unknown command or bad arguments: argparse's usage message and exit code 2.
-``--help`` on any command: 0. Exit code 4 means "not ready", a state that running again does not
-fix (a missing setting, a stock list that does not match its version); ``tag`` and ``stocks``
+``--help`` on any command: 0. Exit code 4 means "not ready": nothing was changed, and running
+again after fixing what the one-line message says works (a missing setting, a stock list that
+does not match its version, ``tag requeue --apply`` while a backfill runs); ``tag`` and ``stocks``
 use it.
 
 ``stocks set-version`` (spec §8) records the stock list's content hash under the version

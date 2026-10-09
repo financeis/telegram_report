@@ -86,19 +86,52 @@
 | 명령 | 인자 | 출력 | 종료 코드 |
 |---|---|---|---|
 | `collect` | `--cutoff-days N` 또는 `--backfill-days N`(같이 못 씀), `--dry-run`, `-v/--verbose` | 로그. 설정 누락 시 stderr `Config error: Missing required env var: <이름>` | 0 성공 / 1 전체 실패 / 2 일부 실패 |
-| `tag run` | `--batch-size N`, `--model M`, `--dry-run`, `--row-ids 1,2,3`, `--max-concurrent-llm N`, `--worker-id W` | stdout에 배치 JSON 보고(`worker_id` 포함) | 0 / 4 준비 문제 / 1 |
+| `tag run` | `--batch-size N`, `--model M`, `--dry-run`, `--row-ids 1,2,3`, `--max-concurrent-llm N`, `--worker-id W` | stdout에 배치 JSON 보고(아래 "분류 배치 보고", `worker_id` 포함) | 0 / 4 준비 문제 / 1 |
 | `tag inspect` | 없음 | `{"pending", "processing", "auto", "review_needed", "verified", "oos_total", "last_24h"}` | 0 / 4 / 1 |
 | `tag escalate` | `--since ISO시각`(필수), `--model M`, `--max-concurrent-llm N` | 대상 없음 `{"escalated": 0, "since": "<받은 값>"}`, 있으면 run과 같은 보고(`worker_id` 키 없음) | 0 / 4 / 1 |
 | `tag reset-worker` | `--worker-id W`(필수) | `{"worker_id", "reset_count", "ids"}` | 0 / 4 / 1 |
+| `tag requeue` | 대상 조건 `--unreadable`, `--publisher-not-in-dictionary`, `--publisher-filename-mismatch`, `--publisher-type-mismatch`, `--krx-unmatched` 중 하나 이상(없으면 2), `--apply`(없으면 미리 보기) | stdout에 JSON 하나(아래 "`tag requeue` 보고") | 0 정상(대상 0건 포함) / 4 준비 문제(아무것도 바꾸지 않음) / 1 그 밖의 오류(stdout 비움, stderr 한 줄) / 2 인자 오류 |
 | `web` | `--view reports\|market\|review`(기본 reports) | 첫 줄 `Research Desk: http://127.0.0.1:8520/?view=<view>`, 그 뒤 서버 실행 | 0 (Ctrl+C까지 돈다) |
 | `stocks set-version` | `--as-of YYYY-MM-DD`(필수) | 성공 시 stdout에 새 버전 `KRX@YYYY-MM-DD` | 0 / 4(날짜 형식·종목표 형식 오류, 버전 정보 파일은 그대로) |
 
-**준비 문제(4)의 stderr 문구** — `tag run`·`tag escalate`는 행을 가져가기 전에 이 중 하나를 찍고 끝난다:
+### 분류 배치 보고 (`tag run`, `tag escalate`)
+
+- 키(이 순서): `model, processed, auto, review_needed, confidence{high, medium, low}, oos{foreign, fund, digital, private, ir_self}, review_reasons, transient_errors, deadline_errors, unhandled_errors, page_image, page_image_unsupported, publisher_suspect, dry_run, batch_size`, `--dry-run`이면 `rows`, `tag run`은 마지막에 `worker_id`.
+  - `review_reasons`: 검토 사유 4가지(`first_page_unreadable`, `llm_refusal`, `type_indeterminate`, `krx_unmatched_in_scope`)별 건수. 덧붙는 메모는 세지 않는다.
+  - `page_image`: 1쪽 그림으로 AI에게 물은 행 수. `page_image_unsupported`: 그림이 필요했지만 분류 모델이 그림을 받지 못한 행 수. `publisher_suspect`: 발행처 의심 표시가 붙은 행 수. 모두 정수다.
+  - `rows`(`--dry-run`만): 처리한 행마다 `{"id", "tagging_status", "tagging_confidence", "report_type", "publisher", "publisher_type", "tagging_notes"}`(썼다면 들어갔을 값), 오류 난 행은 `{"id", "error", "detail"}`(`error`는 `transient`·`deadline_exceeded`·`unhandled`). `--dry-run`이 아니면 `rows`가 없다.
+- 가져간 행이 없으면 빈 보고 `{"model", "processed": 0, "auto": 0, "review_needed": 0, "confidence", "oos", "review_reasons": {}, "transient_errors": 0, "deadline_errors": 0, "unhandled_errors": 0}`(`tag run`은 `worker_id`도). `page_image`·`page_image_unsupported`·`publisher_suspect`·`dry_run`·`batch_size`·`rows`가 없다.
+- `tag escalate`는 대상이 없으면 한 줄 `{"escalated": 0, "since": "<받은 값>"}`이고, 있으면 위 보고에서 `worker_id`만 없다.
+
+### `tag requeue` 보고
+
+- 미리 보기(기본, 아무것도 쓰지 않음): `{"mode": "preview", "selected": {…}, "skipped": {…}, "total": n, "publisher_values": {…}, "unknown_filename_tags": {…}}`.
+- 적용(`--apply`): `{"mode": "apply", "selected": {…}, "skipped": {…}, "total": n, "requeued": n, "backup_file": "<백업 파일 절대 경로>"|null}`.
+- `selected`: 고른 조건만, 조건 이름(`unreadable`, `publisher_not_in_dictionary`, `publisher_filename_mismatch`, `publisher_type_mismatch`, `krx_unmatched`, 이 순서)별 행 수. 한 행이 여러 조건에 맞으면 각각 센다.
+- `skipped`: `--unreadable`을 골랐을 때만 `{"unreadable_no_page": n}`(메모는 맞지만 지금 1쪽 그림을 만들 수 없어 고르지 않은 행 수), 아니면 `{}`.
+- `total`: 중복 없는 대상 행 수. `requeued`: 실제로 `pending`으로 되돌린 행 수(그사이 바뀐 행은 빠지므로 `total`보다 작을 수 있다).
+- `publisher_values`: 대상 행의 지금 발행처 값별 건수(비어 있으면 `(null)`), 많은 순. `unknown_filename_tags`: 고른 조건과 상관없이 분류된 행(`auto`·`review_needed`·`verified`) 전체에서 사전에 없는 파일 이름 표기별 건수, 많은 순.
+- 대상이 0건인 적용은 백업도 쓰기도 없이 `"requeued": 0, "backup_file": null`, 종료 코드 0이다.
+- 백업 파일: `<저장소>/backups/requeue/requeue-YYYYMMDD-HHMMSS.csv`(같은 초면 `-1`, `-2` …). UTF-8(BOM 없음), 칸은 `id`, `file_name`, `tagging_status`, `tagged_at`과 되돌리며 비우는 나머지 칸 전부(머리줄에 칸 이름), 값은 Postgres 글자 그대로(배열은 `{…}`), NULL은 따옴표 없는 빈 칸. 기록용이다 — 백업에서 되돌리는 명령은 없다.
+- stdout이 저장된 값의 글자를 못 보여 주는 코드 페이지면 같은 JSON을 `\uXXXX`로 이스케이프해 낸다.
+- 1로 끝날 때 stderr 한 줄: `백업 파일을 쓰지 못해 아무것도 바꾸지 않았습니다: <이유>` / `되돌린 행 수(<n>)가 다시 확인한 행 수(<m>)와 달라 모두 취소했습니다. 아무것도 바뀌지 않았습니다.` / `tag requeue를 마치지 못했습니다: <예외 이름>: <내용>`.
+- 조건이 없으면 사용법과 함께 `대상 조건을 하나 이상 고르세요: --unreadable, --publisher-not-in-dictionary, --publisher-filename-mismatch, --publisher-type-mismatch, --krx-unmatched`, 종료 코드 2.
+
+### 준비 문제(4)의 stderr 문구
+
+4는 아무것도 바꾸지 않았고, 안내대로 고친 뒤 다시 실행하면 되는 문제다. `tag run`·`tag escalate`는 행을 가져가기 전에 이 중 하나를 찍고 끝난다:
 - 키 누락: `<변수> is required` (예: `ANTHROPIC_API_KEY is required`)
 - `SUPABASE_DB_URL` 누락: `SUPABASE_DB_URL is required` (`tag inspect`·`tag reset-worker`도 같다)
 - codex CLI 없음: `codex CLI not found for model <모델>`
 - 종목표 파일 없음·못 읽음·머리줄 틀림: `종목표 파일을 읽을 수 없습니다: <이유>`
 - 종목표 지문 불일치·버전 정보 없음: `종목표 파일 내용이 버전 정보와 다릅니다. 종목표를 바꿨다면 python -m research_desk stocks set-version --as-of <자료 기준일, YYYY-MM-DD>를 실행한 뒤 다시 시작하세요.`
+
+`tag requeue`는 DB에 닿기 전에 이 순서로 확인하고, 하나라도 걸리면 그 한 줄을 찍고 4로 끝난다(어떤 행도 바꾸지 않았다):
+- `SUPABASE_DB_URL is required`
+- 발행처 사전을 못 읽음·사전 규칙 위반: `발행처 사전을 읽을 수 없습니다: <이유>`
+- `--unreadable`인데 분류 모델(`LLM_MODEL_DEFAULT`)이 그림을 못 받음: `지금 분류 모델 <모델>은(는) 그림을 받지 못해 --unreadable 행을 되돌려도 다시 못 읽음이 됩니다. LLM_MODEL_DEFAULT를 그림을 받는 모델로 바꾼 뒤 다시 실행하세요.`
+- `--apply`인데 이 PC에서 작업이 돌고 있음: `실행 중인 작업이 있어 아무것도 바꾸지 않았습니다. 다음을 끈 뒤 다시 실행하세요: <작업> PID <번호>` — 작업 이름은 `백필(run-batches.ps1 또는 research_desk tag run)`, `재처리(research_desk tag escalate)`, `수집(research_desk collect)`, `웹앱(research_desk web)`이고, 여럿이면 ` / `로 잇는다.
+- `--apply`인데 프로세스 목록을 못 읽음: `프로세스 목록을 읽을 수 없어 실행 중인 작업을 확인하지 못했습니다. 아무것도 바꾸지 않았습니다: <이유>`
 
 ## 스크립트 — `scripts/*.ps1` (Windows PowerShell 5.1)
 

@@ -27,10 +27,11 @@
 | `python -m research_desk tag inspect` | 큐 분포 JSON: `pending`, `processing`, `auto`, `review_needed`, `verified`, `oos_total`, `last_24h` |
 | `python -m research_desk tag escalate --since <ISO 시각>` | 그 시각 이후 분류된 `review_needed` 행을 `LLM_MODEL_ESCALATION`으로 다시 분류. 시각에 오프셋이 없으면 UTC로 읽는다(한국 시간이면 `+09:00`을 붙인다) |
 | `python -m research_desk tag reset-worker --worker-id W` | 그 작업자의 `processing` 행을 `pending`으로 되돌림 |
+| `python -m research_desk tag requeue <조건…> [--apply]` | 이미 분류된 `auto`·`review_needed` 행 가운데 조건에 맞는 것을 `pending`으로 되돌림(다시 분류는 평소 백필). 조건 `--unreadable`, `--publisher-not-in-dictionary`, `--publisher-filename-mismatch`, `--publisher-type-mismatch`, `--krx-unmatched` 중 하나 이상. 기본은 미리 보기(아무것도 쓰지 않음), `--apply`면 백업 CSV를 먼저 쓰고 한 트랜잭션으로 되돌림. AI를 부르지 않는다. 아래 "다시 분류 대기" |
 | `python -m research_desk web [--view reports\|market\|review]` | 웹앱을 `http://127.0.0.1:8520/?view=<view>`에서 실행(Ctrl+C로 종료) |
 | `python -m research_desk stocks set-version --as-of YYYY-MM-DD` | 종목표 버전 정보 파일 갱신 |
 
-종료 코드: `collect`는 0 성공 / 1 전체 실패 / 2 일부 실패. `tag`·`stocks`는 0 정상 / 4 준비 문제(안내대로 고친 뒤 다시 실행 — 재시도로는 안 풀림) / 1 그 밖의 오류. 인자 오류는 모두 2.
+종료 코드: `collect`는 0 성공 / 1 전체 실패 / 2 일부 실패. `tag`·`stocks`는 0 정상 / 4 준비 문제(아무것도 바꾸지 않았다 — 찍힌 안내대로 고친 뒤 다시 실행한다. 고치지 않고 재시도만 해서는 안 풀린다) / 1 그 밖의 오류. 인자 오류는 모두 2.
 
 ## 웹앱 (Research Desk)
 
@@ -68,6 +69,8 @@ powershell -File scripts\run-batches.ps1 -Iterations N -BatchSize 10
 | LLM 429·5xx·시간 초과·네트워크 오류 (Anthropic/OpenAI) | 분류기가 그 행을 `pending`으로 되돌림 → 다음 배치에서 재시도 |
 | 행 하나가 90초(`PER_ROW_DEADLINE_S`) 초과 | 위와 같음 |
 | 실행 자체가 비정상 종료(크래시) | 스크립트가 그 작업자 ID의 행만 되돌리고(`tag reset-worker`) 최대 2회 재시도 |
+| 글자가 없는 PDF(쪽 전체가 그림) | 분류기가 1쪽 그림을 AI에게 보여 주고 `medium` + 메모 `page_image`로 마감. 그림도 못 만들면 검토 대기(`first_page_unreadable`) |
+| AI가 사전에 없는 발행처 이름을 답함 | 분류기가 발행처를 비워서 저장(행은 실패하지 않음). 파일 이름 표기와 다르거나 모르면 `medium` + 메모 `publisher_suspect:…` |
 | **3회 연속 실패** | 스크립트가 종료 코드 1로 멈춤. **사람이 원인을 본다** |
 | **준비 문제** (설정 누락, codex CLI 없음, 종목표를 못 읽음, 종목표 버전 불일치) | `tag run`이 행을 하나도 가져가지 않고 4로 끝남 → 스크립트가 되돌리기·재시도 없이 바로 4로 멈추고 `준비 문제로 멈춥니다. 위 안내를 따른 뒤 다시 실행하세요.`를 출력. **위에 찍힌 안내대로 고친 뒤 다시 실행한다** |
 | 되돌리기(`tag reset-worker`) 자체 실패 | 스크립트가 3으로 멈춤 → 사람이 DB 연결을 확인하고 `tag inspect`로 `processing` 행을 본다 |
@@ -76,7 +79,10 @@ powershell -File scripts\run-batches.ps1 -Iterations N -BatchSize 10
 
 ### 5. 알려진 무해한 경고 (디버깅하지 말 것)
 - Pydantic serializer warning (`LLMExtraction` 직렬화 시) — 기능 영향 없음.
-- Windows native crash `exit=-1073741569` — 스크립트가 자동 복구한다. 데이터 손실 없음이 검증됐다(3회 반복 테스트 중 1회 발생, 5건 자동 되돌림 후 재시도 성공).
+- Windows native crash `exit=-1073741569`(드물게 `-1073741784`) — 스크립트가 그 작업자의 행을 되돌리고 다시 시도해 자동 복구한다(데이터 손실 없음). 다만 한 배치가 3번 연속 나면 스크립트가 1로 멈춘다.
+  - 2026-10-09 백필에서 `tag run` 937번 중 131번 났다. 처음 120여 배치에서는 없다가 그 뒤 몇 분에 한 번꼴이었고, 같은 행을 다시 돌리면 성공했다. 충돌 직후 배치에서 글자가 있는 PDF 1건이 `first_page_unreadable`로 저장된 일도 있었다.
+  - 원인 추정: 분류기가 PDF 두 개를 두 스레드에서 동시에 읽었다(PyMuPDF는 여러 스레드 동시 사용을 지원하지 않는다). 2026-10-10에 PDF 접근을 프로세스 안에서 줄 세웠다(`core.pdf` 잠금).
+  - 잠금 뒤 재측정: 아직 없음 — 운영 적용 백필의 비정상 종료 횟수를 이 줄에 적는다.
 - `tag run`·`tag escalate` 시작 때 LangGraph의 `LangChainPendingDeprecationWarning` — 기능 영향 없음.
 
 ## 모니터링
@@ -97,6 +103,10 @@ langsmith trace list --project telegram_report --error --last-n-minutes 30
 
 이 비율이 짧은 시간에 크게 흔들리면 백필을 멈추고 원인을 찾는다. 태깅 모델이 2026-10-08부터 `claude-haiku-5-5`로 바뀌어 위 기준(이전 모델 기준)과 다소 다를 수 있다. 행에 모델 이름은 저장되지 않으므로, 모델별로 나눠 볼 때는 `tagged_at`으로 구분한다.
 
+**그림·발행처 표시 (설계상 `medium` 비율이 오른다).** 배치 JSON의 `page_image`(1쪽 그림으로 읽은 행), `page_image_unsupported`(그림이 필요했지만 모델이 못 받은 행), `publisher_suspect`(발행처 의심 표시가 붙은 행)를 본다. 그림 행과 의심 행은 상태를 바꾸지 않고 신뢰도만 `medium`으로 낮추므로, 이 기능이 들어간 뒤(2026-10-10) 분류된 행은 위 기준보다 `medium` 비율이 높은 것이 정상이다. `review_reasons`에는 이 셋이 들어가지 않는다. `page_image_unsupported`가 0보다 크면 분류 모델이 그림을 받지 못하는 모델이다 — 아래 모델 표를 본다. 그림·의심 행을 골라 보려면 `tagging_notes`에 `page_image`·`publisher_suspect`가 든 행을 찾는다(`tag inspect`는 메모를 세지 않는다).
+
+**다시 분류하는 동안.** `tag requeue --apply` 뒤 백필이 도는 동안에는 대기·검토 숫자가 크게 바뀌는 것이 정상이다. 이때 비율 감시는 다시 분류된 행끼리만 한다.
+
 **배치 보고에서 볼 것.** 키가 틀리거나 만료돼 모든 LLM 호출이 거절돼도 `tag run`은 0으로 끝나고 행은 모두 `pending`으로 돌아간다. 반복 실행 스크립트는 멈추지 않고 다음 배치를 계속 돈다. 배치 JSON의 `auto`·`review_needed`가 0이고 `unhandled_errors`나 `transient_errors`가 배치 크기만큼이면 스크립트를 Ctrl+C로 멈추고 키·로그인·공급자 상태를 확인한다. 같은 행이 매번 오류를 내면 되돌려진 뒤 다음 배치에서 다시 먼저 잡혀 배치마다 한 자리를 차지한다(자동으로 검토로 넘기는 장치는 없다).
 
 ## AI 모델 구성
@@ -108,7 +118,8 @@ langsmith trace list --project telegram_report --error --last-n-minutes 30
 | 재무 분석·리포트 비교(웹앱) | `LLM_MODEL_PHASE2` | `gpt-6-luna` (운영 `.env`는 `codex:gpt-6-luna`) | `codex:` 접두사 → 로컬 `codex exec` |
 
 - **모델 이름이 공급자를 정한다:** `claude-*` → Anthropic API, `codex:<모델>` → 로컬 Codex CLI(ChatGPT 로그인 한도, API 키 불필요), 그 밖 → OpenAI API. 바꾸거나 되돌릴 때는 `.env`의 모델 이름만 고치고 워커·웹앱을 다시 켠다. 옛 이름 `OPENAI_MODEL_*`도 `LLM_MODEL_*`이 없을 때 읽는다.
-- 분류 명령은 시작할 때 **실제로 쓸 모델**의 키만 확인한다(`tag run`은 태깅 모델, `tag escalate`는 재처리 모델, `--model`을 주면 그 모델). `tag inspect`·`tag reset-worker`는 키가 필요 없다.
+- 분류 명령은 시작할 때 **실제로 쓸 모델**의 키만 확인한다(`tag run`은 태깅 모델, `tag escalate`는 재처리 모델, `--model`을 주면 그 모델). `tag inspect`·`tag reset-worker`·`tag requeue`는 키가 필요 없다.
+- **분류 모델은 그림을 받는 모델이어야 한다.** 글자가 없는 PDF는 1쪽 그림을 AI에게 보여 준다. Claude 모델과 `gpt-5.4` 같은 지금의 OpenAI 모델은 그림을 받는다(codex 경로는 그림 파일을 `-i`로 붙인다). 그림을 받지 못하는 모델(`gpt-3.5…`, `o1-mini` 같은 글자 전용 이름)로 바꾸면 그런 PDF는 AI를 부르지 않고 검토 대기(`first_page_unreadable`)로 가고 배치 보고의 `page_image_unsupported`가 늘며, `tag requeue --unreadable`은 4로 멈춘다.
 - 웹앱은 분석·비교 해석문을 실제로 부르기 직전에만 키·codex를 확인한다. 없으면 `분석 기능을 지금 쓸 수 없습니다: …`로 막히고, 목록·재사용·검토는 그대로 동작한다.
 - 재무 분석이 `codex:gpt-6-luna`인 이유: 사용자가 고른 리포트만 분석하므로 호출량이 적어 로그인 한도로 충분하다. Haiku는 재무 지표를 절반만 뽑고 형식 실패가 12.5%라서 뺐다(2026-10-08, 12건 비교).
 - 재무 분석 응답(`ExtractionResult`)은 스키마가 커서, Claude 모델에서는 형식 강제(grammar) 대신 "스키마를 프롬프트에 넣고 받은 JSON 글자를 pydantic으로 검증"하는 경로(`constrained=False`)를 쓴다. 태깅과 비교는 형식 강제를 쓴다.
@@ -150,6 +161,29 @@ langsmith trace list --project telegram_report --error --last-n-minutes 30
 2. `python -m research_desk stocks set-version --as-of <자료 기준일, YYYY-MM-DD>` — 새 버전 이름(`KRX@…`)이 찍히고 0이면 성공. 날짜·머리줄이 틀리면 이유를 찍고 4, 버전 정보 파일은 그대로다.
 3. 이 명령을 실행하기 전까지 `tag run`·`tag escalate`는 4로 멈추고, 웹앱은 경고 로그만 남긴다.
 4. CSV와 버전 정보 파일을 한 커밋에 올린다.
+5. 옛 종목표에 없어 검토 대기(`krx_unmatched_in_scope`)로 쌓인 행은 저절로 풀리지 않는다. 아래 "다시 분류 대기" 절차로 `tag requeue --krx-unmatched`를 미리 보기 → `--apply` → 백필한다.
+
+## 다시 분류 대기 (`tag requeue`)
+
+이미 분류된 행을 지금 규칙으로 다시 분류하고 싶을 때(발행처 사전을 고친 뒤, 분류 규칙이 바뀐 뒤, 종목표를 바꾼 뒤) 쓴다. 행을 "분류 전"(`pending`) 줄로 되돌릴 뿐이고, 실제 다시 분류는 평소 백필이 한다. 사람이 승인한(`verified`) 행은 절대 되돌리지 않는다.
+
+### 발행처 사전을 고친 뒤 (순서대로)
+1. **백필이 도는 동안에는 사전(`research_desk/tagger/vocabulary/publishers.yaml`)을 고치지 않는다.** 사전 원문이 AI 요청에 그대로 들어가서, 고치는 순간 같은 백필 안에서 다른 요청이 섞인다. 사전을 고쳐 커밋한 뒤 다음 단계로 간다.
+2. **백필·재처리·수집·웹앱을 끈다.** `--apply`가 이 PC의 프로세스 목록을 보고 하나라도 돌고 있으면 아무것도 바꾸지 않고 4로 멈추며 끌 것과 PID를 알려 준다. 사각지대: 관리자 권한으로 띄운 프로세스는 명령줄이 보이지 않아 찾지 못한다 — 백필·웹앱은 이 문서대로 일반 터미널에서 띄우고, 관리자 창에서 띄운 것이 있으면 직접 끈다.
+3. **미리 보기.** 고친 내용에 맞는 조건을 고른다: 이름을 바꾸거나 뺐으면 `--publisher-not-in-dictionary`, 구역(종류)을 옮겼으면 `--publisher-type-mismatch`, 별칭·파일 이름 표기를 더했으면 `--publisher-filename-mismatch`. 그림 경로가 생기기 전에 못 읽음으로 간 행은 `--unreadable`.
+   ```powershell
+   python -m research_desk tag requeue --publisher-not-in-dictionary --publisher-filename-mismatch --publisher-type-mismatch
+   ```
+   JSON의 `selected`(조건별 건수), `total`(되돌릴 행 수), `publisher_values`(그 행들의 지금 발행처 값), `unknown_filename_tags`(사전에 없는 파일 이름 표기 — 사전 보충 후보)를 본다. `--unreadable`을 골랐다면 `skipped.unreadable_no_page`가 지나치게 크지 않은지 본다(크면 `STORAGE_BASE_DIR`가 틀렸을 수 있다).
+4. **적용.** 같은 조건에 `--apply`를 붙인다. 대상을 다시 고르고, 바뀔 행을 `backups\requeue\requeue-YYYYMMDD-HHMMSS.csv`에 먼저 쓴 뒤, 한 트랜잭션에서 되돌리고 건수를 확인한다. 보고의 `requeued`(되돌린 수)와 `backup_file`(백업 위치)을 기록해 둔다. `requeued`가 `total`보다 작으면 그사이 바뀐 행이 빠진 것이다.
+5. **백필.** `powershell -File scripts\run-batches.ps1 -Iterations <남은 대기 건수 ÷ 10 올림> -BatchSize 10`. 되돌린 행은 먼저 수집된 순서로 잡혀 새 리포트보다 먼저 처리된다. 다시 분류될 때까지 그 리포트는 웹 목록에서 빠진다.
+6. **(필요하면) 저장된 비교 비우기.** 발행처가 바뀐 리포트의 저장된 비교 해석문은 옛 발행처 판정(같은 증권사/다른 증권사)으로 쓰인 글이고, 저절로 지워지지 않는다(`tag requeue`는 분석 결과 표를 건드리지 않는다). 비우려면 백업 CSV와 지금 값을 비교해 발행처가 바뀐 리포트를 고르고, 그 리포트가 `report_id` 또는 `prev_report_id`인 `report_summaries` 행의 비교 칸 네 개(`prev_report_id`, `prev_match_type`, `diff_narrative`, `comparison_details`)만 `docs/engineering-notes.md`의 "운영 DB 데이터 고치기" 점검표대로(백업 → 한 트랜잭션 → 바뀐 행 수 확인 → 커밋) NULL로 비운다. 분석 결과의 다른 칸은 건드리지 않는다. 비교 버튼을 다시 누르면 새로 만들어진다.
+
+### 알아 둘 것
+- 백업 폴더 `backups/requeue/`는 저장소 안에 있지만 git이 무시한다(`.gitignore`의 `/backups/`). 커밋하지 않는다. 백업은 기록용이고, 백업에서 되돌리는 명령은 없다. 대상이 0건이면 백업 파일을 만들지 않는다.
+- 한 번 돌린 뒤 같은 조건으로 또 돌려도 같은 행이 계속 되돌려지지 않는다: 그림을 만들 수 없는 행은 `--unreadable`이 고르지 않고, 의심 표시가 이미 붙은 행과 못 읽음·거부 행은 `--publisher-filename-mismatch`가 고르지 않는다.
+- 사람이 승인한 행은 되돌리지 않으므로 사전에서 이름이 바뀌거나 빠진 옛 발행처(예: `DB금융투자`, `KIRS`, `미래대우증권`)를 그대로 가진다.
+- 실패할 때: 4(준비 문제)는 아무것도 바꾸지 않았으니 안내대로 고친 뒤 다시 실행한다. 1은 stderr 한 줄로 이유를 알리고, 백업 실패와 건수 불일치는 아무것도 바꾸지 않은 상태다.
 
 ## DB 마이그레이션 적용
 
