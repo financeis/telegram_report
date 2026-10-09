@@ -155,10 +155,12 @@ class ReportStore:
     def fetch_stock_rows(self, code: str, period_start_iso: str) -> pd.DataFrame:
         """All in-scope rows where stock_codes contains the given code.
 
-        Uses supabase-py's .contains() which builds a properly-quoted
-        Postgres text-array literal from a Python list. The earlier
-        .cs('stock_codes', f'{{{code}}}') produced an unquoted array
-        like {001440} which PostgREST parsed character-by-character.
+        Uses supabase-py's .contains() with a Python list, which it joins
+        into a Postgres text-array literal without quotes ({001440}: fine
+        for codes of letters and digits). The earlier
+        .cs('stock_codes', f'{{{code}}}') passed a string, and cs() joins
+        a string's characters with commas ({{,0,0,1,4,4,0,}}), so PostgREST
+        got another array than the code meant.
         """
         chain = (_in_scope(self._select())
                  .contains('stock_codes', [code])
