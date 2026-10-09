@@ -4,6 +4,9 @@ PDF research-report collector for Korean securities. Listens to a single Telegra
 
 The same Python package, `research_desk`, then tags each report with an LLM (`tag`) and serves
 Research Desk, the local web app for reading, analyzing, comparing and reviewing the reports (`web`).
+Two batch jobs feed it more: a daily stock price snapshot from the KIS Open API (`prices update`)
+and a yearly build of business profiles from annual business reports (`peers build`) that finds
+companies with a similar business — the peers tab and the theme search in Research Desk.
 
 See [design spec](docs/superpowers/specs/2026-05-05-telegram-report-collector-design.md) for full design rationale.
 
@@ -47,7 +50,8 @@ See [design spec](docs/superpowers/specs/2026-05-05-telegram-report-collector-de
    - `TELEGRAM_CHANNEL`: channel username (default `sunstudy1004`)
    - `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`: from Supabase dashboard → Settings → API → `service_role` key (⚠️ secret — never commit)
    - `SUPABASE_DB_URL`: from Supabase project settings → Database → Connection string (URI); every `tag` command needs it
-   - `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`: the key of each provider your models use (see [Analysis models](#analysis-models))
+   - `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`: the key of each provider your models use (see [Analysis models](#analysis-models)); the peers features always need `OPENAI_API_KEY` for embeddings
+   - `KIS_APP_KEY`, `KIS_APP_SECRET`: the Korea Investment & Securities Open API key of a real account, for `prices update` (⚠️ secret — the same key as the masterdb project)
 
 6. **First run** (will prompt for SMS verification once):
 
@@ -76,8 +80,17 @@ Every command is `python -m research_desk <command>`; `--help` on any command li
 | `python -m research_desk tag reset-worker --worker-id W` | Put one worker's `processing` rows back to `pending` (cleanup after a crashed run) |
 | `python -m research_desk web` | Start Research Desk on http://127.0.0.1:8520/; `--view market` / `--view review` open the coverage / review views (default `--view reports`) |
 | `python -m research_desk stocks set-version --as-of YYYY-MM-DD` | Record the stock list's version after replacing it (see [Stock list update](#stock-list-update)) |
+| `python -m research_desk prices update` | Fetch every stock of the stock list from KIS and refresh the price snapshot and its run record (daily, through `scripts\run-prices.ps1`) |
+| `python -m research_desk prices update --codes 005930,080220` | A check: fetch only these stocks and print the computed rows; writes nothing |
+| `python -m research_desk peers build` | The yearly peers build: business profiles from the annual reports (MongoDB `FS.A001_v2`), embeddings, and a public build for the peers tab and the theme search. Options: `--fiscal-year N`, `--codes …` / `--limit n` (fewer targets), `--pilot` (a trial run that is never published and prints each target's ten nearest companies) |
+| `python -m research_desk peers inspect` | Print profile counts and tokens by fiscal year, profile version and status, and the latest builds, as JSON |
 
 Mutually exclusive: `--cutoff-days` and `--backfill-days` cannot be used together.
+
+`peers build` needs the web packages too (`requirements-workspace.txt`): it asks the reports
+feature whether tagging is running, and that loads FastAPI. It does not start while tagging is
+running (exit `1`), and a tagging backfill should not be started while it runs. The procedures for
+the daily prices and the yearly build are in [docs/operations.md](docs/operations.md).
 
 `tag inspect` and `tag reset-worker` need only `SUPABASE_DB_URL`; `tag run` and `tag escalate`
 also check the model's API key (or, for a `codex:` model, the codex CLI) and the stock list
@@ -99,15 +112,19 @@ so total in-flight downloads stay bounded.
 - `1` Total failure (config / auth / network)
 - `2` Partial failure — some messages added to `failed_attempts` table; will be auto-retried next run
 
-`tag` (every subcommand) and `stocks set-version`:
+`tag` (every subcommand), `stocks set-version`, `prices update` and `peers build` / `peers inspect`:
 
-- `0` Done
-- `4` Preparation problem — a missing setting (`<NAME> is required`), no codex CLI for a
-  `codex:` model, a stock list that cannot be read or does not match its version file, or a bad
-  `--as-of` date. The reason is printed on stderr; `tag` stops before it takes any row, and
-  `stocks set-version` leaves the version file as it was. Fix the cause, then run again —
-  retrying alone does not help.
-- `1` Any other error
+- `0` Done (`prices update`: an `ok` or `partial` run; `peers build`: a `done` or pilot build)
+- `4` Preparation problem — a missing setting (`<NAME> is required`, or a Korean sentence for
+  `prices` and `peers`), no codex CLI for a `codex:` model, a stock list that cannot be read or
+  does not match its version file, a bad `--as-of` date, an unreachable MongoDB or no business
+  report texts. The reason is printed on stderr; `tag` stops before it takes any row,
+  `stocks set-version` leaves the version file as it was, `prices update` calls neither KIS nor
+  the DB, and `peers build` starts no build. Fix the cause, then run again — retrying alone does
+  not help.
+- `1` Any other error; also a `failed` price run (more than 20 % of the stocks not received —
+  the snapshot is left as it was) and an `incomplete` peers build, a peers build refused because
+  tagging or another build is running
 
 Every command: missing or wrong arguments print the usage and exit `2`; `--help` exits `0`.
 
@@ -180,6 +197,12 @@ Python server; Vite proxies `/api` to port 8520.
 - Review the manual queue alongside the first three PDF pages: approve, mark
   out-of-scope with a reason, queue retagging, skip, and undo the last action.
 - Open a report's summary, financial estimates, valuation and page-level sources.
+- On a company page, the **유사 기업** tab lists companies with a similar business (whole company
+  or one segment), with their broker report counts, the price reaction against the market and a
+  highlight for candidates (no broker report, not yet risen); **테마로 기업 찾기** finds companies
+  by a phrase such as "레거시 DRAM". Both need a published `peers build` and the price snapshot.
+- A status line on top of every screen shows the dates of the price snapshot and of the newest
+  report, in red with the reason when one is behind.
 - Select any two reports for the same company and compare target prices,
   compatible estimates, investment theses and valuations; open both PDFs together.
 - Check any number of single-company reports and click **선택한 N건 분석**.
@@ -261,18 +284,19 @@ All Python code is one package, `research_desk/`:
 | Part | Role |
 |---|---|
 | `__main__.py`, `cli.py` | Command entry (`python -m research_desk`) and the one command list |
-| `core/` | Shared infrastructure: `.env` settings, Supabase / Postgres connections, LLM providers, PDF files; knows no business concept |
+| `core/` | Shared infrastructure: `.env` settings, Supabase / Postgres connections, LLM providers and embeddings, the KIS Open API client, MongoDB reads, PDF files; knows no business concept |
 | `domain/` | Shared rules and reference data: report vocabulary, the in-scope rule, the stock list and its version |
 | `collector/` | Telegram channel → PDF files + `pending` rows in `reports` (`collect`) |
 | `tagger/` | `pending` rows → `auto` / `review_needed` with the LangGraph row graph (`tag`) |
-| `features/` | Research Desk features, one folder each: `companies` (company list, favorites), `reports` (company reports, PDF, analyze), `analysis` (one report's financial analysis), `compare` (two reports side by side), `coverage` (research coverage counts), `review` (manual review queue) |
+| `features/` | Research Desk features, one folder each: `companies` (company list, favorites), `reports` (company reports, PDF, analyze), `analysis` (one report's financial analysis), `compare` (two reports side by side), `coverage` (research coverage counts, broker report counts), `review` (manual review queue), `prices` (daily price snapshot, `prices update`), `peers` (yearly peers build, peers tab and theme search), `freshness` (the status line) |
 | `web/` | Web server assembly: security checks, error answers, screen files, the feature list (`web`) |
 | `tests/` | The architecture check |
 
 A feature exposes only the names its `__init__.py` binds: other parts import
 `research_desk.features.<name>` or those names, never its inner modules. A new feature is a new
 folder under `features/` plus one line in the feature list in `web/app.py` (and one in `cli.py`
-if it adds a command). The architecture check (`research_desk/tests/test_architecture.py`)
+if it adds a command). A feature with a command binds no FastAPI name in its `__init__.py` (every
+command imports it) and hands its web router out through `web_router()`. The architecture check (`research_desk/tests/test_architecture.py`)
 enforces these boundaries, so the tests and the commit checks fail when code crosses them.
 
 ## Development tests
@@ -285,8 +309,8 @@ python -m pytest
 ```
 
 This collects the tests under `research_desk/` only (each part keeps its tests in its own
-`tests/` folder) and includes the architecture check. The tests mock every DB, AI and Telegram
-call and do not read your `.env`. The commit checks run the same suite.
+`tests/` folder) and includes the architecture check. The tests mock every DB, AI, Telegram,
+MongoDB and KIS call and do not read your `.env`. The commit checks run the same suite.
 
 ## Troubleshooting
 
