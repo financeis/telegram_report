@@ -4,8 +4,12 @@
 the top of this module: every command imports core when it starts, and only
 work that calls KIS should load an HTTP library.
 
-- Access token: issued by the first call and reused for the client's life (KIS
-  issues about one token a minute; a token lasts a day). Make one client a run.
+- Access token: asked for once a client, by ``ensure_token()`` or else by the
+  first call, and reused for the client's life (KIS issues about one token a
+  minute and the app key is shared with another project; a token lasts a day).
+  Make one client a run. A failed token request is final: from then on every
+  call of that client raises ``KisError`` at once without asking KIS again (the
+  retries below happen inside that one request).
 - Pace: call starts are at least ``1 / max_calls_per_sec`` apart, the token
   call included, also across threads that share the client.
 - Retries: a rate-limit answer (HTTP 429 or KIS ``EGW00201``), a 5xx answer, a
@@ -95,11 +99,21 @@ class KisClient:
         self._transport = transport
         self._http: Any = None
         self._token: Optional[str] = None
+        # (message, code, status) of the failed token request: the client does not ask again
+        self._token_failure: Optional[tuple[str, Optional[str], Optional[int]]] = None
         self._token_lock = threading.Lock()
         self._pace_lock = threading.Lock()
         self._next_start = float("-inf")
 
     # ── calls ────────────────────────────────────────────────────────────────
+
+    def ensure_token(self) -> None:
+        """Get the access token now, before any data call (a run asks for it once).
+
+        Nothing happens when the client has it already. ``KisError`` when it cannot be
+        had; the client then never asks KIS for a token again (see ``_access_token``).
+        """
+        self._access_token()
 
     def daily_prices(self, code: str, start: date, end: date) -> list[dict]:
         """Adjusted (수정주가) daily rows of ``code`` from ``start`` to ``end``, oldest first.
@@ -183,21 +197,42 @@ class KisClient:
         return body
 
     def _access_token(self) -> str:
-        """The client's token: issued by the first call, then reused."""
+        """The client's token: asked for once, then reused.
+
+        A failed token request is final for the client. That failure goes up as it came;
+        every later call raises KisError at once (the same code and status, the first
+        failure's text) without asking KIS again, also in threads that waited for it.
+        """
         with self._token_lock:
-            if self._token is None:
-                status, body = self._call("POST", TOKEN_PATH, what="access token", json={
-                    "grant_type": "client_credentials",
-                    "appkey": self._app_key,
-                    "appsecret": self._app_secret,
-                })
-                token = body.get("access_token")
-                if not token:
-                    problem = _kis_message(body) or "the answer has no access_token"
-                    raise KisError(self._mask(f"KIS access token failed: {problem}"),
-                                   code=body.get("error_code") or None, status=status)
-                self._token = token
+            if self._token is not None:
+                return self._token
+            if self._token_failure is not None:
+                message, code, status = self._token_failure
+                raise KisError(f"{message} (the client's one token request failed earlier; "
+                               "KIS is not asked again)", code=code, status=status)
+            try:
+                self._token = self._issue_token()
+            except KisError as exc:
+                self._token_failure = (str(exc), exc.code, exc.status)
+                raise
+            except Exception as exc:
+                self._token_failure = (self._mask(f"KIS access token failed: {_describe(exc)}"), None, None)
+                raise
             return self._token
+
+    def _issue_token(self) -> str:
+        """One token request, paced and retried like any call: the token, else KisError."""
+        status, body = self._call("POST", TOKEN_PATH, what="access token", json={
+            "grant_type": "client_credentials",
+            "appkey": self._app_key,
+            "appsecret": self._app_secret,
+        })
+        token = body.get("access_token")
+        if not token:
+            problem = _kis_message(body) or "the answer has no access_token"
+            raise KisError(self._mask(f"KIS access token failed: {problem}"),
+                           code=body.get("error_code") or None, status=status)
+        return token
 
     def _call(self, method: str, path: str, *, what: str, **request: Any) -> tuple[int, dict]:
         """Send one request, paced and retried: (status, JSON body) of a 2xx answer.
