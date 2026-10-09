@@ -396,6 +396,11 @@ def test_an_unreadable_stock_list_is_503_with_the_fixed_sentence_and_recovers(wo
     assert get(world).status_code == 200
 
 
+def test_a_stock_list_without_its_version_file_only_logs_a_warning(world, caplog):
+    assert get(world).status_code == 200
+    assert '종목표 버전 정보 파일이 없습니다' in caplog.text
+
+
 def test_the_db_is_prepared_before_the_stock_list(world, monkeypatch):
     monkeypatch.delenv('SUPABASE_URL')
     monkeypatch.setenv('KRX_CSV_PATH', str(world.tmp / 'nowhere.csv'))

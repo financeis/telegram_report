@@ -69,7 +69,13 @@ from research_desk.core import db as core_db
 from research_desk.core import settings as core_settings
 from research_desk.core.llm import LLMClient
 from research_desk.core.settings import NotReady
-from research_desk.domain.stocks import StockList, StockListError
+from research_desk.domain.stocks import (
+    VERSION_INVALID,
+    VERSION_MISMATCH,
+    VERSION_MISSING,
+    StockList,
+    StockListError,
+)
 from research_desk.features import coverage, prices
 
 from . import logic
@@ -93,6 +99,12 @@ EMBED_DIMS = 1536
 EMBED_CONCURRENCY = 2        # this feature's own embedding slots in the process
 EMBED_TIMEOUT_S = 15.0
 QUERY_CACHE_SIZE = 256
+
+_VERSION_PROBLEMS = {
+    VERSION_MISSING: "종목표 버전 정보 파일이 없습니다",
+    VERSION_MISMATCH: "종목표 파일 내용이 버전 정보와 다릅니다",
+    VERSION_INVALID: "종목표 버전 정보 파일을 읽을 수 없습니다",
+}
 
 SEED_COLUMNS = "stock_code, profile, is_holding, is_financial, info_quality, terms"
 PEER_COLUMNS = "stock_code, one_line, is_holding, is_financial, info_quality, terms"
@@ -131,8 +143,9 @@ def load_stock_list() -> StockList:
         raise NotReady(AREA, STOCK_LIST_UNREADABLE) from exc
     check = stocks.verify()
     if not check.ok:
-        logger.warning("종목표 버전 정보 확인 결과 %s: %s. 유사 기업 기능은 경고만 남기고 그대로 동작합니다.",
-                       check.reason, path)
+        logger.warning("%s: %s. 유사 기업 기능은 경고만 남기고 그대로 동작합니다. 종목표를 바꿨다면 "
+                       "python -m research_desk stocks set-version --as-of <자료 기준일, YYYY-MM-DD>를 실행하세요.",
+                       _VERSION_PROBLEMS.get(check.reason, check.reason), path)
     return stocks
 
 
