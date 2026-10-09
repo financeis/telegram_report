@@ -240,6 +240,7 @@ def test_a_peer_meeting_all_six_conditions_is_a_candidate():
     ({'price': price(1.0, avg=None)}, ['low_liquidity']),
     ({'price': None}, ['not_traded', 'low_liquidity']),
     ({'is_holding': True}, ['holding']),
+    ({'is_holding': None}, ['holding']),                # unknown: not shown to be a non-holding
     ({'tier': None}, ['weak_similarity']),
 ])
 def test_each_missing_condition_gives_its_reason(change, reasons):

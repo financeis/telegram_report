@@ -847,9 +847,9 @@ def candidacy(*, label: Optional[str], reaction: str, price: Optional[Mapping[st
               is_holding: Optional[bool], tier: Optional[str]) -> tuple[bool, list[str]]:
     """``(candidate, reasons)`` (§10). A candidate meets all six conditions: no stock report
     (label ``none``), reaction ``none`` or ``partial``, trading (``is_trading``), a 20-day average
-    trading value of at least 5억 원, not a holding company, and a row tier of ``related`` or
-    above. Each unmet condition adds its code, in ``NOT_CANDIDATE_REASONS`` order; an unknown
-    value never meets its condition."""
+    trading value of at least 5억 원, not a holding company (``is_holding`` False), and a row tier
+    of ``related`` or above. Each unmet condition adds its code, in ``NOT_CANDIDATE_REASONS``
+    order; an unknown value never meets its condition (``is_holding`` None gives ``holding``)."""
     reasons = []
     if label != "none":
         reasons.append("has_reports")
@@ -862,7 +862,7 @@ def candidacy(*, label: Optional[str], reaction: str, price: Optional[Mapping[st
     value = price.get("avg_value_20d") if price is not None else None
     if value is None or value < MIN_AVG_VALUE_20D:
         reasons.append("low_liquidity")
-    if is_holding is True:
+    if is_holding is not False:
         reasons.append("holding")
     if tier not in TIERS:
         reasons.append("weak_similarity")
