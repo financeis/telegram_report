@@ -27,6 +27,8 @@ STOCKS_REASON = '종목표 파일을 읽을 수 없습니다'
 KEY_REASON = 'ANTHROPIC_API_KEY가 설정되지 않았습니다. .env에 추가 후 분석 다시 시도하세요.'
 UNDO_UNKNOWN = {'detail': '되돌릴 작업이 없거나 서버가 재시작되었습니다.'}
 NOT_ANALYZED = {'detail': '선택한 두 보고서를 먼저 분석해 주세요.'}
+NO_PUBLIC_BUILD_REASON = '아직 공개된 유사도 계산 결과가 없습니다(python -m research_desk peers build)'
+OPENAI_KEY_REASON = 'OPENAI_API_KEY가 설정되지 않았습니다'
 
 
 def not_ready(area: str, reason: str) -> dict:
@@ -56,6 +58,9 @@ SPEC_ROUTES = {
     ('GET', '/api/review/{rid}/pages/{page}'),
     ('POST', '/api/review/{rid}/action'),
     ('POST', '/api/review/undo/{token}'),
+    ('GET', '/api/stocks/{code}/peers'),     # peers (its window's web_router())
+    ('POST', '/api/peers/search'),
+    ('GET', '/api/freshness'),               # freshness
     ('GET', '/'),
     ('GET', '/assets/*'),
     ('GET', '/openapi.json'),
@@ -190,3 +195,27 @@ class FakeReview:
 
     def undo(self, token: str) -> dict:
         return {'report_id': 1, 'token': token}
+
+
+class FakePeers:
+    """Echoes what the peers router hands its service."""
+
+    def peers(self, code: str, window: str, segment_no: Optional[int]) -> dict:
+        return {'code': code, 'window': window, 'segment': segment_no}
+
+    async def search(self, query: str, window: str, limit: int) -> dict:
+        return {'query': query, 'window': window, 'limit': limit}
+
+
+class FakeFreshness:
+    """Answers like the freshness service."""
+
+    ANSWER = {
+        'prices': {'as_of': '2026-10-08', 'last_run_at': '2026-10-08T18:30:00+09:00',
+                   'last_run_status': 'ok', 'stale': False, 'note': None},
+        'reports': {'latest_at': '2026-10-08T09:12:00+09:00', 'stale': False},
+        'checked_at': '2026-10-08T20:00:00+09:00',
+    }
+
+    def freshness(self) -> dict:
+        return self.ANSWER

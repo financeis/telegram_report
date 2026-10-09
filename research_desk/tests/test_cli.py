@@ -7,10 +7,15 @@ Ported from langgraph_tagger/tests/test_cli.py:
 New:
 - ``--help`` exits 0 on every command; no command, an unknown command and bad arguments are
   argparse's usage error: exit 2 with the usage, no command run;
+- the help lists the commands in the order ``{collect,tag,web,stocks,prices,peers}``; ``prices``
+  and ``peers`` come through their feature windows' ``register_jobs`` (spec §13);
 - a command's exit code comes back from ``main`` (collect without settings: 1, tag inspect without
-  SUPABASE_DB_URL: 4) and, through ``python -m research_desk`` in a fresh process, becomes the
-  process's exit code; the commands load neither FastAPI nor uvicorn (only ``web`` does, when it
-  runs) nor LangGraph (only ``tag run`` / ``tag escalate``, when they tag rows);
+  SUPABASE_DB_URL: 4, prices update / peers build / peers inspect without DB settings: 4) and,
+  through ``python -m research_desk`` in a fresh process, becomes the process's exit code;
+  without a command the process loads none of spec §13's list: neither FastAPI nor uvicorn nor
+  ``research_desk.web.app`` (only ``web`` does, when it runs), nor LangGraph (only ``tag run`` /
+  ``tag escalate``, when they tag rows), nor pymongo, nor the peers web side
+  (``research_desk.features.peers.router`` / ``.service``);
 - ``web``: the address line of the view, then the app of ``create_app()`` served on
   127.0.0.1:8520 (``uvicorn.run`` replaced: no server starts), exit 0;
 - ``stocks set-version``: the new version on stdout and exit 0, the version file with that version
@@ -49,7 +54,21 @@ ENV = ('TELEGRAM_API_ID', 'TELEGRAM_API_HASH', 'TELEGRAM_CHANNEL', 'TELEGRAM_CHA
        'LOG_LEVEL', 'LLM_MODEL_DEFAULT', 'OPENAI_MODEL_DEFAULT', 'LLM_MODEL_ESCALATION',
        'OPENAI_MODEL_ESCALATION', 'LLM_MODEL_PHASE2', 'OPENAI_MODEL_PHASE2', 'ANTHROPIC_API_KEY',
        'OPENAI_API_KEY', 'CODEX_BIN', 'MAX_CONCURRENT_LLM', 'TAGGER_BATCH_SIZE_DEFAULT',
-       'LOCK_TTL_MINUTES', 'PER_ROW_DEADLINE_S')
+       'LOCK_TTL_MINUTES', 'PER_ROW_DEADLINE_S',
+       # prices
+       'KIS_APP_KEY', 'KIS_APP_SECRET', 'KIS_BASE_URL', 'PRICES_MAX_CALLS_PER_SEC',
+       # peers
+       'LLM_MODEL_PEERS', 'OPENAI_MODEL_PEERS', 'LLM_MODEL_PEERS_ESCALATION',
+       'OPENAI_MODEL_PEERS_ESCALATION', 'PEERS_PROFILE_VERSION', 'PEERS_EMBED_MODEL',
+       'PEERS_FISCAL_YEAR', 'PEERS_MAX_CONCURRENT_LLM', 'PEERS_PER_COMPANY_TIMEOUT_S',
+       'DART_MONGO_URL', 'DART_MONGO_DB', 'DART_MONGO_COLLECTION')
+
+# spec §13: what ``python -m research_desk`` without a command never loads (a package with its
+# submodules). The commands load these only when they run.
+NOT_LOADED_WITHOUT_A_COMMAND = ('fastapi', 'uvicorn', 'research_desk.web.app', 'langgraph', 'pymongo',
+                                'research_desk.features.peers.router',
+                                'research_desk.features.peers.service')
+DB_REASON = 'DB 접속 설정(SUPABASE_URL, SUPABASE_SERVICE_KEY)이 없습니다'
 
 # The first header cell has a line break inside quotes, like the real file.
 HEADER_LINE = '"종목\n코드",종목명,시장,산업명(대),산업명(중),주요제품\n'
@@ -124,11 +143,12 @@ def test_the_help_lists_every_command(capsys):
         main(['--help'])
     out = capsys.readouterr().out
     assert out.startswith('usage: research_desk ')
-    assert '{collect,tag,web,stocks}' in out
+    assert '{collect,tag,web,stocks,prices,peers}' in out
 
 
 COMMANDS = [[], ['collect'], ['tag'], ['tag', 'run'], ['tag', 'inspect'], ['tag', 'escalate'],
-            ['tag', 'reset-worker'], ['web'], ['stocks'], ['stocks', 'set-version']]
+            ['tag', 'reset-worker'], ['web'], ['stocks'], ['stocks', 'set-version'],
+            ['prices'], ['prices', 'update'], ['peers'], ['peers', 'build'], ['peers', 'inspect']]
 
 
 @pytest.mark.parametrize('command', COMMANDS, ids=lambda command: ' '.join(command) or 'research_desk')
@@ -153,6 +173,20 @@ def test_the_web_and_stocks_help_show_their_arguments(capsys):
     assert '--as-of YYYY-MM-DD' in capsys.readouterr().out
 
 
+@pytest.mark.parametrize('command,shown', [
+    (['prices'], ['update']),
+    (['prices', 'update'], ['--codes 005930,080220']),
+    (['peers'], ['{build,inspect}']),
+    (['peers', 'build'], ['--fiscal-year', '--codes', '--limit', '--pilot']),
+], ids=['prices', 'prices update', 'peers', 'peers build'])
+def test_the_prices_and_peers_help_show_their_arguments(command, shown, capsys):
+    with pytest.raises(SystemExit):
+        main([*command, '--help'])
+    out = capsys.readouterr().out
+    for text in shown:
+        assert text in out
+
+
 USAGE_ERRORS = {
     'no command': [],
     'unknown command': ['bogus'],
@@ -167,6 +201,16 @@ USAGE_ERRORS = {
     'tag escalate: no --since': ['tag', 'escalate'],
     'collect: both modes': ['collect', '--cutoff-days', '1', '--backfill-days', '2'],
     'collect: not a number': ['collect', '--cutoff-days', 'x'],
+    'prices: no subcommand': ['prices'],
+    'prices: unknown subcommand': ['prices', 'bogus'],
+    'prices update: a bad code': ['prices', 'update', '--codes', '12345'],
+    'prices update: --codes without a value': ['prices', 'update', '--codes'],
+    'peers: no subcommand': ['peers'],
+    'peers: unknown subcommand': ['peers', 'bogus'],
+    'peers build: not a number': ['peers', 'build', '--fiscal-year', 'x'],
+    'peers build: a bad code': ['peers', 'build', '--codes', '12345'],
+    'peers build: a limit below 1': ['peers', 'build', '--limit', '0'],
+    'peers inspect: unknown option': ['peers', 'inspect', '--bogus'],
 }
 
 
@@ -189,6 +233,18 @@ def test_a_commands_exit_code_comes_back_from_main(capsys):
     assert capsys.readouterr().err == 'SUPABASE_DB_URL is required\n'
 
 
+@pytest.mark.parametrize('argv,err', [
+    (['prices', 'update'], f'주가 갱신을 시작하지 않았습니다. 이유: {DB_REASON}\n'),
+    (['prices', 'update', '--codes', '005930'], f'주가 갱신을 시작하지 않았습니다. 이유: {DB_REASON}\n'),
+    (['peers', 'build'], f'{DB_REASON}\n'),
+    (['peers', 'inspect'], f'{DB_REASON}\n'),
+], ids=['prices update', 'prices update --codes', 'peers build', 'peers inspect'])
+def test_the_feature_commands_run_through_main_and_exit_4_when_not_ready(argv, err, capsys):
+    # Without DB settings each stops at its first start-up check, before any connection.
+    assert main(argv) == 4
+    assert capsys.readouterr() == ('', err)
+
+
 def test_python_m_research_desk_help_exits_0():
     result = run_python('-m', 'research_desk', '--help')
     assert result.returncode == 0, result.stderr
@@ -204,12 +260,17 @@ def test_python_m_research_desk_without_a_command_exits_2_and_loads_no_web_packa
                 if line.startswith('import time:')}
     assert {'research_desk.cli', 'research_desk.collector.cli', 'research_desk.tagger.cli',
             'research_desk.web.server'} <= imported
+    # the feature commands come through their windows (spec §13)
+    assert {'research_desk.features.prices', 'research_desk.features.peers'} <= imported
     assert not imported & {'fastapi', 'uvicorn', 'research_desk.web.app'}
     # The row graph loads only when tag run / escalate tag rows: collect, web and stocks start
     # without LangGraph and without the warning it prints when it loads.
     assert 'research_desk.tagger.orchestrator' not in imported
     assert not {name for name in imported if name.split('.')[0] == 'langgraph'}
     assert 'LangChainPendingDeprecationWarning' not in result.stderr
+    # spec §13's whole list: MongoDB and the peers web side load only when a command runs too
+    assert not {name for name in imported for heavy in NOT_LOADED_WITHOUT_A_COMMAND
+                if name == heavy or name.startswith(heavy + '.')}
 
 
 # ── web ──────────────────────────────────────────────────────────────────────
@@ -234,6 +295,7 @@ def test_web_prints_the_address_then_serves_the_app_on_127_0_0_1_8520(argv, view
     assert isinstance(app, FastAPI)
     assert options == {'host': '127.0.0.1', 'port': 8520}
     assert {'/api/health', '/api/workspace', '/api/review', '/'} <= set(app.openapi()['paths'])
+    assert {'/api/stocks/{code}/peers', '/api/peers/search', '/api/freshness'} <= set(app.openapi()['paths'])
     assert capsys.readouterr().out == ''
 
 

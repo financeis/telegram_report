@@ -7,8 +7,11 @@ prints ``Research Desk: http://127.0.0.1:8520/?view=<view>``, then serves the ap
 screen's own ``?view=`` (default ``reports``); it replaces the old entry points
 ``python -m langgraph_tagger.workspace`` / ``.analytics`` / ``.review_viewer``.
 
-FastAPI, uvicorn and the features load only when the command runs, so the other commands never
-need the web packages (``requirements-workspace.txt``).
+FastAPI, uvicorn and the app with its features (``app.py``) load only when the command runs:
+``cli.py`` imports this module for every command, and ``python -m research_desk`` without a
+command loads none of them (``tests/test_cli.py`` checks it). Running ``web`` needs the web
+packages (``requirements-workspace.txt``), and so does running ``peers build``: it reads through
+the reports feature's window, which loads FastAPI when the command runs.
 """
 from __future__ import annotations
 

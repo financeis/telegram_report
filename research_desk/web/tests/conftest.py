@@ -9,7 +9,8 @@
   - ``core.db.supabase_client`` refuses: no real Supabase client, ever (a test that needs a DB
     hands out a stand-in);
   - the features' process-wide state starts fresh and is put back afterwards: the service of
-    companies, reports, coverage and review, and analysis' Supabase client and reports in flight.
+    companies, reports, coverage, review, prices (read by peers and freshness through its
+    window), peers and freshness, and analysis' Supabase client and reports in flight.
 - ``dist``: a temp screen folder (``index.html``, ``assets/app.js``).
 - ``app``: the assembled app on ``dist``; its dependency overrides are cleared afterwards.
 - ``stock_csv``: a small stock list holding 016360, with its version file, at ``KRX_CSV_PATH``.
@@ -28,6 +29,9 @@ from research_desk.features.analysis import service as analysis_service
 from research_desk.features.companies import service as companies_service
 from research_desk.features.companies.service import CompaniesService
 from research_desk.features.coverage import service as coverage_service
+from research_desk.features.freshness import service as freshness_service
+from research_desk.features.peers import service as peers_service
+from research_desk.features.prices import service as prices_service
 from research_desk.features.reports import service as reports_service
 from research_desk.features.review import service as review_service
 from research_desk.web.app import create_app
@@ -38,9 +42,17 @@ ENV = ('SUPABASE_URL', 'SUPABASE_SERVICE_KEY', 'SUPABASE_DB_URL', 'STORAGE_BASE_
        'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'LLM_MODEL_PHASE2', 'OPENAI_MODEL_PHASE2',
        'PHASE2_SUMMARY_VERSION', 'PHASE2_PER_REPORT_TIMEOUT_S', 'PHASE2_MAX_INPUT_TOKENS',
        'CODEX_BIN', 'ANTHROPIC_EFFORT', 'CODEX_REASONING_EFFORT', 'LANGSMITH_TRACING',
-       'LANGSMITH_API_KEY')
+       'LANGSMITH_API_KEY',
+       # prices
+       'KIS_APP_KEY', 'KIS_APP_SECRET', 'KIS_BASE_URL', 'PRICES_MAX_CALLS_PER_SEC',
+       # peers
+       'LLM_MODEL_PEERS', 'OPENAI_MODEL_PEERS', 'LLM_MODEL_PEERS_ESCALATION',
+       'OPENAI_MODEL_PEERS_ESCALATION', 'PEERS_PROFILE_VERSION', 'PEERS_EMBED_MODEL',
+       'PEERS_FISCAL_YEAR', 'PEERS_MAX_CONCURRENT_LLM', 'PEERS_PER_COMPANY_TIMEOUT_S',
+       'DART_MONGO_URL', 'DART_MONGO_DB', 'DART_MONGO_COLLECTION')
 
-FEATURE_SERVICES = (companies_service, reports_service, coverage_service, review_service)
+FEATURE_SERVICES = (companies_service, reports_service, coverage_service, review_service, prices_service,
+                    peers_service, freshness_service)
 
 
 @pytest.fixture(autouse=True)
