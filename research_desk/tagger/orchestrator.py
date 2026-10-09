@@ -114,7 +114,9 @@ def _empty_report(model: str) -> dict:
 
 
 def _aggregate(results: list[dict], *, model: str, batch_size: int, dry_run: bool) -> dict:
-    auto = sum(1 for r in results if r.get("tagging_status") == "auto")
+    """The batch report. ``review_reasons`` counts only the four review-reason names
+    (not page_image / publisher_suspect notes); a dry run also lists each row (``rows``)."""
+    auto =sum(1 for r in results if r.get("tagging_status") == "auto")
     review = sum(1 for r in results if r.get("tagging_status") == "review_needed")
     transient = sum(1 for r in results if r.get("error") == "transient")
     deadline = sum(1 for r in results if r.get("error") == "deadline_exceeded")
@@ -134,7 +136,7 @@ def _aggregate(results: list[dict], *, model: str, batch_size: int, dry_run: boo
                        "krx_unmatched_in_scope"):
                 review_reasons[tag] += 1
 
-    return {
+    report = {
         "model": model,
         "processed": len(results),
         "auto": auto,
@@ -155,6 +157,30 @@ def _aggregate(results: list[dict], *, model: str, batch_size: int, dry_run: boo
         "transient_errors": transient,
         "deadline_errors": deadline,
         "unhandled_errors": unhandled,
+        # Rows read from the page picture, rows whose picture the model could not take,
+        # rows with a suspect publisher (none of them is a review reason).
+        "page_image": sum(1 for r in results if r.get("page_image")),
+        "page_image_unsupported": sum(1 for r in results if r.get("page_image_unsupported")),
+        "publisher_suspect": sum(1 for r in results if r.get("publisher_suspect")),
         "dry_run": dry_run,
         "batch_size": batch_size,
+    }
+    if dry_run:
+        report["rows"] = [_dry_run_row(r) for r in results]
+    return report
+
+
+def _dry_run_row(result: dict) -> dict:
+    """What a dry run would have written for one row, or the row's error as collected."""
+    if "error" in result:
+        return {"id": result["id"], "error": result["error"], "detail": result.get("detail")}
+    raw = result.get("llm_raw")
+    return {
+        "id": result["id"],
+        "tagging_status": result.get("tagging_status"),
+        "tagging_confidence": result.get("tagging_confidence"),
+        "report_type": raw.report_type if raw is not None else None,
+        "publisher": result.get("publisher_final"),
+        "publisher_type": result.get("publisher_type_final"),
+        "tagging_notes": result.get("tagging_notes"),
     }

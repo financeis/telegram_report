@@ -358,3 +358,156 @@ async def test_drawing_runs_off_the_event_loop(monkeypatch):
     await extract_pdf({"file_path": "/reports/any.pdf"})
 
     assert drawn_on and drawn_on[0] != loop_thread
+
+
+# ── a page picture too big for the AI is drawn again at a lower dpi ──────────
+# An oversized picture would be refused by the provider on every try, sending the
+# row back to pending again and again; drawing it smaller keeps the row moving.
+
+def _png_bytes(width: int, height: int, size: int = 0) -> bytes:
+    """Bytes that start like a real PNG of ``width`` x ``height`` (signature + IHDR),
+    padded to ``size`` bytes."""
+    import struct
+    import zlib
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    chunk = (struct.pack(">I", len(ihdr)) + b"IHDR" + ihdr
+             + struct.pack(">I", zlib.crc32(b"IHDR" + ihdr)))
+    head = PNG_SIGNATURE + chunk
+    return head + b"\0" * max(0, size - len(head))
+
+
+def _png_dims(png: bytes) -> tuple[int, int]:
+    import struct
+    assert png.startswith(PNG_SIGNATURE) and png[12:16] == b"IHDR"
+    return struct.unpack(">II", png[16:24])
+
+
+def _base64_len(png: bytes) -> int:
+    import base64
+    return len(base64.b64encode(png))
+
+
+def _drawn_with(monkeypatch, fake_render) -> None:
+    monkeypatch.setattr(core_pdf, "page_texts", lambda path, max_pages=None: ["", "", ""])
+    monkeypatch.setattr(core_pdf, "render_page_png", fake_render)
+
+
+def test_page_image_limits():
+    """Under what the AI providers accept for one picture (Anthropic: 8000 px a side,
+    5 MiB of base64 text), with a margin."""
+    assert node.PAGE_IMAGE_MAX_SIDE_PX == 7000
+    assert node.PAGE_IMAGE_MAX_BASE64_BYTES == 4_500_000
+    assert node.PAGE_IMAGE_MAX_SIDE_PX < 8000
+    assert node.PAGE_IMAGE_MAX_BASE64_BYTES < 5 * 1024 * 1024
+
+
+@pytest.mark.asyncio
+async def test_a_normal_page_is_drawn_once_at_120_dpi(monkeypatch):
+    calls = []
+
+    def fake_render(path, page, dpi=None):
+        calls.append(dpi)
+        return _png_bytes(round(8.27 * dpi), round(11.69 * dpi), size=900_000)   # an A4 scan
+
+    _drawn_with(monkeypatch, fake_render)
+
+    out = await extract_pdf({"file_path": "/reports/any.pdf"})
+
+    assert calls == [120]
+    assert _png_dims(out["page_images"][0]) == (992, 1403)
+
+
+@pytest.mark.asyncio
+async def test_a_too_long_page_is_drawn_again_smaller(monkeypatch):
+    calls = []
+
+    def fake_render(path, page, dpi=None):
+        calls.append(dpi)
+        return _png_bytes(round(10 * dpi), round(100 * dpi))    # a 10 x 100 inch page
+
+    _drawn_with(monkeypatch, fake_render)
+
+    out = await extract_pdf({"file_path": "/reports/any.pdf"})
+
+    assert calls[0] == 120                       # 12000 px tall: too long
+    assert len(calls) == 2 and calls[1] < 120    # one smaller drawing is enough
+    (png,) = out["page_images"]
+    assert max(_png_dims(png)) <= node.PAGE_IMAGE_MAX_SIDE_PX
+    assert out["pdf_unreadable"] is True         # still a picture row for llm_extract
+
+
+@pytest.mark.asyncio
+async def test_a_too_heavy_page_is_drawn_again_smaller(monkeypatch):
+    calls = []
+
+    def fake_render(path, page, dpi=None):
+        calls.append(dpi)
+        # PNG bytes grow with the pixel count (dpi squared): 6 MB at 120 dpi.
+        return _png_bytes(round(8.27 * dpi), round(11.69 * dpi),
+                          size=int(6_000_000 * (dpi / 120) ** 2))
+
+    _drawn_with(monkeypatch, fake_render)
+
+    out = await extract_pdf({"file_path": "/reports/any.pdf"})
+
+    assert calls[0] == 120
+    assert 1 < len(calls) and calls[-1] < 120
+    (png,) = out["page_images"]
+    assert _base64_len(png) <= node.PAGE_IMAGE_MAX_BASE64_BYTES
+
+
+@pytest.mark.asyncio
+async def test_bytes_that_are_not_a_png_are_checked_by_size_only(monkeypatch):
+    calls = []
+
+    def fake_render(path, page, dpi=None):
+        calls.append(dpi)
+        return b"x" * int(4_000_000 * (dpi / 120) ** 2)     # 5.3 MB of base64 at 120 dpi
+
+    _drawn_with(monkeypatch, fake_render)
+
+    out = await extract_pdf({"file_path": "/reports/any.pdf"})
+
+    assert len(calls) >= 2
+    assert _base64_len(out["page_images"][0]) <= node.PAGE_IMAGE_MAX_BASE64_BYTES
+
+
+@pytest.mark.asyncio
+async def test_a_page_that_never_fits_gives_no_picture(monkeypatch):
+    """No endless redrawing: after a few tries the page has no picture, so the row is
+    first_page_unreadable (review) instead of failing at the provider every time."""
+    calls = []
+
+    def fake_render(path, page, dpi=None):
+        calls.append(dpi)
+        return _png_bytes(20000, 20000)                     # whatever the dpi
+
+    _drawn_with(monkeypatch, fake_render)
+
+    out = await extract_pdf({"file_path": "/reports/any.pdf"})
+
+    assert out == {"pdf_text": "", "pages_used": [1, 2, 3], "pdf_unreadable": True,
+                   "page_images": []}
+    assert 1 < len(calls) <= 5
+
+
+@pytest.mark.asyncio
+async def test_a_real_very_long_page_is_drawn_to_fit(tmp_path):
+    """A 70-inch-tall picture-only page is 8400 px tall at 120 dpi."""
+    path = tmp_path / "long.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=72 * 70)
+    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 40, 20), False)
+    pix.clear_with(180)
+    page.insert_image(fitz.Rect(72, 72, 272, 172), pixmap=pix)
+    doc.save(path)
+    doc.close()
+    assert max(_png_dims(core_pdf.render_page_png(path, 1, dpi=120))) > node.PAGE_IMAGE_MAX_SIDE_PX
+
+    out = await extract_pdf({"file_path": str(path)})
+
+    (png,) = out["page_images"]
+    width, height = _png_dims(png)
+    assert height <= node.PAGE_IMAGE_MAX_SIDE_PX
+    assert height > node.PAGE_IMAGE_MAX_SIDE_PX * 0.8          # not needlessly small
+    assert width < height
