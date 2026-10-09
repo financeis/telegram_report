@@ -5,7 +5,7 @@
 - `reports` 표에서 분류가 끝난 행 읽기. 이 표는 단계별로 주인이 나뉘고, 이 기능의 몫은 읽기다(목록·상세·PDF·커버리지 집계 재료). 다른 기능은 리포트 행을 이 공개 창구로만 읽는다.
 - 웹 주소 세 개: `GET /api/stocks/{code}/reports`, `GET /api/reports/{rid}/pdf`, `POST /api/reports/{rid}/analyze`.
 - 리포트 공개 모양 `public_report(row, summary)`: 브라우저로 나가는 리포트의 유일한 모양이다. compare 응답의 `left`·`right`도 이 모양이다.
-- 다른 기능용 창구: `report_row`(내부 행), `get_report`(공개 모양 + 저장된 요약), `period_rows(since, include_oos)`, `stock_rows(code, since)`. compare는 `get_report`, coverage는 `period_rows`·`stock_rows`를 쓴다.
+- 다른 기능용 창구: `report_row`(내부 행), `get_report`(공개 모양 + 저장된 요약), `period_rows(since, include_oos)`, `stock_rows(code, since)`, `rows_for_stocks(codes, since)`(여러 종목의 분석 대상 행), `latest_report_sent_at()`(가장 최근 분석 대상 리포트의 `sent_at`), `tagging_in_progress(minutes=30)`(분류 작업이 도는 중인지, 개수 조회). compare는 `get_report`, coverage는 `period_rows`·`stock_rows`·`rows_for_stocks`(리포트 수), freshness는 `latest_report_sent_at`, peers는 `tagging_in_progress`(`peers build` 시작 전)를 쓴다.
 - 준비 실패 `NotReady("리포트", …)`: DB 접속 설정, 종목표 파일.
 
 ## 맡지 않는 일
@@ -15,7 +15,8 @@
 - `failed_attempts` 표(collector).
 - 집계와 캐시. 기간별 묶기, 배열 펼치기, 날짜 단위 나누기, 180초 캐시는 `research_desk.features.coverage`가 한다. 창구는 행을 DataFrame 그대로 넘긴다.
 - 두 보고서 비교(compare), 검토 대기열과 `/api/review/…` 주소(review).
-- import 금지: compare·coverage·review(셋 다 reports에 기대므로 `R6 순환 금지`), `collector`·`tagger`·`web`·`cli`(`R5 기능`), 다른 기능의 하위 모듈(`research_desk.features.analysis.service` 등). `supabase`·`pymupdf`는 `core.db`·`core.pdf`로만 쓴다(`R9 외부 도구`).
+- import 금지: compare·coverage·review·peers·freshness(모두 reports에 기대므로 `R6 순환 금지`), `collector`·`tagger`·`web`·`cli`(`R5 기능`), 다른 기능의 하위 모듈(`research_desk.features.analysis.service` 등). `supabase`·`pymupdf`는 `core.db`·`core.pdf`로만 쓴다(`R9 외부 도구`).
+- 리포트 수를 세는 규칙(종목 리포트·섹터 언급·기타 리서치)은 coverage, 상태 줄의 밀림 판정은 freshness, 유사도 계산을 막을지는 peers가 정한다. 이 기능은 행과 시각과 개수만 준다.
 - 종목표 CSV 직접 읽기. `domain.stocks.StockList`만 쓴다.
 - AI 호출.
 
@@ -23,17 +24,20 @@
 
 **읽기 규칙** (`store.py`).
 - "분석 대상" 거르기는 `domain.reports.IN_SCOPE_STATUSES`와 `out_of_scope_reason IS NULL`로만 만든다(`_in_scope`). 상태 값을 손으로 적지 않는다.
-- 모든 읽기는 `EXPECTED_COLS` 15열을 그 순서로 고른다(`file_path` 포함, `caption`·`file_hash_sha256` 등은 빠짐). `select('*')`로 바꾸지 않는다. 결과 DataFrame은 비어 있어도 15열을 갖는다. coverage가 열 이름으로 바로 꺼내 쓰기 때문이다.
+- 모든 읽기는 `EXPECTED_COLS` 16열을 그 순서로 고른다: 예전 15열(`file_path` 포함, `caption`·`file_hash_sha256` 등은 빠짐) 다음 `publisher_type`(증권사 리포트만 세려고 더함). `select('*')`로 바꾸지 않는다. 결과 DataFrame은 비어 있어도 16열을 갖는다. coverage가 열 이름으로 바로 꺼내 쓰기 때문이다. 공개 리포트 모양(13키)에는 `publisher_type`이 없다.
 - 여러 행 읽기는 `.range()`로 1000행(`PAGE`)씩, 1000행보다 짧은 쪽이 올 때까지 읽는다. 마지막 쪽이 꽉 차 있으면 한 번 더 읽는다. Supabase REST는 기본 설정에서 한 응답을 1000행으로 자르므로, 쪽 나누기를 빼면 오류 없이 덜 읽힌다. 단일 행 조회만 한 번에 읽는다.
 - 기간 읽기(분석 대상만): 서버에서 `published_at >= 시작일`로 거른다. 분류기가 분석 대상 행에는 늘 `published_at`을 채우므로 안전하다.
 - 기간 읽기(`include_oos=True`): 분석 대상 외 행은 `published_at`이 NULL이라 서버에서 날짜로 거르면 조용히 빠진다. 서버에서는 최종 상태(`IN_SCOPE_STATUSES`)만 거르고, 받은 뒤 유효 날짜(`published_at`, 없으면 `sent_at`의 한국 시간 날짜)로 거른다. UTC 15:00은 한국 시간으로 다음 날 00:00이다. 두 날짜가 다 없는 행은 뺀다. 거른 뒤 index를 0부터 다시 매긴다.
-- 종목 행: `.contains('stock_codes', [code])` + `published_at >= 시작일`이고, 코드는 받은 그대로 쓴다(0을 채우지 않는다). `.cs('stock_codes', '{코드}')`처럼 문자열로 배열을 만들지 않는다. 따옴표 없는 배열(`{001440}`)이 되어 PostgREST가 잘못 해석했던 적이 있다.
+- 종목 행: `.contains('stock_codes', [code])` + `published_at >= 시작일`이고, 코드는 받은 그대로 쓴다(0을 채우지 않는다). `.cs('stock_codes', '{코드}')`처럼 글자로 배열을 넘기지 않는다 — postgrest-py의 `cs()`는 받은 값을 한 글자씩 쉼표로 이어(`{{,0,0,1,4,4,0,}}`) 엉뚱한 배열을 만든 적이 있다. 배열 조건(`contains`, `ov`)에는 파이썬 목록을 넘긴다. postgrest-py는 목록 값을 따옴표 없이 쉼표로 잇는데(`{001440,005930}`), 영문·숫자뿐인 종목코드에는 문제가 없다.
+- 여러 종목 행(`rows_for_stocks`): 코드를 받은 그대로 각 한 번, 영문·숫자가 아닌 코드는 뺀다(배열 글자를 깨뜨리므로). 문자열 하나를 넘기면 `TypeError`(글자마다 물으므로). 코드 100개씩(`CODES_PER_QUERY`) `.ov('stock_codes', [목록])`와 분석 대상 조건으로 서버에서 거르고 `id` 순으로 1000행씩 읽은 뒤, 두 묶음에서 겹친 행은 한 번만 남기고, 받은 뒤 유효 날짜(`published_at`, 없으면 `sent_at`의 한국 날짜)가 시작일 이후인 행만 남긴다. 서버에서는 분석 대상 조건과 배열 겹침만 걸고 날짜로 거르지 않는다 — `published_at`이 빈 행도 `sent_at`으로 판단하려는 것이다.
+- 가장 최근 리포트(`latest_report_sent_at`): 분석 대상 행 중 `sent_at` 내림차순(NULL은 뒤) 한 행을 16열로 읽고, `sent_at`을 UTC aware 시각으로 바꿔 준다(오프셋 없는 값은 UTC로 본다). 행이 없으면 None.
+- 분류 진행 확인(`tagging_in_progress`): `tagging_status = 'processing'`이고 `tagging_locked_at`이 지금 − `minutes`분 이후(그 시각 포함)인 행의 개수를 `count='exact'`, `head=True`로 서버에서 센다. 행은 받지 않는다. 분류기가 행을 가져갈 때 찍는 잠금에 기대므로, 분류기의 가져가기 방식이 바뀌면 이 조건도 바뀌어야 한다.
 - query builder 체인은 옛 쿼리와 같은 순서로 둔다. MagicMock 테스트가 호출 순서까지 고정한다.
 
 **공개 모양.**
 - `id, title, file_name, published_at, publisher, report_type, stock_codes, company_names, sectors_major, sectors_minor, products, summary, pdf_url` 13키, 이 순서. 행에 없는 열은 `null`이고 `pdf_url`은 `/api/reports/{id}/pdf`다.
 - `file_path`, 저장 폴더 경로, 서비스 키·URL은 어떤 응답에도 넣지 않는다. 키를 더하거나 빼는 것은 화면 계약 변경이다.
-- `report_row`는 15열 내부 행(`file_path` 포함)을 그대로 준다. analysis가 PDF를 찾는 것처럼 서버 안 작업에만 쓴다. 브라우저로 나갈 리포트는 반드시 `public_report`를 거치고, 다른 기능이 응답에 실을 리포트가 필요하면 `get_report`를 쓴다.
+- `report_row`는 16열 내부 행(`file_path` 포함)을 그대로 준다. analysis가 PDF를 찾는 것처럼 서버 안 작업에만 쓴다. 브라우저로 나갈 리포트는 반드시 `public_report`를 거치고, 다른 기능이 응답에 실을 리포트가 필요하면 `get_report`를 쓴다.
 - `get_report`는 행이 없으면 요약을 읽지 않고 404다.
 
 **주소.**
@@ -56,13 +60,14 @@
 - `ReportsService`가 두 준비를 따로 들고 있다: `store()`(DB, `connect()`)와 `stock_list()`(종목표, `load_stock_list()`). 둘 다 `load_env()` → 설정 확인 → 만들기 순서이고, 이중 확인 잠금(`threading.Lock`)으로 한 번만 만든다. 동기 주소는 스레드 풀에서, 분석 요청의 행 읽기는 `asyncio.to_thread`에서 돌아 여러 스레드가 같은 서비스를 동시에 쓰기 때문이다.
 - 서비스는 프로세스에 하나다(`get_service()`). 라우터는 `Depends(get_service)`로 받고(테스트는 `app.dependency_overrides[get_service]`로 바꾼다), 모듈 수준 창구 함수는 `get_service()`를 직접 부른다.
 - analysis는 `from research_desk.features import analysis` 후 `analysis.summaries_for(...)`처럼 부를 때 속성으로 찾는다. `from research_desk.features.analysis import summaries_for`로 이름을 복사해 오면 테스트의 바꿔치기가 닿지 않는다.
-- 새 읽기를 더할 때: `ReportStore` 메서드(15열, `_in_scope`/`_final_status`, `_paged_fetch`, `_to_frame`) → `ReportsService` 메서드 → 모듈 수준 창구 함수 → `__init__.py` 최상위에 직접 묶기. 묶음·집계는 부르는 쪽이 한다.
+- 새 읽기를 더할 때: `ReportStore` 메서드(16열, `_in_scope`/`_final_status`, `_paged_fetch`, `_to_frame`, 유효 날짜 거르기 `_on_or_after`) → `ReportsService` 메서드 → 모듈 수준 창구 함수 → `__init__.py` 최상위에 직접 묶기. 묶음·집계는 부르는 쪽이 한다. 여러 행을 읽는 새 쿼리에는 정해진 정렬(`order('id')` 등)을 두어 쪽 사이에 행이 밀리지 않게 한다.
+- 창구는 FastAPI를 불러온다(`router`, `HTTPException`을 쓰는 `service`). 그래서 모든 명령에서 import되는 다른 기능의 창구(prices, peers)는 이 창구를 최상위에서 import하지 않는다 — peers는 `peers build` 명령 함수 안에서만 부른다.
 - 설정은 `core.settings`로 읽는다: `supabase_url()`, `supabase_service_key()`, `storage_base_dir()`(현재 폴더 기준), `krx_csv_path()`.
 
 ## 테스트
 
-- **꼭 덮을 것.** 모든 `tagging_status` × 사유 조합에서 읽기 결과가 `domain.reports.is_in_scope`와 같은지, 15열·쪽 크기·쪽 창(1000행 경계 앞뒤), 유효 날짜의 한국 시간 경계, 코드 0 채우기는 종목표 조회에만, 공개 모양의 키·순서와 응답 본문에 `file_path`·저장 경로·키가 없음, 404 문구, 분석 전 404, 준비 실패·재시도·`.env` 추가 반영·종목표 유지·버전 경고.
-- **가짜 DB.** `tests/fakes.py`의 `FakeSupabase`는 일부러 읽기 전용이다. 쓰기 메서드가 없어서 쓰기 코드가 생기면 테스트가 깨진다. 쓰기 메서드를 더하지 않는다. PostgREST처럼 NULL은 `eq`·`in_`·`gte`·`contains`를 통과하지 못하고 `is_(col, 'null')`만 통과한다. `select`는 고른 열만 돌려준다.
+- **꼭 덮을 것.** 모든 `tagging_status` × 사유 조합에서 읽기 결과가 `domain.reports.is_in_scope`와 같은지, 16열(예전 15열 다음 `publisher_type`)·쪽 크기·쪽 창(1000행 경계 앞뒤), 유효 날짜의 한국 시간 경계, 코드 0 채우기는 종목표 조회에만, 공개 모양의 키·순서와 응답 본문에 `file_path`·저장 경로·키가 없음, 404 문구, 분석 전 404, 준비 실패·재시도·`.env` 추가 반영·종목표 유지·버전 경고. 여러 종목 읽기의 코드 100개 경계와 겹친 행 한 번, 가장 최근 리포트의 시간대(오프셋이 다른 값도 UTC로), 분류 진행 확인의 30분 경계와 `processing`이 아닌 행 무시·행을 받지 않음.
+- **가짜 DB.** `tests/fakes.py`의 `FakeSupabase`는 일부러 읽기 전용이다. 쓰기 메서드가 없어서 쓰기 코드가 생기면 테스트가 깨진다. 쓰기 메서드를 더하지 않는다. PostgREST처럼 NULL은 `eq`·`in_`·`gte`·`contains`·`ov`를 통과하지 못하고 `is_(col, 'null')`만 통과한다. `select`는 고른 열만 돌려주고, `count='exact'`는 창과 상관없이 맞는 행 수를, `head=True`는 행 없이 답한다. `order`는 PostgreSQL처럼 NULL을 오름차순 맨 뒤·내림차순 맨 앞에 둔다(`nullsfirst`로 바꿈). 같은 쿼리에 `range()`를 다시 부르면 마지막 창을 쓴다.
 - **밖에 기대지 않게.** autouse `clean_env`가 관련 환경 변수를 지우고 `core.db.supabase_client`가 오류를 내게 바꾼다(진짜 클라이언트 금지). `db` 고정물만 가짜를 내준다. 종목표는 `tmp_path`에 진짜와 같은 머리줄(첫 칸이 `"종목\n코드"`처럼 따옴표 안에서 줄을 바꾼다)로 쓰고 `domain.stocks.write_version`으로 버전 파일을 만든다. `.env` 다시 읽기는 `env_file` 고정물로만 시험한다.
 - **analysis 바꿔치기.** 이 기능이 찾는 자리에서 바꾼다: `monkeypatch.setattr(analysis, 'summaries_for', …)`, `monkeypatch.setattr(analysis, 'analyze_report', …)`.
 - **주소 테스트.** `build_app(service)` = 라우터 + `get_service` 바꿔치기 + `NotReady` → 503 처리. 웹 조립부와 같은 503 모양이 나온다.
