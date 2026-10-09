@@ -430,6 +430,7 @@ def segment_order(shares: Sequence[float]) -> list[int]:
 # ── percentile tables, interpolation, tiers (§6.3) ───────────────────────────
 
 PERCENTILES: tuple[float, ...] = tuple(round(95 + i / 10, 1) for i in range(50)) + (99.95, 99.99, 100.0)
+# Segment pairs over this many are sampled (spec §6.3); company pairs never are.
 MAX_PAIRS = 2_000_000
 # Pairs drawn per step when sampling: two 4096 x 1536 float32 gathers (about 50 MB) at a time.
 _SAMPLE_CHUNK = 4096
@@ -479,13 +480,15 @@ def _percentile_values(sims: np.ndarray) -> list[float]:
     return [float(v) for v in np.percentile(sims, PERCENTILES)]
 
 
-def quantile_table(vectors, groups: Optional[Sequence[Any]] = None, *, max_pairs: int = MAX_PAIRS,
+def quantile_table(vectors, groups: Optional[Sequence[Any]] = None, *, max_pairs: Optional[int] = None,
                    seed: int = 0) -> Optional[list[list[float]]]:
     """``[[percentile, cosine], …]`` over the cosines of all pairs of ``vectors`` (spec §6.3).
 
     A vector is never paired with itself; with ``groups`` (one label per vector, e.g. the
-    company of each segment) two vectors of one group are not paired either. Over ``max_pairs``
-    pairs, ``max_pairs`` random pairs (fixed ``seed``) stand in for them all. None without a pair.
+    company of each segment) two vectors of one group are not paired either. Every pair counts
+    unless ``max_pairs`` is given: over that many pairs, ``max_pairs`` random pairs (fixed
+    ``seed``) stand in for them all. The build counts every company pair (about 3.1 million for
+    2,500 companies) and samples only the segment table, at ``MAX_PAIRS``. None without a pair.
     """
     units = _unit_rows(vectors) if len(vectors) else np.empty((0, 0))
     labels = np.asarray(groups) if groups is not None else None
@@ -496,8 +499,8 @@ def quantile_table(vectors, groups: Optional[Sequence[Any]] = None, *, max_pairs
         pairs -= int(sum(c * (c - 1) // 2 for c in counts))
     if pairs <= 0:
         return None
-    sims = (_all_pairs(units, labels) if pairs <= max_pairs
-            else _sampled_pairs(units, labels, max_pairs, seed))
+    sims = (_sampled_pairs(units, labels, max_pairs, seed) if max_pairs is not None and pairs > max_pairs
+            else _all_pairs(units, labels))
     return [[p, c] for p, c in zip(PERCENTILES, _percentile_values(sims))]
 
 

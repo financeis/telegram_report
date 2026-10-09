@@ -16,8 +16,9 @@ A build is one run for (fiscal year, profile version, embedding model):
    dimensions, scaled to length 1). Other models' embeddings are never touched.
 5. Status: ``pilot`` for a pilot; ``done`` when profiles succeeded for 95 % of the targets; else
    ``incomplete`` (run again to continue). Only a ``done`` build rewrites the ``terms`` of every
-   ``ok`` profile and records the term table and the percentile tables; a pilot prints each
-   target's ten most similar companies and segments instead and leaves ``terms`` alone.
+   ``ok`` profile and records the term table and the percentile tables (the company table over
+   every pair, the segment table over at most ``logic.MAX_PAIRS`` sampled pairs); a pilot prints
+   each target's ten most similar companies and segments instead and leaves ``terms`` alone.
 6. Retention: the three latest public builds stay; older ones, and the profile and embedding rows
    neither a remaining build nor the current profile version uses, are deleted.
 7. A summary JSON on stdout. Exit code: done 0, pilot 0, incomplete 1; refused 1.
@@ -381,9 +382,11 @@ class _Build:
         company, segment = self.vectors({row["stock_code"] for row in ok})
         return {
             "term_table": logic.term_table([row.get("profile") or {} for row in ok], self.job.synonyms),
+            # Every company pair counts; segment pairs over the limit are sampled (spec §6.3).
             "company_quantiles": logic.quantile_table([v for _, v in company]),
             "segment_quantiles": logic.quantile_table([v for _, _, v in segment],
-                                                      [c for c, _, _ in segment]),
+                                                      [c for c, _, _ in segment],
+                                                      max_pairs=logic.MAX_PAIRS),
         }
 
     def name_of(self, code: str, profiles: dict) -> str:

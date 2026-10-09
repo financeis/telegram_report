@@ -332,6 +332,30 @@ def test_over_the_pair_limit_a_random_sample_of_that_size_is_used(monkeypatch):
     assert abs(table[0][1] - exact[0][1]) < 0.1
 
 
+def test_the_company_table_uses_every_pair_even_over_the_sampling_limit(monkeypatch):
+    """Spec §6.3: only segment pairs are sampled; every company pair counts (about 2,500 companies
+    give some 3.1 million pairs)."""
+    n = 2001
+    assert n * (n - 1) // 2 > logic.MAX_PAIRS
+    vectors = random_unit(n, dims=4)
+    seen = {}
+    real = logic._percentile_values
+
+    def spy(sims):
+        seen['n'] = len(sims)
+        return real(sims)
+
+    def no_sampling(*args, **kwargs):
+        raise AssertionError('the company table must not be sampled')
+
+    monkeypatch.setattr(logic, '_percentile_values', spy)
+    monkeypatch.setattr(logic, '_sampled_pairs', no_sampling)
+    table = logic.quantile_table(vectors)
+    assert seen['n'] == n * (n - 1) // 2
+    pairs = (vectors @ vectors.T)[np.triu_indices(n, k=1)]
+    assert table[-1][1] == pytest.approx(pairs.max())
+
+
 def test_no_pairs_no_table():
     assert logic.quantile_table(random_unit(1)) is None
     assert logic.quantile_table(random_unit(2), ['A', 'A']) is None

@@ -176,6 +176,28 @@ async def test_the_profile_row_records_its_source_input_and_ai_call():
     assert [(s['seg_no'], s['name'], s['revenue_share_pct']) for s in segments] == [(0, '주력', 80.0), (1, '기타', -1)]
 
 
+async def test_the_public_build_samples_segment_pairs_only(monkeypatch):
+    """Spec §6.3: the company table counts every pair; only the segment table is sampled when it
+    has more pairs than the limit (lowered here to 2: 3 company pairs, 12 segment pairs)."""
+    monkeypatch.setattr(logic, 'MAX_PAIRS', 2)
+    sampled = []
+    real = logic._sampled_pairs
+
+    def spy(units, groups, size, seed):
+        sampled.append((len(units), groups is not None, size))
+        return real(units, groups, size, seed)
+
+    monkeypatch.setattr(logic, '_sampled_pairs', spy)
+    world = World(catalog(3))
+    await world.run()
+    assert sampled == [(6, True, 2)]                 # the six segments, once; never the companies
+    vectors = [v for _, v in PeersStore(world.db).company_vectors(FY, PV, MODEL)]
+    exact = logic.quantile_table(vectors)
+    stored = world.build_row()['company_quantiles']
+    assert [p for p, _ in stored] == [p for p, _ in exact]
+    assert [c for _, c in stored] == pytest.approx([c for _, c in exact])
+
+
 async def test_shared_terms_are_counted_across_companies_with_the_standard_spelling():
     companies = {'000010': ('가나반도체', ['Legacy DRAM', 'D램'], ['MCP']),
                  '000020': ('다라메모리', ['legacy-dram', '디램'], ['eMMC'])}
