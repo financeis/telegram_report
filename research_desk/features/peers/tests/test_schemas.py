@@ -61,6 +61,18 @@ def test_the_prompt_carries_the_extraction_rules():
     assert system.count('가상 회사') >= 1
 
 
+def test_the_summary_names_no_customer_competitor_or_group():
+    """Spec §6.1: the company embedding text holds no customer, competitor or group name, and the
+    summary goes into that text."""
+    summary = next(line for line in prompts.SYSTEM.splitlines() if line.startswith('- summary:'))
+    for word in ('고객사', '경쟁사', '그룹'):
+        assert word in summary, word
+    rules = prompts.SYSTEM[prompts.SYSTEM.index('<규칙>'):prompts.SYSTEM.index('</규칙>')]
+    rule = next(line for line in rules.splitlines() if 'summary' in line)
+    for word in ('고객사', '경쟁사', '그룹'):
+        assert word in rule, word
+
+
 def test_the_user_message_holds_the_company_name_and_the_input():
     system, user = prompts.render_messages('가나반도체', '[사업의 개요]\n본문')
     assert system == prompts.SYSTEM
