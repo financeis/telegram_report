@@ -262,19 +262,26 @@ stable
 security invoker
 set search_path = public, extensions
 as $$
-  select e.stock_code,
-         e.seg_no,
-         1 - (e.embedding <=> p_query) as similarity
-    from public.segment_embeddings e
-    join public.company_profiles p
-      on p.fiscal_year     = e.fiscal_year
-     and p.profile_version = e.profile_version
-     and p.stock_code      = e.stock_code
-   where e.fiscal_year     = p_fiscal_year
-     and e.profile_version = p_profile_version
-     and e.embed_model     = p_embed_model
-     and p.status          = 'ok'
-   order by e.embedding <=> p_query, e.stock_code, e.seg_no
+  -- 회사마다 가장 가까운 부문 하나만 남긴 뒤(distinct on), 가까운 회사 순으로 p_limit개를 준다.
+  -- 그래서 상위 N은 "부문 N개"가 아니라 "회사 N곳(각자 최고 부문)"이다.
+  select b.stock_code, b.seg_no, b.similarity
+    from (
+      select distinct on (e.stock_code)
+             e.stock_code,
+             e.seg_no,
+             1 - (e.embedding <=> p_query) as similarity
+        from public.segment_embeddings e
+        join public.company_profiles p
+          on p.fiscal_year     = e.fiscal_year
+         and p.profile_version = e.profile_version
+         and p.stock_code      = e.stock_code
+       where e.fiscal_year     = p_fiscal_year
+         and e.profile_version = p_profile_version
+         and e.embed_model     = p_embed_model
+         and p.status          = 'ok'
+       order by e.stock_code, e.embedding <=> p_query, e.seg_no
+    ) b
+   order by b.similarity desc, b.stock_code, b.seg_no
    limit greatest(least(coalesce(p_limit, 200), 200), 0);
 $$;
 

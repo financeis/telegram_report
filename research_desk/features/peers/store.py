@@ -15,7 +15,7 @@ This feature owns ``company_profiles``, ``company_segments``, ``company_embeddin
 - embeddings are written per model (upsert on the full key, 100 rows a request); another
   model's rows are never touched.
 - the match functions take the query vector as a list; they return every row they find (the
-  seed itself included, one row per segment for segments) — callers filter and reduce.
+  seed itself included; for segments one row per company, its nearest segment) — callers filter.
 - the web side reads the latest public build without its tables (one row, every request) and a
   build's tables by id (the caller keeps them per build id: a public build never changes); reads
   for a list of codes go ``CODES_CHUNK`` codes a request, each paged; the profiles holding a
@@ -342,7 +342,7 @@ class PeersStore:
 
     def match_company_segments(self, fiscal_year: int, profile_version: str, model: str,
                                query: Sequence[float], limit: Optional[int] = 200) -> list[dict]:
-        """``[{"stock_code", "seg_no", "similarity"}]``: one row per segment, nearest first."""
+        """``[{"stock_code", "seg_no", "similarity"}]``: one row per company (its nearest segment), nearest first."""
         return [{"stock_code": r["stock_code"], "seg_no": int(r["seg_no"]), "similarity": float(r["similarity"])}
                 for r in self._match("match_company_segments", fiscal_year, profile_version, model,
                                      query, limit)]
