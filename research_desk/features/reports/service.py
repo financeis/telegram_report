@@ -33,9 +33,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock
-from typing import Any, Mapping, Optional
+from typing import Any, Iterable, Mapping, Optional
 
 import pandas as pd
 from fastapi import HTTPException
@@ -79,6 +80,15 @@ def public_report(row: Mapping[str, Any], summary: Optional[dict]) -> dict:
     """The report as the browser sees it: the public columns, ``summary`` and ``pdf_url``."""
     return {k: row.get(k) for k in PUBLIC_COLUMNS} | {
         'summary': summary, 'pdf_url': f"/api/reports/{row['id']}/pdf"}
+
+
+def _instant(value: str) -> datetime:
+    """A timestamp the DB gave as ISO text, as an aware datetime in UTC (a time without an offset
+    is taken as UTC)."""
+    moment = datetime.fromisoformat(value)
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc)
 
 
 class ReportsService:
@@ -129,6 +139,23 @@ class ReportsService:
 
     def stock_rows(self, code: str, since: str) -> pd.DataFrame:
         return self.store().fetch_stock_rows(code, since)
+
+    def rows_for_stocks(self, codes: Iterable[str], since: str) -> pd.DataFrame:
+        return self.store().fetch_rows_for_stocks(codes, since)
+
+    def latest_report_sent_at(self) -> Optional[datetime]:
+        """The latest sent_at among in-scope rows, aware; None without one."""
+        row = self.store().fetch_latest_row()
+        if row is None or row.get('sent_at') is None:
+            return None
+        return _instant(row['sent_at'])
+
+    def tagging_in_progress(self, minutes: int = 30, now: Optional[datetime] = None) -> bool:
+        """True when a row is ``processing`` under a lock taken in the last ``minutes`` minutes
+        (inclusive). ``now`` (aware, any zone) stands in for the current time; tests pass it."""
+        store = self.store()
+        current = datetime.now(timezone.utc) if now is None else now.astimezone(timezone.utc)
+        return store.count_processing_since((current - timedelta(minutes=minutes)).isoformat()) > 0
 
     # ── addresses ────────────────────────────────────────────────────────────
 
@@ -213,7 +240,7 @@ def get_service() -> ReportsService:
 
 
 def report_row(rid: int) -> dict:
-    """The in-scope reports row ``rid`` with its 15 columns, file_path included: for other
+    """The in-scope reports row ``rid`` with its 16 columns, file_path included: for other
     features' work, never for the browser. 404 ``기업 보고서를 찾을 수 없습니다.`` when there is
     none; NotReady("리포트", …) without the DB settings."""
     return get_service().report_row(rid)
@@ -226,7 +253,7 @@ def get_report(rid: int) -> dict:
 
 
 def period_rows(since: str, include_oos: bool) -> pd.DataFrame:
-    """Rows for a period starting on ``since`` (YYYY-MM-DD), the 15 columns.
+    """Rows for a period starting on ``since`` (YYYY-MM-DD), the 16 columns.
 
     In-scope rows published since then; with ``include_oos``, every final row whose effective
     date (published_at, else the KST date of sent_at) is since then. NotReady without DB settings.
@@ -236,5 +263,31 @@ def period_rows(since: str, include_oos: bool) -> pd.DataFrame:
 
 def stock_rows(code: str, since: str) -> pd.DataFrame:
     """In-scope rows whose stock_codes hold ``code`` (as given), published since ``since``, the
-    15 columns. NotReady without DB settings."""
+    16 columns. NotReady without DB settings."""
     return get_service().stock_rows(code, since)
+
+
+def rows_for_stocks(codes: Iterable[str], since: str) -> pd.DataFrame:
+    """In-scope rows whose stock_codes share at least one code with ``codes`` and whose effective
+    date (published_at, else the KST date of sent_at) is on or after ``since`` (YYYY-MM-DD); the
+    16 columns, empty included.
+
+    Codes are used as given (no zero-padding); one that is not plain letters and digits matches
+    nothing, and one plain string instead of a collection is a TypeError. Read 1000 rows at a time
+    and 100 codes per query, a row only once. NotReady without DB settings, codes or not.
+    """
+    return get_service().rows_for_stocks(codes, since)
+
+
+def latest_report_sent_at() -> Optional[datetime]:
+    """When the newest in-scope report arrived: the latest sent_at among in-scope rows, as an
+    aware datetime in UTC, or None when there is no in-scope row. Reads one row with the 16
+    columns. NotReady without DB settings."""
+    return get_service().latest_report_sent_at()
+
+
+def tagging_in_progress(minutes: int = 30) -> bool:
+    """True while the tagger is working: some row is ``processing`` with ``tagging_locked_at``
+    in the last ``minutes`` minutes (inclusive). A count the server makes; no row is read.
+    NotReady without DB settings."""
+    return get_service().tagging_in_progress(minutes)

@@ -31,13 +31,20 @@ stock list is prepared before any rows are read, so an unreadable list costs no 
 activity address needs no stock list.
 
 The period starts on today in Korea minus ``days`` (``logic.period_start``, used by the router).
+
+Report counts of companies (spec §7). ``report_counts(codes, days)`` reads the in-scope rows of
+the codes through ``reports.rows_for_stocks(codes, since)`` (codes as given, since = today in
+Korea minus ``days``) and counts them with ``logic.count_reports`` for the same day in Korea. No
+stock list and no cache: every call reads again. The reports window's ``NotReady("리포트", …)``
+passes through unchanged.
 """
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from threading import Lock
 from time import monotonic
-from typing import Callable, Optional
+from typing import Callable, Iterable, Optional
 
 import pandas as pd
 
@@ -51,7 +58,15 @@ from research_desk.domain.stocks import (
 )
 from research_desk.features import reports
 
-from .logic import market_payload, stock_activity_payload
+from .logic import (
+    COUNT_DAYS,
+    KST,
+    code_list,
+    count_reports,
+    market_payload,
+    period_start,
+    stock_activity_payload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +146,17 @@ class CoverageService:
         """``GET /api/stocks/{code}/activity``: the company's in-scope reports over time."""
         return stock_activity_payload(reports.stock_rows(code, since), code, unit)
 
+    # ── for other features ───────────────────────────────────────────────────
+
+    def report_counts(self, codes: Iterable[str], days: int = COUNT_DAYS,
+                      now: Optional[datetime] = None) -> dict[str, dict]:
+        """Report counts per code over the last ``days`` days (spec §7). ``now`` (aware, any zone)
+        stands in for the current time; tests pass it."""
+        wanted = code_list(codes)
+        current = datetime.now(KST) if now is None else now.astimezone(KST)
+        rows = reports.rows_for_stocks(wanted, period_start(days, current))
+        return count_reports(rows, wanted, current.date(), days)
+
 
 def name_table(stocks: StockList) -> pd.DataFrame:
     """The stock list's catalog as a DataFrame (file order, "" for empty cells)."""
@@ -186,3 +212,26 @@ def invalidate() -> None:
     in flight, and rows such a read returns are not kept.
     """
     get_service().invalidate()
+
+
+def report_counts(codes: Iterable[str], days: int = COUNT_DAYS) -> dict[str, dict]:
+    """How much research covers each company over the last ``days`` days (spec §7).
+
+    ``{code: {stock_reports, sector_mentions, other_research, last_stock_report_date, brokers,
+    label}}`` for every code in ``codes`` (each once, in the given order, as given — no
+    zero-padding), with zeros, None and ``none`` for a code without rows. The rows are the reports
+    window's in-scope rows holding the code, kept by their effective date (published_at, else the
+    KST date of sent_at) from today in Korea minus ``days``. The three counts never overlap:
+
+    - ``stock_reports``: publisher type broker or empty, report type 단일종목 / 기타 / empty, and
+      stock_codes exactly ``[code]``;
+    - ``sector_mentions``: publisher type broker or empty, report type 섹터 (any number of codes);
+    - ``other_research``: publisher type data_provider / ir_agency / other.
+
+    ``last_stock_report_date`` is the latest stock report's effective date (YYYY-MM-DD, or None),
+    ``brokers`` the number of different non-empty publishers of the stock reports, and ``label``
+    ``none`` (no stock report), ``covered`` (3 or more, the last within 180 days) or ``few``.
+    One plain string instead of a collection is a TypeError. Without DB settings the reports
+    window's ``NotReady("리포트", …)`` passes through unchanged.
+    """
+    return get_service().report_counts(codes, days)
