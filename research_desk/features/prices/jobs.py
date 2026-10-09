@@ -43,7 +43,10 @@
 
 Heavy imports (the KIS client with its HTTP library, supabase-py) happen when the command runs:
 ``cli.py`` imports this module for every command. Output holds no key: KIS errors are masked by
-the client.
+the client. The command first sets stdout and stderr to write ``?`` for a character their
+encoding lacks instead of failing: piped or redirected output on Korean Windows is cp949, and an
+error text from KIS or the network can hold characters it has not (an en dash, ``é``). The
+encoding stays; the run record keeps the text as it was.
 """
 from __future__ import annotations
 
@@ -132,8 +135,18 @@ def register(subparsers) -> argparse.ArgumentParser:
     return prices
 
 
+def _tolerant(stream: Any) -> None:
+    """Set ``stream`` to write ``?`` for a character its encoding lacks (same object, same
+    encoding); a stream without ``reconfigure`` (a ``StringIO``) is left as it is."""
+    reconfigure = getattr(stream, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(errors="replace")
+
+
 def update(args: argparse.Namespace) -> int:
     """``prices update``: see the module docstring. Returns the exit code."""
+    _tolerant(sys.stdout)
+    _tolerant(sys.stderr)
     core_settings.load_env()
     try:
         stocks = _ready()

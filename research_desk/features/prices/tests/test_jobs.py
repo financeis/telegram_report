@@ -29,7 +29,9 @@ from __future__ import annotations
 
 import argparse
 import functools
+import io
 import json
+import sys
 from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -764,3 +766,52 @@ def test_as_of_is_the_latest_day_received(world):
     assert update() == 0
     assert world.db.runs()[0]["as_of"] == "2026-10-08"
     assert world.db.snapshot("080220")["as_of"] == "2026-10-07"
+
+
+# ── output on a cp949 console or pipe ────────────────────────────────────────
+
+FOREIGN = "잠시 후 – réessayez"   # an error text from KIS or the network can hold what cp949 lacks
+REPLACED = "잠시 후 ? r?essayez"
+
+
+def cp949_pipes(monkeypatch) -> SimpleNamespace:
+    """Point stdout and stderr at cp949 pipes with strict errors, as a pipe or a redirect is on
+    this PC. Called in the test body: pytest puts its own capture back between a fixture and the
+    test."""
+    pipes = SimpleNamespace(out=io.TextIOWrapper(io.BytesIO(), encoding="cp949"),
+                            err=io.TextIOWrapper(io.BytesIO(), encoding="cp949"))
+    monkeypatch.setattr(sys, "stdout", pipes.out)
+    monkeypatch.setattr(sys, "stderr", pipes.err)
+    return pipes
+
+
+def written(stream) -> str:
+    """What reached the pipe, line ends as ``\\n``."""
+    stream.flush()
+    return stream.buffer.getvalue().decode("cp949").replace("\r\n", "\n")
+
+
+def test_a_run_writes_its_summary_line_on_a_cp949_pipe(world, monkeypatch):
+    full_world(world)
+    world.kis.token_error = KisError(f"KIS access token failed: HTTP 403 EGW00133 {FOREIGN}", status=403)
+    pipes = cp949_pipes(monkeypatch)
+    assert update() == 1
+    assert written(pipes.out) == ""
+    assert lines(written(pipes.err)) == [
+        "주가 갱신 실패(failed): 기준일 없음, 성공 0종목, 실패 3종목. "
+        + run_without_token(f"KisError: KIS access token failed: HTTP 403 EGW00133 {REPLACED}")]
+    # Only the output is replaced: the run record keeps the text.
+    assert world.db.runs()[0]["message"] == run_without_token(
+        f"KisError: KIS access token failed: HTTP 403 EGW00133 {FOREIGN}")
+
+
+def test_codes_write_their_results_on_a_cp949_pipe(world, monkeypatch):
+    full_world(world)
+    world.kis.daily_errors["080220"] = KisError(f"KIS daily prices 080220 failed: {FOREIGN}", status=500)
+    pipes = cp949_pipes(monkeypatch)
+    assert update("--codes", "005930,080220") == 1
+    results = json.loads(written(pipes.out))
+    assert results["080220"] == {"stock_code": "080220", "flags": ["no_data"],
+                                 "error": f"KisError: KIS daily prices 080220 failed: {REPLACED}"}
+    assert results["005930"]["close"] == 110
+    assert lines(written(pipes.err))[-1].startswith("확인용 실행이라 아무것도 저장하지 않았습니다: ")
