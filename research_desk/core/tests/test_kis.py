@@ -157,9 +157,10 @@ def test_the_token_is_issued_once_and_sent_with_every_call(server, clock):
      "EGW00133", 403),
     (httpx.Response(200, json={"token_type": "Bearer"}), None, 200),
 ], ids=["refused", "no token in the answer"])
-def test_a_failed_token_issue_raises_and_is_tried_again_on_the_next_call(server, clock, refusal, code,
-                                                                         status):
-    server.token_answers = [refusal]
+def test_a_failed_token_issue_raises_and_is_never_asked_again(server, clock, refusal, code, status):
+    """KIS issues about one token a minute and the app key is shared with another project: a
+    client asks once (spec §8), so after a failed token request every call fails at once."""
+    server.token_answers = [refusal]   # a second token request would get a token
     server.quote = {"hts_avls": "1", "lstn_stcn": "7"}
     client = make_client(server, clock)
 
@@ -168,9 +169,44 @@ def test_a_failed_token_issue_raises_and_is_tried_again_on_the_next_call(server,
     assert (exc.value.code, exc.value.status) == (code, status)
     assert [request.url.path for request in server.requests] == [kis.TOKEN_PATH]  # no retry wait
 
-    assert client.quote("005930")["listed_shares"] == 7
-    assert [request.url.path for request in server.requests] == [kis.TOKEN_PATH, kis.TOKEN_PATH,
-                                                                 kis.QUOTE_PATH]
+    later_calls = (lambda: client.quote("005930"), lambda: client.ensure_token(),
+                   lambda: client.daily_prices("005930", date(2026, 9, 1), date(2026, 9, 30)))
+    for call in later_calls:
+        with pytest.raises(KisError) as again:
+            call()
+        assert (again.value.code, again.value.status) == (code, status)
+        assert str(exc.value) in str(again.value)   # the first failure's reason
+    assert [request.url.path for request in server.requests] == [kis.TOKEN_PATH]  # KIS not asked again
+    assert clock.sleeps == []
+
+
+def test_ensure_token_gets_the_token_once_and_later_calls_reuse_it(server, clock):
+    server.quote = {"hts_avls": "1", "lstn_stcn": "1"}
+    server.daily = [kis_row(day, 100) for day in trading_days(date(2026, 9, 1), 5)]
+    with make_client(server, clock) as client:
+        assert client.ensure_token() is None   # the token itself is never handed out
+        assert [request.url.path for request in server.requests] == [kis.TOKEN_PATH]
+        client.ensure_token()
+        client.quote("005930")
+        client.daily_prices("005930", date(2026, 9, 1), date(2026, 9, 30))
+        client.ensure_token()
+
+    assert [request.url.path for request in server.requests] == [kis.TOKEN_PATH, kis.QUOTE_PATH,
+                                                                 kis.DAILY_PATH]
+    assert all(request.headers["authorization"] == f"Bearer {TOKEN}" for request in server.data_requests())
+
+
+def test_a_token_request_that_breaks_another_way_is_not_asked_again_either(server, clock):
+    server.token_answers = [httpx.DecodingError("broken gzip body")]   # not a KisError
+    client = make_client(server, clock)
+
+    with pytest.raises(httpx.DecodingError):
+        client.quote("005930")
+    with pytest.raises(KisError, match="access token failed: DecodingError: broken gzip body"):
+        client.quote("005930")
+    with pytest.raises(KisError):
+        client.ensure_token()
+    assert [request.url.path for request in server.requests] == [kis.TOKEN_PATH]
 
 
 def test_threads_sharing_a_client_get_one_token(server, clock):
@@ -189,6 +225,25 @@ def test_threads_sharing_a_client_get_one_token(server, clock):
 
     assert [request.url.path for request in server.requests].count(kis.TOKEN_PATH) == 1
     assert len(server.data_requests()) == 4
+
+
+def test_threads_sharing_a_client_do_not_ask_again_after_a_failed_token(server, clock):
+    server.token_answers = [httpx.Response(403, json={"error_code": "EGW00133",
+                                                      "error_description": "1분당 1회"})]
+
+    def slow_token(request):
+        if request.url.path == kis.TOKEN_PATH:
+            time.sleep(0.05)  # the other threads wait for the token meanwhile
+        return server.handle(request)
+
+    client = KisClient(APP_KEY, APP_SECRET, max_calls_per_sec=1000, base_url=BASE_URL,
+                       transport=httpx.MockTransport(slow_token), sleep=clock.sleep, clock=clock)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        calls = [pool.submit(client.quote, code) for code in ("000010", "000020", "000030", "000040")]
+    client.close()
+
+    assert all(isinstance(call.exception(), KisError) for call in calls)
+    assert [request.url.path for request in server.requests] == [kis.TOKEN_PATH]
 
 
 # ── daily prices ─────────────────────────────────────────────────────────────
@@ -350,6 +405,25 @@ def test_kis_is_tried_at_most_three_more_times(server, clock, answer):
     assert "after 3 retries" in str(exc.value)
 
 
+@pytest.mark.parametrize("answer", list(RETRYABLE.values()), ids=list(RETRYABLE))
+def test_a_busy_token_issue_is_one_attempt_with_its_retries_then_never_asked_again(server, clock, answer):
+    server.token_answers = [answer() for _ in range(10)]
+    client = make_client(server, clock)
+
+    with pytest.raises(KisError) as exc:
+        client.quote("005930")
+    assert "access token" in str(exc.value) and "after 3 retries" in str(exc.value)
+    assert [request.url.path for request in server.requests] == [kis.TOKEN_PATH] * 4  # 1 try, 3 retries
+    assert clock.sleeps == pytest.approx([1.0, 2.0, 4.0])
+
+    with pytest.raises(KisError):
+        client.quote("005930")
+    assert len(server.requests) == 4 and clock.sleeps == pytest.approx([1.0, 2.0, 4.0])
+    with pytest.raises(KisError):
+        client.ensure_token()
+    assert len(server.requests) == 4
+
+
 NOT_RETRYABLE = {
     "KIS refusal over HTTP 200": (
         lambda: httpx.Response(200, json={"rt_cd": "1", "msg_cd": "KIER2620", "msg1": "조회할 자료가 없습니다"}),
@@ -398,11 +472,15 @@ def test_errors_and_logs_never_hold_the_key_secret_or_token(server, clock, caplo
 def test_a_refused_token_issue_does_not_repeat_the_credentials(server, clock):
     server.token_answers = [httpx.Response(403, json={
         "error_code": "EGW00103", "error_description": f"invalid appkey {APP_KEY} / {APP_SECRET}"})]
+    client = make_client(server, clock)
     with pytest.raises(KisError) as exc:
-        make_client(server, clock).quote("005930")
-    shown = "".join(traceback.format_exception(exc.value))
-    assert APP_KEY not in shown and APP_SECRET not in shown
-    assert "EGW00103" in shown
+        client.quote("005930")
+    with pytest.raises(KisError) as again:  # the later calls repeat the first failure's text
+        client.quote("005930")
+    for error in (exc.value, again.value):
+        shown = "".join(traceback.format_exception(error))
+        assert APP_KEY not in shown and APP_SECRET not in shown
+        assert "EGW00103" in shown
 
 
 # ── setup ────────────────────────────────────────────────────────────────────
