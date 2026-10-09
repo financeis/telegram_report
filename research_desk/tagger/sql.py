@@ -6,6 +6,8 @@ SQL without RPC functions; the direct connection keeps the SQL transparent.
 """
 from __future__ import annotations
 
+from research_desk.domain.reports import pending_reset_shape
+
 # Recorded in reports.tagger_version by every tagged row. The one definition.
 TAGGER_VERSION = "langgraph-tagger@2.0"
 
@@ -107,4 +109,63 @@ SELECT
   (SELECT count(*) FROM reports WHERE tagging_status='verified')         AS verified,
   (SELECT count(*) FROM reports WHERE out_of_scope_reason IS NOT NULL)   AS oos_total,
   (SELECT count(*) FROM reports WHERE tagged_at >= now() - interval '24 hours') AS last_24h
+"""
+
+
+# ── tag requeue (send classified rows back to 'pending') ─────────────────────
+
+# Every classified row (unknown filename tags count verified rows too); requeue.py
+# decides in Python which auto / review_needed rows meet the chosen criteria.
+REQUEUE_CANDIDATES_SQL = """
+SELECT id, file_name, file_path, publisher, publisher_type, tagging_status, tagging_notes
+  FROM reports
+ WHERE tagging_status IN ('auto', 'review_needed', 'verified')
+"""
+
+# The columns the reset writes, in the order of domain.reports.pending_reset_shape():
+# the same "back to pending" shape as the review's retag. Built from the shape so the
+# SET list and the bind values cannot drift apart.
+REQUEUE_RESET_COLUMNS: tuple[str, ...] = tuple(pending_reset_shape())
+
+# What the backup CSV keeps of each row (and what the lock reads back to re-check it):
+# id, file_name, tagging_status, tagged_at, then every other column the reset empties.
+REQUEUE_BACKUP_COLUMNS: tuple[str, ...] = (
+    "id", "file_name", "tagging_status", "tagged_at",
+    *(column for column in REQUEUE_RESET_COLUMNS if column not in ("tagging_status", "tagged_at")),
+)
+
+# Every column but id as Postgres text: arrays as array literals ({a,"b c"}), times as Postgres
+# prints them. The backup holds exactly those strings, and the re-check compares them.
+_REQUEUE_BACKUP_SELECT = ",\n       ".join(
+    ["id", *(f"{column}::text AS {column}" for column in REQUEUE_BACKUP_COLUMNS[1:])])
+
+REQUEUE_BACKUP_SQL = f"""
+SELECT {_REQUEUE_BACKUP_SELECT}
+  FROM reports
+ WHERE id = ANY($1::bigint[])
+ ORDER BY id
+"""
+
+# The same rows, locked for the rest of the transaction (in id order, so two sessions
+# cannot lock them crosswise).
+REQUEUE_LOCK_SQL = f"""
+SELECT {_REQUEUE_BACKUP_SELECT}
+  FROM reports
+ WHERE id = ANY($1::bigint[])
+ ORDER BY id
+   FOR UPDATE
+"""
+
+# $1 the ids that passed the re-check, $2.. the pending_reset_shape() values in
+# REQUEUE_RESET_COLUMNS order. The status condition keeps verified / processing / pending
+# rows out even if an id slipped through.
+_REQUEUE_RESET_SET = ",\n       ".join(
+    f"{column}=${number}" for number, column in enumerate(REQUEUE_RESET_COLUMNS, start=2))
+
+REQUEUE_RESET_SQL = f"""
+UPDATE reports
+   SET {_REQUEUE_RESET_SET}
+ WHERE id = ANY($1::bigint[])
+   AND tagging_status IN ('auto', 'review_needed')
+RETURNING id
 """

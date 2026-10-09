@@ -128,7 +128,7 @@ def test_the_help_lists_every_command(capsys):
 
 
 COMMANDS = [[], ['collect'], ['tag'], ['tag', 'run'], ['tag', 'inspect'], ['tag', 'escalate'],
-            ['tag', 'reset-worker'], ['web'], ['stocks'], ['stocks', 'set-version']]
+            ['tag', 'reset-worker'], ['tag', 'requeue'], ['web'], ['stocks'], ['stocks', 'set-version']]
 
 
 @pytest.mark.parametrize('command', COMMANDS, ids=lambda command: ' '.join(command) or 'research_desk')
@@ -165,6 +165,8 @@ USAGE_ERRORS = {
     'set-version: --as-of without a value': ['stocks', 'set-version', '--as-of'],
     'tag: no subcommand': ['tag'],
     'tag escalate: no --since': ['tag', 'escalate'],
+    'tag requeue: no criterion': ['tag', 'requeue'],
+    'tag requeue --apply: no criterion': ['tag', 'requeue', '--apply'],
     'collect: both modes': ['collect', '--cutoff-days', '1', '--backfill-days', '2'],
     'collect: not a number': ['collect', '--cutoff-days', 'x'],
 }
@@ -208,6 +210,8 @@ def test_python_m_research_desk_without_a_command_exits_2_and_loads_no_web_packa
     # The row graph loads only when tag run / escalate tag rows: collect, web and stocks start
     # without LangGraph and without the warning it prints when it loads.
     assert 'research_desk.tagger.orchestrator' not in imported
+    # tag requeue's module (and PyMuPDF with it) loads only when tag requeue runs.
+    assert 'research_desk.tagger.requeue' not in imported
     assert not {name for name in imported if name.split('.')[0] == 'langgraph'}
     assert 'LangChainPendingDeprecationWarning' not in result.stderr
 
