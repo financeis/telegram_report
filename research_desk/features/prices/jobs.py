@@ -30,7 +30,10 @@
   5. the run record is closed with the status, as_of (the latest day received), the counts and a
      message;
   6. one summary line: stdout for ok / partial (exit 0), stderr for failed (exit 1).
-  An exception or Ctrl+C on the way closes the run record as failed and goes up (exit 1).
+  An exception on the way closes the run record as failed and goes up: Python prints it and the
+  process ends with 1. Ctrl+C also closes the run record as failed and goes up, but the process
+  then ends with the interpreter's interrupt code, not 1 (on Windows 0xC000013A, which
+  PowerShell shows as -1073741510).
 - ``--codes`` is a check. The access token comes first: without it nothing is asked or read and
   nothing goes to stdout (one line on stderr, exit 1). Then only those codes are asked and their
   computed rows printed as JSON, then one summary line. Nothing is written (no snapshot, no run
