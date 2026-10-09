@@ -333,7 +333,50 @@ async def test_a_refused_picture_row_is_a_refusal(krx, mock_llm_client, mock_sup
 
     assert final["page_image"] is True
     assert final["tagging_status"] == "review_needed"
-    assert final["tagging_notes"] == "llm_refusal:cannot read"
+    # spec §3.2: a refused picture row is a refusal, and also carries the page_image note.
+    assert final["tagging_confidence"] == "low"
+    assert final["tagging_notes"] == "llm_refusal:cannot read;page_image"
+    (_, args), = mock_supabase.executed
+    assert (args[15], args[16], args[17]) == ("review_needed", "low",
+                                              "llm_refusal:cannot read;page_image")
+
+
+@pytest.mark.asyncio
+async def test_a_picture_row_is_written_at_most_medium_with_the_page_image_note(
+        krx, mock_llm_client, mock_supabase, tmp_path, monkeypatch):
+    _picture_pdf(tmp_path, monkeypatch)
+    mock_llm_client.set_response(make_llm_extraction())      # 단일종목 005930, 키움증권
+
+    final = await _graph(mock_llm_client, mock_supabase, krx).ainvoke(_init(18, "scan.pdf"))
+
+    assert final["publisher_suspect"] is None
+    (_, args), = mock_supabase.executed
+    assert (args[15], args[16], args[17]) == ("auto", "medium", "page_image")
+
+
+@pytest.mark.asyncio
+async def test_a_suspect_text_row_is_written_at_most_medium_with_the_suspect_note(
+        krx, mock_llm_client, mock_supabase, tmp_path, monkeypatch):
+    name = "samsung_005930_20260511_MERITZ_1096333.pdf"
+    _pdf(tmp_path, monkeypatch, name)
+    mock_llm_client.set_response(make_llm_extraction(publisher_canon="키움증권"))
+
+    final = await _graph(mock_llm_client, mock_supabase, krx).ainvoke(_init(19, name))
+
+    assert "page_image" not in final
+    (_, args), = mock_supabase.executed
+    assert (args[15], args[16], args[17]) == ("auto", "medium", "publisher_suspect:filename_mismatch")
+
+
+@pytest.mark.asyncio
+async def test_a_picture_row_the_model_cannot_take_gets_no_extra_note(
+        krx, mock_llm_client, mock_supabase, tmp_path, monkeypatch):
+    _picture_pdf(tmp_path, monkeypatch)
+
+    await _graph(mock_llm_client, mock_supabase, krx).ainvoke(_init(20, "scan.pdf", "gpt-4"))
+
+    (_, args), = mock_supabase.executed
+    assert (args[15], args[16], args[17]) == ("review_needed", "low", "first_page_unreadable")
 
 
 @pytest.mark.asyncio

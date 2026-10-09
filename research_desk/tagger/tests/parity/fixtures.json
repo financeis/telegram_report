@@ -518,7 +518,10 @@
     },
     "expected": {
       "publisher": "키움증권",
-      "publisher_type": "broker"
+      "publisher_type": "broker",
+      "tagging_status": "auto",
+      "tagging_confidence": "medium",
+      "tagging_notes": "publisher_suspect:filename_mismatch"
     }
   },
   {
@@ -548,7 +551,10 @@
     },
     "expected": {
       "publisher": null,
-      "publisher_type": null
+      "publisher_type": null,
+      "tagging_status": "auto",
+      "tagging_confidence": "medium",
+      "tagging_notes": "publisher_suspect:filename_mismatch"
     }
   },
   {
@@ -578,7 +584,10 @@
     },
     "expected": {
       "publisher": null,
-      "publisher_type": null
+      "publisher_type": null,
+      "tagging_status": "auto",
+      "tagging_confidence": "medium",
+      "tagging_notes": "publisher_suspect:unknown"
     }
   },
   {
@@ -608,7 +617,11 @@
     },
     "expected": {
       "publisher": "해당기업",
-      "publisher_type": "other"
+      "publisher_type": "other",
+      "out_of_scope_reason": "ir_self",
+      "tagging_status": "auto",
+      "tagging_confidence": "medium",
+      "tagging_notes": "publisher_suspect:filename_mismatch"
     }
   },
   {
@@ -649,7 +662,9 @@
       "sectors_major": ["반도체"],
       "sectors_minor": ["메모리반도체"],
       "out_of_scope_reason": null,
-      "tagging_status": "auto"
+      "tagging_status": "auto",
+      "tagging_confidence": "medium",
+      "tagging_notes": "page_image"
     }
   },
   {
@@ -686,7 +701,48 @@
       "stock_codes_raw": [],
       "company_names_raw": ["Disney"],
       "out_of_scope_reason": "foreign",
-      "tagging_status": "auto"
+      "tagging_status": "auto",
+      "tagging_confidence": "medium",
+      "tagging_notes": "page_image"
+    }
+  },
+  {
+    "case": "picture_only_unmatched_suspect_review",
+    "input": {
+      "file_name": "scan_ipo_pending_unlisted.pdf",
+      "caption": null,
+      "sent_at": "2026-05-19T05:00:00+00:00",
+      "pdf_text": ""
+    },
+    "llm_mock": {
+      "report_type": "단일종목",
+      "title": "미상장IPO후보 신규상장 분석",
+      "published_at": "2026-05-19",
+      "stock_codes_raw": [],
+      "company_names_raw": ["미상장IPO후보"],
+      "publisher_canon": null,
+      "analysts": ["김철수"],
+      "oos_signals": {
+        "foreign_primary_coverage": false,
+        "etf_or_fund": false,
+        "digital_asset": false,
+        "private_company_likely": false
+      },
+      "self_confidence": "high",
+      "notes": null
+    },
+    "expected": {
+      "report_type": "단일종목",
+      "publisher": null,
+      "publisher_type": null,
+      "stock_codes": [],
+      "company_names": ["미상장IPO후보"],
+      "stock_codes_raw": [],
+      "company_names_raw": ["미상장IPO후보"],
+      "out_of_scope_reason": null,
+      "tagging_status": "review_needed",
+      "tagging_confidence": "low",
+      "tagging_notes": "krx_unmatched_in_scope:ipo_pending_or_unknown;page_image;publisher_suspect:unknown"
     }
   }
 ]
