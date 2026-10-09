@@ -89,12 +89,12 @@ async def test_iter_messages_since_date_starts_days_ago(wrapper, made):
     made[0].messages = ['m1']
     before = datetime.now(timezone.utc)
 
-    got = [m async for m in wrapper.iter_messages_since_date(1378197756, 30)]
+    got = [m async for m in wrapper.iter_messages_since_date(1000000001, 30)]
 
     after = datetime.now(timezone.utc)
     assert got == ['m1']
     ((name, channel, kwargs),) = made[0].calls
-    assert (name, channel, kwargs['reverse']) == ('iter_messages', 1378197756, True)
+    assert (name, channel, kwargs['reverse']) == ('iter_messages', 1000000001, True)
     assert before - timedelta(days=30) <= kwargs['offset_date'] <= after - timedelta(days=30)
 
 

@@ -107,7 +107,7 @@ def make_row(**overrides):
     base = {
         'id': 1234,
         'message_id': 124784,
-        'chat_username': 'sunstudy1004',
+        'chat_username': 'example_channel',
         'file_path': '124784_some.pdf',
         'file_name': 'some.pdf',
         'file_size_bytes': 12345,

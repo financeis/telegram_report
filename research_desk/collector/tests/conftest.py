@@ -18,7 +18,7 @@ COLLECTOR_ENV_VARS = (
 REQUIRED_TEST_ENV = {
     'TELEGRAM_API_ID': '12345',
     'TELEGRAM_API_HASH': 'abcdef0123456789',
-    'TELEGRAM_CHANNEL': 'sunstudy1004',
+    'TELEGRAM_CHANNEL': 'example_channel',
     'SUPABASE_URL': 'https://test.supabase.co',
     'SUPABASE_SERVICE_KEY': 'eyJtest',
 }

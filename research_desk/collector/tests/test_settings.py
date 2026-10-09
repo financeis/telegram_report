@@ -20,7 +20,7 @@ def test_load_config_happy_path(required_env):
     assert isinstance(cfg, Config)
     assert cfg.telegram_api_id == 12345
     assert cfg.telegram_api_hash == 'abcdef0123456789'
-    assert cfg.telegram_channel == 'sunstudy1004'
+    assert cfg.telegram_channel == 'example_channel'
     assert cfg.supabase_url == 'https://test.supabase.co'
     assert cfg.supabase_service_key == 'eyJtest'
     # Defaults
@@ -100,23 +100,23 @@ def test_load_config_telegram_channel_id_empty_is_none(required_env, clean_env):
 
 def test_load_config_telegram_channel_id_int_when_set(required_env, clean_env):
     """CHANNEL_ID 환경변수가 숫자 문자열이면 int로 캐스팅."""
-    clean_env.setenv('TELEGRAM_CHANNEL_ID', '1378197756')
+    clean_env.setenv('TELEGRAM_CHANNEL_ID', '1000000001')
 
     cfg = load_config()
-    assert cfg.telegram_channel_id == 1378197756
+    assert cfg.telegram_channel_id == 1000000001
     assert isinstance(cfg.telegram_channel_id, int)
 
 
 def test_channel_ref_returns_id_int_when_id_set(required_env, clean_env):
-    clean_env.setenv('TELEGRAM_CHANNEL_ID', '1378197756')
+    clean_env.setenv('TELEGRAM_CHANNEL_ID', '1000000001')
 
     cfg = load_config()
-    assert cfg.channel_ref() == 1378197756
+    assert cfg.channel_ref() == 1000000001
 
 
 def test_channel_ref_falls_back_to_username_when_id_unset(required_env):
     cfg = load_config()
-    assert cfg.channel_ref() == 'sunstudy1004'
+    assert cfg.channel_ref() == 'example_channel'
 
 
 @pytest.mark.parametrize('name, value', [

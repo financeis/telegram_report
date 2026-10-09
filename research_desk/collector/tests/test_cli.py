@@ -119,7 +119,7 @@ def _make_dry_run_config(**overrides):
         return self.telegram_channel
 
     defaults = dict(
-        telegram_channel='sunstudy1004',
+        telegram_channel='example_channel',
         telegram_channel_id=None,
         initial_cutoff_days=30,
     )
@@ -147,7 +147,7 @@ async def test_dry_run_with_backfill_uses_skip_set(monkeypatch, tmp_path, capsys
 
     assert rc == 0
     # iter_since_date called with backfill_days, not initial_cutoff_days
-    assert ('iter_since_date', 'sunstudy1004', 90) in client.calls
+    assert ('iter_since_date', 'example_channel', 90) in client.calls
 
     captured = capsys.readouterr()
     log_output = captured.err  # logging defaults to stderr
@@ -164,13 +164,13 @@ async def test_dry_run_uses_channel_id_when_set(tmp_path):
     client = FakeTelegramClient()
     client.new_messages = [make_msg(125165)]
 
-    config = _make_dry_run_config(telegram_channel_id=1378197756)
+    config = _make_dry_run_config(telegram_channel_id=1000000001)
 
     rc = await _dry_run(client, storage, config, backfill_days=None)
 
     assert rc == 0
     # First run (max_seen=0) — uses iter_since_date with the int id
-    assert any(c[0] == 'iter_since_date' and c[1] == 1378197756 for c in client.calls)
+    assert any(c[0] == 'iter_since_date' and c[1] == 1000000001 for c in client.calls)
 
 
 def _messages(caplog) -> list[str]:
@@ -206,7 +206,7 @@ async def test_dry_run_normal_mode_continues_after_last_seen(tmp_path, caplog):
         rc = await _dry_run(client, storage, _make_dry_run_config(), backfill_days=None)
 
     assert rc == 0
-    assert client.calls == [('iter_after_id', 'sunstudy1004', 500)]
+    assert client.calls == [('iter_after_id', 'example_channel', 500)]
     # Normal mode has no skip set: 501 is listed, and there is no "skipped" line.
     assert _messages(caplog) == [
         'DRY RUN — would process the following:',
@@ -324,22 +324,22 @@ def test_collect_success_returns_0(required_env, clean_env, wired, fake_client, 
     assert wired['connected'] and wired['disconnected']
     assert wired['logging'] == [(False, 'INFO')]
     # First run: INITIAL_CUTOFF_DAYS default (30) days back, DB label = TELEGRAM_CHANNEL
-    assert ('iter_since_date', 'sunstudy1004', 30) in fake_client.calls
+    assert ('iter_since_date', 'example_channel', 30) in fake_client.calls
     assert [(r['message_id'], r['chat_username'], r['file_path']) for r in fake_storage.inserted] == [
-        (101, 'sunstudy1004', '101_q1.pdf')]
+        (101, 'example_channel', '101_q1.pdf')]
 
 
 def test_collect_uses_session_name_and_channel_id(required_env, clean_env, wired, fake_client, fake_storage):
     clean_env.setenv('TELEGRAM_SESSION_NAME', 'mysess')
-    clean_env.setenv('TELEGRAM_CHANNEL_ID', '1378197756')
+    clean_env.setenv('TELEGRAM_CHANNEL_ID', '1000000001')
     fake_storage._max_seen = 125164
     fake_client.new_messages = [make_msg(125165)]
 
     assert invoke() == 0
 
     assert wired['telegram']['session_path'] == Path('sessions') / 'mysess'
-    assert fake_client.calls[0] == ('iter_after_id', 1378197756, 125164)
-    assert fake_storage.inserted[0]['chat_username'] == 'sunstudy1004'
+    assert fake_client.calls[0] == ('iter_after_id', 1000000001, 125164)
+    assert fake_storage.inserted[0]['chat_username'] == 'example_channel'
 
 
 def test_collect_cutoff_days_overrides_initial_cutoff(required_env, clean_env, wired, fake_client):
@@ -347,7 +347,7 @@ def test_collect_cutoff_days_overrides_initial_cutoff(required_env, clean_env, w
 
     assert invoke('--cutoff-days', '7') == 0
 
-    assert ('iter_since_date', 'sunstudy1004', 7) in fake_client.calls
+    assert ('iter_since_date', 'example_channel', 7) in fake_client.calls
 
 
 def test_collect_backfill_days_skips_known_messages(required_env, wired, fake_client, fake_storage):
@@ -357,7 +357,7 @@ def test_collect_backfill_days_skips_known_messages(required_env, wired, fake_cl
 
     assert invoke('--backfill-days', '90') == 0
 
-    assert ('iter_since_date', 'sunstudy1004', 90) in fake_client.calls
+    assert ('iter_since_date', 'example_channel', 90) in fake_client.calls
     assert [r['message_id'] for r in fake_storage.inserted] == [102]
 
 
@@ -386,7 +386,7 @@ def test_collect_dry_run_writes_nothing(required_env, wired, fake_client, fake_s
     with caplog.at_level(logging.INFO, logger=cli.__name__):
         assert invoke('--dry-run', '--cutoff-days', '7') == 0
 
-    assert fake_client.calls == [('iter_since_date', 'sunstudy1004', 7)]
+    assert fake_client.calls == [('iter_since_date', 'example_channel', 7)]
     assert fake_storage.inserted == []
     assert fake_storage.saved_files == []
     assert fake_storage.failed_upserts == []
