@@ -121,7 +121,7 @@
 - 오류: 503 `주가 기능을 지금 쓸 수 없습니다: …`(주가를 먼저 읽는다) 또는 `리포트 기능을 지금 쓸 수 없습니다: …`. 아무것도 기억하지 않으므로 원인을 고치면 다음 요청에 회복한다. 화면은 실패하면 회색 `자료 기준일 확인 불가`를 보여 준다.
 
 ### `GET /`, `GET /assets/*` (화면 파일)
-`frontend/dist`의 빌드 결과. `/`는 `index.html`을 `Cache-Control: no-cache`로 준다. 빌드가 없으면 `/`는 503 `프론트엔드를 먼저 빌드해 주세요: cd frontend && npm run build`. `/assets`는 서버를 켤 때 `frontend/dist`가 있었을 때만 연결된다.
+`frontend/dist`의 빌드 결과. 화면은 주소의 `?view=`로 보기를 고른다: `reports`(기본)·`market`·`review`·`themes`(테마로 기업 찾기, `&q=<검색어>`를 받는다). `web --view`는 앞의 셋만 받는다. `/`는 `index.html`을 `Cache-Control: no-cache`로 준다. 빌드가 없으면 `/`는 503 `프론트엔드를 먼저 빌드해 주세요: cd frontend && npm run build`. `/assets`는 서버를 켤 때 `frontend/dist`가 있었을 때만 연결된다.
 
 ## 명령 — `python -m research_desk <명령>`
 
