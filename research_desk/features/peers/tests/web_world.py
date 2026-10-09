@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import csv
 import math
-from types import SimpleNamespace
 from typing import Any, Optional
 
 from fastapi import FastAPI
@@ -267,7 +266,3 @@ def build_app(service: Any = None) -> FastAPI:
         return JSONResponse({'detail': str(exc)}, status_code=503)
 
     return app
-
-
-def namespace(**fields) -> SimpleNamespace:
-    return SimpleNamespace(**fields)

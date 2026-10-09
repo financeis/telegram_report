@@ -218,7 +218,7 @@ async def test_the_vector_is_scaled_to_length_one(world):
     assert len(vector) == DIMS and sum(x * x for x in vector) == pytest.approx(1.0)
 
 
-async def test_a_wrong_number_of_dimensions_is_an_error_and_not_kept(world, monkeypatch):
+async def test_a_wrong_number_of_dimensions_is_an_error_and_not_kept(world):
     world.llm.embedder = lambda text: [1.0] * 3
     with pytest.raises(RuntimeError):
         await world.service.query_vector(MODEL, 'short')
