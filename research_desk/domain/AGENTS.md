@@ -3,7 +3,7 @@
 ## 맡는 일
 
 - `vocabulary.yaml`: 리포트 값 집합의 원본. 리포트 종류, 분석 대상 외(OOS) 사유, 발행처 종류, 분류 상태, 신뢰도. 끝의 `precedence_rules`는 코드가 읽지 않는 참고 메모다(분기 규칙의 실제 구현은 분류기 노드에 있다).
-- `reports.py`: 위 값 집합(튜플), "분석 대상" 규칙(`IN_SCOPE_STATUSES`, `is_in_scope`), "분석 대상 외 행 모양"(`OOS_CLEARED_COLUMNS`, `OOS_KEPT_COLUMNS`, `oos_row_shape`). 이 규칙들의 정의는 저장소에 여기 한 곳뿐이다.
+- `reports.py`: 위 값 집합(튜플), "분석 대상" 규칙(`IN_SCOPE_STATUSES`, `is_in_scope`), "분석 대상 외 행 모양"(`OOS_CLEARED_COLUMNS`, `OOS_KEPT_COLUMNS`, `oos_row_shape`), "되돌리는 모양"(`pending_reset_shape` — 행을 분류 전 `pending`으로 되돌릴 때 쓰는 값). 이 규칙들의 정의는 저장소에 여기 한 곳뿐이다.
 - `stocks.py`: 종목표(KRX CSV)를 읽는 단 하나의 코드. 분류기의 종목 매핑, 웹의 기업 목록·리포트 화면·커버리지 이름이 모두 이것을 쓴다. 조회·검색·목록과 버전 정보 파일(내용 지문, `verify`, `write_version`)도 여기 있다.
 - 이 칸이 따로 있는 이유: 분류기와 웹 기능이 같은 뜻으로 써야 하는 약속인데, 분류기는 웹 기능을 import할 수 없고 core는 업무 개념을 모르게 두기 때문이다.
 
@@ -40,7 +40,14 @@
 - `report_type`을 `기타`로 덮어쓰지 않는다. 분류 결과를 그대로 남기는 것이 지금 규칙이다.
 - 배열은 새 리스트로 복사하고 None 배열은 `[]`로 만든다. 넘겨받은 행은 바꾸지 않는다. `row`가 None이면 남기는 열은 None이나 `[]`다.
 - `reason`이 `OOS_REASONS`에 정확히 들어 있지 않으면(대문자, None, 빈 값 포함) `ValueError`.
-- `row`는 DB 열 이름으로 넘긴다. 분류기는 LLM의 `publisher_canon`을 `publisher`로 바꿔서 넘긴다.
+- `row`는 DB 열 이름으로 넘긴다. 분류기는 LLM의 날 답이 아니라 확인을 거친 발행처(`publisher_final`: 발행처 사전의 정식 이름 또는 None)와 그 사전 구역(`publisher_type_final`)을 `publisher`·`publisher_type`으로 넘긴다.
+
+되돌리는 모양(`pending_reset_shape()`). 검토의 재분류(`features/review`)와 분류기의 `tag requeue`가 같은 함수를 쓰므로, 여기를 바꾸면 두 쓰기가 함께 바뀐다. 분류기는 기능을 import할 수 없고 기능도 분류기를 import할 수 없어서 둘이 함께 쓰는 자리가 domain이다.
+- 돌려주는 키는 정확히 22개, 이 순서다: 분류 메타 `tagging_status`(`'pending'`), `tagging_locked_at`, `tagging_worker_id`, `tagged_at`, `tagging_notes`, `tagging_confidence`, `tagger_version`, `taxonomy_version`, 분류 칸 `published_at`, `report_type`, `publisher`, `publisher_type`, `analysts`, `title`, `stock_codes`, `company_names`, `stock_codes_raw`, `company_names_raw`, `sectors_major`, `sectors_minor`, `products`, `out_of_scope_reason`.
+- 배열 칸(`analysts`, `stock_codes`, `company_names`, `stock_codes_raw`, `company_names_raw`, `sectors_major`, `sectors_minor`, `products`)은 `[]`, 나머지는 None이다. 배열 칸은 DB에서 `NOT NULL`이라 None을 쓰면 쓰기가 실패한다.
+- 수집기 열(`id`, `message_id`, `chat_username`, `file_path`, `file_name`, `file_size_bytes`, `file_hash_sha256`, `caption`, `downloaded_at`, `sent_at`)은 넣지 않는다. 분석 대상 외 행 모양이 쓰는 열은 모두 들어 있다(되돌리면 제외 결과도 지워진다).
+- 부를 때마다 새 목록을 돌려준다. 키 순서는 `tagger/sql.py`의 되돌리기 SQL이 `SET` 목록과 인자 순서를 이 모양에서 만들 때 쓴다.
+- 이 모양은 옮겨 오기 전 검토의 재분류가 쓰던 값과 키·순서까지 같다(테스트가 고정한다). 바꾸면 검토 화면의 재분류도 바뀐다.
 
 종목표.
 - 머리줄은 칸 안의 줄바꿈과 앞뒤 공백을 지운 뒤 정확히 `종목코드, 종목명, 시장, 산업명(대), 산업명(중), 주요제품`(순서까지, 6칸)이어야 한다. 실제 파일의 첫 칸은 따옴표 안에 줄바꿈이 든 `"종목\n코드"`다. 다르면 `StockListError`("머리줄이 다릅니다").
@@ -96,5 +103,5 @@
   - `verify`의 세 이유, BOM 허용, 매번 다시 읽기, 수정 시각 무시.
   - `write_version`의 성공·재기록·나쁜 날짜 전부·머리줄 오류·CSV 없음·교체 실패.
 - 실패 테스트는 실패 전후의 버전 정보 파일을 바이트로 비교하고, 폴더의 파일 이름 목록으로 임시 파일이 남지 않았는지 본다. 교체 실패는 `stocks.os.replace`를 예외를 던지는 함수로 바꿔 만든다.
-- `reports` 쪽: 값 집합과 yaml의 일치, 버전 필드 없음, 검토 행과 LLM 필드 각각의 정확한 OOS 모양, 분류 없음(None·`{}`), None 배열, 복사(원본 불변), 틀린 사유, 분석 대상의 모든 상태·사유 조합.
+- `reports` 쪽: 값 집합과 yaml의 일치, 버전 필드 없음, 검토 행과 LLM 필드 각각의 정확한 OOS 모양, 분류 없음(None·`{}`), None 배열, 복사(원본 불변), 틀린 사유, 분석 대상의 모든 상태·사유 조합. 되돌리는 모양은 옛 재분류 값과 키·순서까지 같음(22개), 배열은 `[]`·나머지 None, OOS 모양의 열을 모두 덮음, 수집기 열 없음, 부를 때마다 새 목록.
 - 다른 칸의 테스트에서 종목표가 필요하면 임시 CSV에 `write_version`을 불러 버전 확인을 통과시킨다. 메모리에서 만든 `StockList(entries)`는 경로와 지문이 없어 `verify()`가 늘 `missing`이다.
