@@ -25,7 +25,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -224,7 +224,7 @@ def window(monkeypatch):
 def test_window_exposes_the_public_names():
     assert isinstance(reports.router, APIRouter)
     for name in ('report_row', 'get_report', 'public_report', 'period_rows', 'stock_rows',
-                 'rows_for_stocks', 'latest_report_sent_at'):
+                 'rows_for_stocks', 'latest_report_sent_at', 'tagging_in_progress'):
         assert callable(getattr(reports, name)), name
 
 
@@ -541,6 +541,7 @@ WINDOW_CALLS = {
     'rows_for_stocks': lambda: reports.rows_for_stocks(['016360', '005930'], '2026-01-01'),
     'rows_for_stocks without codes': lambda: reports.rows_for_stocks([], '2026-01-01'),
     'latest_report_sent_at': lambda: reports.latest_report_sent_at(),
+    'tagging_in_progress': lambda: reports.tagging_in_progress(),
 }
 
 
@@ -745,6 +746,7 @@ def test_the_window_needs_no_stock_list(window, db, summaries, tmp_path, monkeyp
     assert list(reports.stock_rows('016360', '2026-01-01')['id']) == [1]
     assert list(reports.rows_for_stocks(['016360'], '2026-01-01')['id']) == [1]
     assert reports.latest_report_sent_at() == datetime(2026, 5, 11, 1, tzinfo=timezone.utc)
+    assert reports.tagging_in_progress() is False
 
 
 def test_the_window_uses_one_service_prepared_once(window, db):
@@ -754,6 +756,7 @@ def test_the_window_uses_one_service_prepared_once(window, db):
     reports.stock_rows('016360', '2026-01-01')
     reports.rows_for_stocks(['016360'], '2026-01-01')
     reports.latest_report_sent_at()
+    reports.tagging_in_progress()
     assert db.made == [(URL, KEY)]
     assert get_service() is get_service()
 
@@ -784,6 +787,63 @@ def test_latest_report_sent_at_is_an_aware_datetime(window, db, stored, expected
     db.tables['reports'] = [tagged(1, sent_at=stored)]
     latest = reports.latest_report_sent_at()
     assert latest == expected and latest.utcoffset() is not None
+
+
+# ── is the tagger working? ───────────────────────────────────────────────────
+
+NOW = datetime(2026, 10, 9, 3, 0, tzinfo=timezone.utc)
+
+
+def locked(rid, at, status='processing'):
+    """A row a tagger took at ``at`` (an ISO time in UTC, or None)."""
+    return tagged(rid, status=status, published=None, codes=(), tagging_locked_at=at)
+
+
+@pytest.mark.parametrize('at, expected', [
+    ('2026-10-09T02:59:59+00:00', True),
+    ('2026-10-09T02:30:00+00:00', True),    # exactly 30 minutes before now
+    ('2026-10-09T02:29:59+00:00', False),   # 30 minutes and 1 second
+    (None, False),                          # no lock time
+], ids=['just now', '30 min', '30 min 1 s', 'no lock time'])
+def test_tagging_in_progress_looks_back_30_minutes_by_default(service, db, at, expected):
+    db.tables['reports'] = [locked(1, at)]
+    assert service.tagging_in_progress(now=NOW) is expected
+
+
+def test_tagging_in_progress_ignores_rows_that_are_not_processing(service, db):
+    fresh = '2026-10-09T02:59:00+00:00'
+    db.tables['reports'] = [locked(n, fresh, status=status)
+                            for n, status in enumerate(('pending', 'auto', 'review_needed', 'verified'), 1)]
+    assert service.tagging_in_progress(now=NOW) is False
+    db.tables['reports'].append(locked(9, fresh))
+    assert service.tagging_in_progress(now=NOW) is True
+
+
+def test_tagging_in_progress_takes_the_minutes_and_any_time_zone(service, db):
+    db.tables['reports'] = [locked(1, '2026-10-09T02:55:00+00:00')]
+    assert service.tagging_in_progress(5, now=NOW) is True
+    assert service.tagging_in_progress(4, now=NOW) is False
+    assert service.tagging_in_progress(5, now=NOW.astimezone(KST)) is True   # the same instant
+    # the cutoff goes to the DB in UTC, like the stored lock times
+    assert [q.filter_values('gte', 'tagging_locked_at') for q in db.queries('reports')] == [
+        ['2026-10-09T02:55:00+00:00'], ['2026-10-09T02:56:00+00:00'], ['2026-10-09T02:55:00+00:00']]
+
+
+def test_tagging_in_progress_counts_without_reading_rows(service, db):
+    db.tables['reports'] = [locked(1, '2026-10-09T02:59:00+00:00'), locked(2, '2026-10-09T02:58:00+00:00')]
+    assert service.tagging_in_progress(now=NOW) is True
+    (query,) = db.queries('reports')
+    assert (query.columns, query.count, query.head) == ('id', 'exact', True)
+
+
+def test_tagging_in_progress_through_the_window(window, db):
+    assert reports.tagging_in_progress() is False   # no rows at all
+    now = datetime.now(timezone.utc)
+    db.tables['reports'] = [locked(1, (now - timedelta(hours=2)).isoformat())]
+    assert reports.tagging_in_progress() is False   # a lock older than 30 minutes
+    assert reports.tagging_in_progress(minutes=180) is True
+    db.tables['reports'].append(locked(2, (now - timedelta(minutes=1)).isoformat()))
+    assert reports.tagging_in_progress() is True
 
 
 def test_rows_for_stocks_is_a_frame_of_the_sixteen_columns(window, db):

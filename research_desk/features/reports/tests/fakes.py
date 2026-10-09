@@ -7,7 +7,8 @@ Filters follow PostgREST: a NULL value never passes eq / in_ / gte / contains / 
 ``is_(col, 'null')`` passes only NULL; ``ov`` (array overlap) passes a row whose array shares at
 least one value with the given list. ``order`` sorts like PostgreSQL: NULLs last ascending and
 first descending, unless ``nullsfirst`` says otherwise. ``select`` returns only the listed
-columns (``'*'`` returns all of them).
+columns (``'*'`` returns all of them); with ``count='exact'`` the result's ``count`` is the number
+of matching rows (whatever the window), and ``head=True`` returns no rows, like a HEAD request.
 
 Like the real builder, ``range()`` changes the query it is called on and returns it, so a paged
 read executes one query object several times; the latest window wins. Each execution is kept in
@@ -30,13 +31,17 @@ class FakeQuery:
         self.db = db
         self.table = table
         self.columns: Optional[str] = None
+        self.count: Optional[str] = None                # select(..., count='exact')
+        self.head: Optional[bool] = None                # select(..., head=True): no rows back
         self.filters: list[tuple[str, str, Any]] = []   # (operator, column, value) in call order
         self.orders: list[tuple[str, bool, Optional[bool]]] = []   # (column, desc, nullsfirst)
         self.window: Optional[tuple[int, int]] = None   # range(start, end), both inclusive
         self.limit_size: Optional[int] = None           # limit(size)
 
-    def select(self, columns: str = "*") -> "FakeQuery":
-        self.columns = columns
+    def select(self, columns: str = "*", count: Optional[str] = None,
+               head: Optional[bool] = None) -> "FakeQuery":
+        assert count in (None, "exact"), f"only count='exact' is supported, got {count!r}"
+        self.columns, self.count, self.head = columns, count, head
         return self
 
     def eq(self, column: str, value: Any) -> "FakeQuery":
@@ -128,13 +133,16 @@ class FakeQuery:
         snapshot.orders = list(self.orders)
         self.db.executed.append(snapshot)
         matched = [row for row in self.db.tables.get(self.table, []) if self._passes(row)]
+        count = len(matched) if self.count == "exact" else None
         data = [self._shape(row) for row in self._sorted(matched)]
         if self.window is not None:
             start, end = self.window
             data = data[start:end + 1]
         if self.limit_size is not None:
             data = data[:self.limit_size]
-        return SimpleNamespace(data=data)
+        if self.head:
+            data = []
+        return SimpleNamespace(data=data, count=count)
 
 
 class FakeSupabase:

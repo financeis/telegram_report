@@ -23,7 +23,9 @@ langgraph_tagger/analytics/db.py with the same queries:
   codes are asked ``CODES_PER_QUERY`` at a time, each batch paged in id order;
 - one row by id: in-scope only, None when there is none;
 - the row sent last: the in-scope row with the latest ``sent_at`` (one row), None when there is
-  none.
+  none;
+- rows being tagged: how many rows are ``processing`` under a lock taken since a given time, an
+  exact count from the server that fetches no row (``head=True``).
 
 All group-by / unnest / bucketing happens in the callers.
 """
@@ -38,6 +40,9 @@ from research_desk.domain.reports import IN_SCOPE_STATUSES
 PAGE = 1000
 # Codes in one array-overlap query: keeps the request address short.
 CODES_PER_QUERY = 100
+# The tagging status of a row a tagger has taken and is working on (one of
+# domain.reports.TAGGING_STATUSES).
+PROCESSING = 'processing'
 
 EXPECTED_COLS: tuple[str, ...] = (
     'id', 'published_at', 'sent_at', 'report_type', 'publisher',
@@ -194,3 +199,13 @@ class ReportStore:
                   .limit(1)
                   .execute())
         return result.data[0] if result.data else None
+
+    def count_processing_since(self, locked_since_iso: str) -> int:
+        """How many rows a tagger is working on under a lock taken at or after
+        ``locked_since_iso``: an exact count from the server; no row is fetched."""
+        result = (self._sb.table('reports')
+                  .select('id', count='exact', head=True)
+                  .eq('tagging_status', PROCESSING)
+                  .gte('tagging_locked_at', locked_since_iso)
+                  .execute())
+        return int(result.count or 0)

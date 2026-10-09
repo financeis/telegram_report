@@ -22,6 +22,7 @@ from research_desk.features.reports.store import (
     CODES_PER_QUERY,
     EXPECTED_COLS,
     PAGE,
+    PROCESSING,
     SELECT_COLS,
     ReportStore,
 )
@@ -577,3 +578,56 @@ def test_a_row_without_sent_at_is_never_the_latest():
     # sent_at is NOT NULL in the table; the order still puts NULLs last, not first
     rows = [tagged(1, sent=None), tagged(2, sent='2026-05-11T01:00:00+00:00')]
     assert ReportStore(FakeSupabase(reports=rows)).fetch_latest_row()['id'] == 2
+
+
+# ── rows being tagged ────────────────────────────────────────────────────────
+
+CUTOFF = '2026-10-09T02:30:00+00:00'
+
+
+def test_count_processing_since_chain():
+    sb = MagicMock()
+    select = sb.table.return_value.select
+    eq = select.return_value.eq
+    eq.return_value.gte.return_value.execute.return_value = MagicMock(data=[], count=2)
+    assert ReportStore(sb).count_processing_since(CUTOFF) == 2
+    sb.table.assert_called_once_with('reports')
+    # an exact count from the server over a HEAD request: no row comes back
+    select.assert_called_once_with('id', count='exact', head=True)
+    eq.assert_called_once_with('tagging_status', 'processing')
+    eq.return_value.gte.assert_called_once_with('tagging_locked_at', CUTOFF)
+
+
+def test_a_count_the_server_did_not_give_is_zero():
+    sb = MagicMock()
+    query = sb.table.return_value.select.return_value.eq.return_value.gte.return_value
+    query.execute.return_value = MagicMock(data=[], count=None)
+    assert ReportStore(sb).count_processing_since(CUTOFF) == 0
+
+
+def locked(rid, status, at):
+    """A row a tagger took at ``at`` (an ISO time in UTC, or None)."""
+    return tagged(rid, status=status, published=None, codes=(), tagging_locked_at=at)
+
+
+def test_only_processing_rows_locked_since_the_cutoff_count_and_no_row_is_fetched():
+    rows = [
+        locked(1, 'processing', CUTOFF),                         # exactly at the cutoff → counted
+        locked(2, 'processing', '2026-10-09T02:45:00+00:00'),    # counted
+        locked(3, 'processing', '2026-10-09T02:29:59+00:00'),    # one second before → not counted
+        locked(4, 'processing', None),                           # no lock time → not counted
+        # recent locks on rows in every other status → not counted
+        *[locked(10 + n, status, '2026-10-09T02:50:00+00:00')
+          for n, status in enumerate(s for s in TAGGING_STATUSES if s != 'processing')],
+    ]
+    db = FakeSupabase(reports=rows)
+    assert ReportStore(db).count_processing_since(CUTOFF) == 2
+    (query,) = db.executed
+    assert (query.columns, query.count, query.head) == ('id', 'exact', True)
+    assert query.filters == [('eq', 'tagging_status', 'processing'),
+                             ('gte', 'tagging_locked_at', CUTOFF)]
+    assert query.window is None and query.limit_size is None
+
+
+def test_processing_is_a_tagging_status_of_the_shared_vocabulary():
+    assert PROCESSING == 'processing' and PROCESSING in TAGGING_STATUSES

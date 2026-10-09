@@ -20,6 +20,8 @@ features read reports only through the names below. Public names:
   match nothing; one plain string instead of a collection is a TypeError.
 - ``latest_report_sent_at()`` → the latest ``sent_at`` among the in-scope rows, as an aware
   datetime (UTC), or None when there is none.
+- ``tagging_in_progress(minutes=30)`` → True when some row is ``processing`` with
+  ``tagging_locked_at`` in the last ``minutes`` minutes: a count, no row is read.
 
 Every DataFrame (and ``report_row``) has the 16 columns: id, published_at, sent_at, report_type,
 publisher, stock_codes, company_names, sectors_major, sectors_minor, products, tagging_status,
@@ -37,4 +39,5 @@ from .service import (
     report_row,
     rows_for_stocks,
     stock_rows,
+    tagging_in_progress,
 )

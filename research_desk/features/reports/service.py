@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Any, Iterable, Mapping, Optional
@@ -146,6 +146,13 @@ class ReportsService:
         if row is None or row.get('sent_at') is None:
             return None
         return _instant(row['sent_at'])
+
+    def tagging_in_progress(self, minutes: int = 30, now: Optional[datetime] = None) -> bool:
+        """True when a row is ``processing`` under a lock taken in the last ``minutes`` minutes
+        (inclusive). ``now`` (aware, any zone) stands in for the current time; tests pass it."""
+        store = self.store()
+        current = datetime.now(timezone.utc) if now is None else now.astimezone(timezone.utc)
+        return store.count_processing_since((current - timedelta(minutes=minutes)).isoformat()) > 0
 
     # ── addresses ────────────────────────────────────────────────────────────
 
@@ -274,3 +281,10 @@ def latest_report_sent_at() -> Optional[datetime]:
     aware datetime (the zone the DB gives, UTC), or None when there is no in-scope row. Reads one
     row with the 16 columns. NotReady without DB settings."""
     return get_service().latest_report_sent_at()
+
+
+def tagging_in_progress(minutes: int = 30) -> bool:
+    """True while the tagger is working: some row is ``processing`` with ``tagging_locked_at``
+    in the last ``minutes`` minutes (inclusive). A count the server makes; no row is read.
+    NotReady without DB settings."""
+    return get_service().tagging_in_progress(minutes)
