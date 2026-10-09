@@ -4,18 +4,32 @@ v2 변경 (rev-7):
 - report_type 14종 → 6종
 - sectors_major/minor, products, topics, company_names, publisher_raw 제거
 - stock_codes_raw, company_names_raw 추가 (raw audit)
-- publisher_canon, publisher_type 직접 출력 (LLM이 publishers.yaml 보고 매핑)
+- publisher_canon 직접 출력 (LLM이 publishers.yaml 보고 매핑)
 
-The Literal value sets must equal research_desk/domain/vocabulary.yaml (tested).
+Publisher: the AI answers one canonical name of the publisher dictionary
+(``tagger/vocabulary/publishers.yaml``) or null, and nothing else. The request
+schema lists the canonical names as an enum, so providers that enforce the
+schema (Claude's grammar, OpenAI/codex strict schema) cannot answer anything
+else. On every path an answer that is not exactly a canonical name (an alias, a
+typo, a sentence, a non-string) validates as None instead of failing: a
+ValidationError would make llm_extract revert the row to pending on every
+batch. The field stays ``Optional[str]`` on purpose — a Literal would raise on
+the paths that do not enforce the enum. The AI no longer answers the publisher
+type; the graph takes it from the dictionary section of the stored name.
+
+The Literal value sets must equal research_desk/domain/vocabulary.yaml (tested);
+``PUBLISHER_TYPES`` types the stored publisher type in the row state.
 Class docstrings and Field descriptions are part of the JSON schema the LLM
-receives, so editing them changes the request.
+receives, so editing them (or the dictionary's canonical names) changes the request.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
-from pydantic import BaseModel, Field
-from typing_extensions import Literal
+from pydantic import BaseModel, Field, field_validator
+from typing_extensions import Annotated, Literal
+
+from research_desk.tagger.vocabulary import canonical_names
 
 REPORT_TYPES = Literal[
     "단일종목", "산업", "섹터", "IR자료", "전략·시황", "기타",
@@ -24,6 +38,13 @@ REPORT_TYPES = Literal[
 PUBLISHER_TYPES = Literal[
     "broker", "data_provider", "ir_agency", "other",
 ]
+
+# The dictionary's canonical names (file order), read once when this module loads.
+_CANONICAL_PUBLISHERS: tuple[str, ...] = canonical_names()
+_CANONICAL_PUBLISHER_SET = frozenset(_CANONICAL_PUBLISHERS)
+
+# A str in Python, an enum of the canonical names in the request schema.
+_PublisherName = Annotated[str, Field(json_schema_extra={"enum": list(_CANONICAL_PUBLISHERS)})]
 
 
 class OOSSignals(BaseModel):
@@ -64,13 +85,10 @@ class LLMExtraction(BaseModel):
         description="회사명 후보 raw. 시스템이 KRX로 정규화 또는 audit으로 보존."
     )
 
-    publisher_canon: Optional[str] = Field(
+    publisher_canon: Optional[_PublisherName] = Field(
         default=None,
-        description="publishers.yaml의 canonical 형태로 정규화한 발행 주체. 매칭 안 되면 null."
-    )
-    publisher_type: Optional[PUBLISHER_TYPES] = Field(
-        default=None,
-        description="publisher_canon이 set되면 함께 결정. 매칭 안 되면 null."
+        description="발행 주체. publishers vocabulary의 canonical 이름 하나를 글자 그대로. "
+                    "별칭은 쓰지 않는다. vocabulary에 없거나 알 수 없으면 null."
     )
 
     analysts: list[str] = Field(default_factory=list)
@@ -83,3 +101,11 @@ class LLMExtraction(BaseModel):
         default=None, max_length=200,
         description="모호함·특이사항 메모 (한 줄)"
     )
+
+    @field_validator("publisher_canon", mode="before")
+    @classmethod
+    def _canonical_publisher_or_none(cls, value: Any) -> Optional[str]:
+        """Keep an exact canonical name; anything else becomes None, never an error."""
+        if isinstance(value, str) and value in _CANONICAL_PUBLISHER_SET:
+            return value
+        return None
