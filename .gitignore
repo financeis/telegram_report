@@ -8,6 +8,8 @@ sessions/
 .auth_*.txt
 check_supabase.py
 auth_helper.py
+# KIS sample-code config (real-account app key, secret, account numbers); the app reads .env
+/kis_devlp.yaml
 
 # Downloaded data
 /reports/
