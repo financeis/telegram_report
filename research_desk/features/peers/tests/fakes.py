@@ -4,9 +4,10 @@
 008 and the two match functions:
 
 - ``table(name)``: select (``count='exact'``, ``head``), insert, upsert (``on_conflict``), update,
-  delete; filters eq / neq / in_ / is_('null') / gt / gte / lt / lte; order, range, limit.
-  Like the real builder, ``range()`` changes the query it is called on, so a paged read executes
-  one query object several times.
+  delete; filters eq / neq / in_ / is_('null') / gt / gte / lt / lte and ``ov`` (array overlap:
+  a PostgreSQL array literal such as ``{"a","b,c"}``, parsed like PostgreSQL does, or a list);
+  order, range, limit. Like the real builder, ``range()`` changes the query it is called on, so a
+  paged read executes one query object several times.
 - the tables behave like the migration: primary keys (a duplicate insert fails), NOT NULL columns,
   CHECK value sets (checked only when a value is given), column defaults, the ``build_id``
   serial, foreign keys (a child row needs its parent) with ON DELETE CASCADE, and 1536-dimension
@@ -21,7 +22,7 @@
   (then segment number), ``p_limit`` capped to 0..200, null → 200).
 
 Every executed operation is kept in ``FakeSupabase.log`` (``Op``: kind, table, filters, payload,
-window, columns).
+window, columns, on_conflict, limit).
 
 ``FakeCollection`` stands in for a pymongo Collection: ``find`` (equality and ``$in``, inclusion
 projection), ``distinct``, ``count_documents`` and ``database.client.close()``.
@@ -29,7 +30,8 @@ projection), ``distinct``, ``count_documents`` and ``database.client.close()``.
 ``FakeLLM`` stands in for ``core.llm.LLMClient``: ``parse`` answers through a ``reply(model, user)``
 function (a CompanyProfile, a StructuredResult, or an exception to raise), ``embed`` answers with
 one vector per text (deterministic, not unit length, so normalizing is visible). It records the
-calls and the most calls in flight at once.
+calls, the most ``parse`` calls in flight at once (``max_active``), the most ``embed`` calls in
+flight at once (``embed_max_active``) and how often it was closed (``closes``).
 """
 from __future__ import annotations
 
@@ -146,6 +148,56 @@ class Op:
     window: Optional[tuple[int, int]] = None
     columns: Optional[str] = None
     on_conflict: str = ""
+    limit: Optional[int] = None
+
+
+def parse_array_literal(text: str) -> list[Optional[str]]:
+    """The elements of a one-dimensional PostgreSQL array literal (``{a,"b,c","d\\"e"}``):
+    a double-quoted element keeps commas, braces and spaces and takes backslash escapes; an
+    unquoted one ends at the next comma and is trimmed (``NULL`` is a null). A malformed literal
+    fails like PostgreSQL would."""
+    text = text.strip()
+    if not (text.startswith("{") and text.endswith("}")):
+        raise FakeAPIError(f"malformed array literal: {text!r}")
+    body, items, i = text[1:-1], [], 0
+    if not body.strip():
+        return []
+    while True:
+        while i < len(body) and body[i] == " ":
+            i += 1
+        if i < len(body) and body[i] == '"':
+            i += 1
+            value = []
+            while True:
+                if i >= len(body):
+                    raise FakeAPIError(f"unterminated quoted element: {text!r}")
+                if body[i] == "\\":
+                    if i + 1 >= len(body):
+                        raise FakeAPIError(f"unterminated escape: {text!r}")
+                    value.append(body[i + 1])
+                    i += 2
+                elif body[i] == '"':
+                    i += 1
+                    break
+                else:
+                    value.append(body[i])
+                    i += 1
+            items.append("".join(value))
+            while i < len(body) and body[i] == " ":
+                i += 1
+        else:
+            end = body.find(",", i)
+            end = len(body) if end == -1 else end
+            raw = body[i:end].strip()
+            if not raw or any(c in raw for c in '{}"\\'):
+                raise FakeAPIError(f"malformed array literal: {text!r}")
+            items.append(None if raw.upper() == "NULL" else raw)
+            i = end
+        if i >= len(body):
+            return items
+        if body[i] != ",":
+            raise FakeAPIError(f"malformed array literal: {text!r}")
+        i += 1
 
 
 class FakeQuery:
@@ -235,6 +287,12 @@ class FakeQuery:
     def lte(self, column, value):
         return self._filter("lte", column, value)
 
+    def ov(self, column, value):
+        values = parse_array_literal(value) if isinstance(value, str) else list(value)
+        return self._filter("ov", column, values)
+
+    overlaps = ov
+
     def order(self, column: str, *, desc: bool = False, nullsfirst: Optional[bool] = None):
         self.orders.append((self._known(column), desc, nullsfirst))
         return self
@@ -262,6 +320,8 @@ class FakeQuery:
                 ok = cell != value
             elif op == "in":
                 ok = cell in value
+            elif op == "ov":
+                ok = bool(set(cell) & set(value))
             elif op == "gt":
                 ok = cell > value
             elif op == "gte":
@@ -303,7 +363,7 @@ class FakeQuery:
         assert self.kind is not None, "no request kind (select/insert/upsert/update/delete)"
         with self.db.lock:
             self.db.log.append(Op(self.kind, self.table, list(self.filters), deepcopy(self.payload),
-                                  self.window, self.columns, self.on_conflict))
+                                  self.window, self.columns, self.on_conflict, self.limit_size))
             return getattr(self, f"_run_{self.kind}")()
 
     def _run_select(self) -> SimpleNamespace:
@@ -560,7 +620,10 @@ class FakeLLM:
         self.embed_calls: list[dict] = []
         self.active = 0
         self.max_active = 0
+        self.embed_active = 0
+        self.embed_max_active = 0
         self.closed = False
+        self.closes = 0
 
     async def parse(self, *, model, system, user, schema, temperature=None, constrained=True):
         self.parse_calls.append({"model": model, "system": system, "user": user,
@@ -582,13 +645,19 @@ class FakeLLM:
 
     async def embed(self, *, model, texts, dimensions=None):
         self.embed_calls.append({"model": model, "texts": list(texts), "dimensions": dimensions})
-        if self.delay:
-            await asyncio.sleep(self.delay)
-        return EmbeddingResult(vectors=[list(self.embedder(t)) for t in texts],
-                               input_tokens=len(texts) * 7)
+        self.embed_active += 1
+        self.embed_max_active = max(self.embed_max_active, self.embed_active)
+        try:
+            if self.delay:
+                await asyncio.sleep(self.delay)
+            return EmbeddingResult(vectors=[list(self.embedder(t)) for t in texts],
+                                   input_tokens=len(texts) * 7)
+        finally:
+            self.embed_active -= 1
 
     async def close(self) -> None:
         self.closed = True
+        self.closes += 1
 
 
 def unit(vector) -> list[float]:
