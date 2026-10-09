@@ -3,11 +3,11 @@
 ## 맡는 일
 
 - `settings.py`: 설정을 읽는 유일한 방법. `.env` 읽기(`load_env`), 값 읽기 도우미(`required`·`optional`·`get_int`·`get_float`·`get_bool`·`model_name`), 여러 칸이 함께 쓰는 값(Supabase URL·서비스 키·DB URL, 두 공급자의 API 키, `STORAGE_BASE_DIR`, `KRX_CSV_PATH`), 설정 누락 오류 `MissingSetting`, 기능 준비 실패 오류 `NotReady`.
-- `db.py`: Supabase REST 클라이언트(서비스 키), Postgres 직접 연결 풀(asyncpg), 그 위의 얇은 `SupabaseSQL`(fetch/execute, 행은 dict).
-- `llm.py`: 모델 이름으로 공급자(Anthropic API, OpenAI API, 로컬 Codex CLI)를 골라 구조화 출력을 받는 `LLMClient`(`parse`)와 OpenAI 임베딩(`embed`), 키 확인 `require_key`, 일시 오류 묶음 `TRANSIENT_ERRORS`, 한 번 재시도 `call_with_retry`.
+- `db.py`: Supabase REST 클라이언트(서비스 키), Postgres 직접 연결 풀(asyncpg), 그 위의 얇은 `SupabaseSQL`(fetch/execute, 행은 dict)과 연결 하나로 여러 문장을 묶는 트랜잭션 도우미 `SupabaseSQL.transaction()`.
+- `llm.py`: 모델 이름으로 공급자(Anthropic API, OpenAI API, 로컬 Codex CLI)를 골라 구조화 출력을 받는 `LLMClient`(`parse` — 사용자 메시지에 그림 PNG를 붙이는 `images` 인자 포함)와 OpenAI 임베딩(`embed`), 그림을 받는 모델인지 이름으로 판정하는 `supports_images`와 그 오류 `ImageInputUnsupported`, 키 확인 `require_key`, 일시 오류 묶음 `TRANSIENT_ERRORS`, 한 번 재시도 `call_with_retry`.
 - `kis.py`: 한국투자증권 Open API 클라이언트 `KisClient`(접근 토큰, 수정주가 일봉 `daily_prices`, 현재가 `quote`, 호출 간격·재시도·키 가리기), 오류 `KisError`.
 - `mongo.py`: MongoDB 읽기 핸들 `mongo_collection`과 접속 확인 `ping`.
-- `pdf.py`: 저장 폴더 안의 PDF인지 확인(`resolve_in_storage`), 쪽별 글자, 쪽 수, 쪽 그림(PNG).
+- `pdf.py`: 저장 폴더 안의 PDF인지 확인(`resolve_in_storage`), 쪽별 글자, 쪽 수, 쪽 그림(PNG). PyMuPDF를 쓰는 모든 호출은 프로세스 전체 잠금 하나(`_PYMUPDF_LOCK`)로 줄 세운다. import할 때 MuPDF가 오류·경고를 stdout에 직접 찍지 못하게 끈다(`pymupdf.TOOLS.mupdf_display_errors(False)`·`mupdf_display_warnings(False)`) — 명령의 stdout은 JSON 하나여야 하는데, 어떤 PDF는 `MuPDF error: format error: …`를 그 앞에 끼워 넣었다. 끄지 않는다. 오류는 지금처럼 예외나 빈 결과로 드러난다.
 - 외부 도구 `supabase`·`asyncpg`·`openai`·`anthropic`·`dotenv`·`fitz`/`pymupdf`·`pymongo`/`bson`·`httpx`는 저장소 전체에서 이 칸만 import한다. DB 연결·AI 호출·외부 API·PDF 열기·`.env` 읽기를 한곳에 모아 두어, 나중에 서버를 옮기거나 공급자를 바꿀 때 고칠 범위가 이 칸으로 줄어든다.
 
 ## 맡지 않는 일
@@ -22,7 +22,7 @@
   - 재시도와 시간 한도는 호출자가 정한다. 분류기는 SDK 재시도 2·요청 60초에 실패한 행을 `pending`으로 되돌리고, 분석·비교는 SDK 기본 재시도에 `call_with_retry`와 호출마다 `PHASE2_PER_REPORT_TIMEOUT_S`를 쓴다. 유사도 계산은 `call_with_retry`에 회사마다 `PEERS_PER_COMPANY_TIMEOUT_S`, 임베딩 호출마다 60초, 테마 검색의 질의 임베딩은 15초다.
   - 동시 호출 수도 호출자 몫이다. 분류기는 `MAX_CONCURRENT_LLM`(운영 천장 2), 웹 서버의 분석·비교는 analysis의 `ai_slot`(2), 테마 검색의 질의 임베딩은 peers의 자체 자리(2), 유사도 계산은 `PEERS_MAX_CONCURRENT_LLM`(운영 천장 2)이 막는다.
   - KIS의 초당 호출 수는 호출자가 `max_calls_per_sec`로 넘긴다(`PRICES_MAX_CALLS_PER_SEC`).
-  - core에 공통 제한이나 기본 정책을 새로 넣지 않는다. 넣으면 호출자마다 지켜 온 방식이 한꺼번에 바뀐다.
+  - core에 공통 제한이나 기본 정책을 새로 넣지 않는다. 넣으면 호출자마다 지켜 온 방식이 한꺼번에 바뀐다. 예외는 하나, 일부러 둔 PDF 잠금이다(아래 PDF). 호출자의 정책이 아니라 PyMuPDF가 여러 스레드 동시 사용을 지원하지 않는다는 도구의 제약이라 core에 둔다. AI 호출은 줄 세우지 않는다.
 - 칸 전용 설정 값. 각 칸의 `settings.py`가 core 도우미로 읽는다.
 - 준비 판정. 무엇이 없으면 어느 기능이 멈추는지는 각 기능과 명령이 정한다. core는 `NotReady`를 정의할 뿐 스스로 던지지 않는다.
 - `telethon`(collector), `langgraph`(tagger).
@@ -55,11 +55,19 @@
 DB.
 - `create_pool`의 `statement_cache_size=0`을 빼지 않는다. `SUPABASE_DB_URL`이 Supabase 트랜잭션 풀러(6543 포트, pgbouncer 트랜잭션 모드)를 가리키면 이름 붙은 prepared statement가 연결 사이에 남지 않아 쿼리가 깨진다. 5432 직접 연결에서는 꺼도 해가 없다. `min_size=1`이고 `max_size`는 키워드 필수 인자다(부르는 쪽이 정한다).
 - URL이 없으면 연결을 시도하기 전에 `MissingSetting("SUPABASE_DB_URL")`을 던진다.
-- `SupabaseSQL.fetch`는 `asyncpg.Record`가 아닌 평범한 dict 목록을 돌려주고, 인자는 `$1…$n` 순서대로 넘긴다.
+- `SupabaseSQL.fetch`는 `asyncpg.Record`가 아닌 평범한 dict 목록을 돌려주고, 인자는 `$1…$n` 순서대로 넘긴다. `fetch`·`execute`는 부를 때마다 풀에서 연결을 따로 빌린다. 그래서 둘을 이어 불러도 한 트랜잭션이 아니다.
+- 여러 문장을 한 트랜잭션에서 돌리려면 `async with sb.transaction() as tx:`를 쓴다. 블록 동안 연결 하나를 빌려 트랜잭션을 열고, `tx.fetch`/`tx.execute`(`SQLTransaction`, 모양은 `SupabaseSQL`과 같다)가 모두 그 연결에서 돈다. 블록이 정상으로 끝나면 커밋, 예외든 취소(Ctrl+C 포함)든 블록을 빠져나가면 먼저 되돌린 뒤 그 예외를 다시 올린다. 블록 안에서 한 일은 하나도 남지 않는다. "행 잠그기 → 다시 확인 → 고치기 → 바뀐 행 수 확인 → 안 맞으면 취소"(`tag requeue --apply`)가 이것에 기댄다.
 - `supabase_client`는 서비스 키(행 수준 보안을 건너뛰는 마스터 키)로 연결한다. 키와 클라이언트가 브라우저 응답이나 로그로 나가지 않게 한다.
 
 AI 호출.
 - 공급자는 모델 이름이 정한다. `claude-*` → Anthropic(`ANTHROPIC_API_KEY`), `codex:<모델>` → 로컬 `codex exec`(ChatGPT 로그인, 키 없음), 그 밖 → OpenAI(`OPENAI_API_KEY`). 모델 교체나 되돌리기가 `.env`의 `LLM_MODEL_*` 수정만으로 끝나야 하므로, 공급자 분기를 다른 칸에 따로 만들지 않는다.
+- 그림 입력(`parse(..., images=[PNG 바이트, …])`).
+  - 그림은 사용자 메시지에만 붙는다. 시스템 프롬프트는 그림이 있든 없든 같아서 캐시가 유지된다. `images`가 None이거나 비면 예전 글자 요청과 한 글자도 다르지 않다.
+  - Anthropic(형식 강제·`constrained=False` 두 경로 모두): 사용자 내용이 그림 블록(`image`, base64 `image/png`)들 다음 글자 블록 순서다. Claude는 그림이 글보다 앞에 올 때 더 잘 읽는다.
+  - OpenAI: 글자 다음에 그림마다 `image_url`(`data:image/png;base64,…`).
+  - Codex CLI: 그림마다 임시 작업 폴더에 `page-<n>.png`로 쓰고 `-i <파일>`을 하나씩 붙인다(codex-cli의 `-i/--image`). 그 옵션이 값을 여러 개 받으므로 뒤에 다른 옵션이 와야 마지막 `-`가 프롬프트(stdin)로 남는다 — 순서를 바꾸지 않는다.
+  - `supports_images(model)`은 모델 이름만 보고 정한다(키·클라이언트·프로세스·네트워크 없음). Claude 모델은 모두 받는다. OpenAI·codex는 글자 전용 이름 목록(`gpt-4`, `gpt-3.5…`, `gpt-4-0…`, `gpt-4-32k…`, `o1-mini…`, `o1-preview…`, `o3-mini…` 등)만 못 받는다. 못 받는 모델에 그림을 주면 요청을 보내기 전에 `ImageInputUnsupported`다.
+  - `ImageInputUnsupported`는 `RuntimeError`의 하위가 아니다. `require_key` 실패와 `CodexExecError`를 잡는 `except RuntimeError`가 삼키지 않게 하려는 것이다. 바꾸지 않는다. 호출자는 먼저 `supports_images`를 묻는다.
 - Anthropic.
   - `temperature`를 보내지 않는다. Claude 모델은 기본값이 아닌 샘플링 값을 거절한다.
   - 시스템 프롬프트는 `cache_control: ephemeral`을 단 블록 하나다. 행마다 같은 문장이라 반복 호출이 캐시로 싸게 읽힌다.
@@ -80,7 +88,7 @@ AI 호출.
   - 종료 코드가 0이 아니거나 마지막 메시지가 비면 `CodexExecError`이고, 재시도하지 않는다. 토큰 수는 마지막 `turn.completed` 줄에서 읽는다.
   - 프로세스는 asyncio 서브프로세스가 아니라 작업 스레드의 `Popen`으로 돌린다. Windows의 selector 이벤트 루프가 asyncio 서브프로세스를 지원하지 않는다.
   - 시간 초과나 취소로 끊기면 프로세스 트리 전체를 죽인다(`taskkill /F /T /PID`). Windows의 `codex`는 npm 껍데기(cmd → node → codex.exe)라 껍데기만 죽이면 실제 프로세스가 고아로 남아 계속 돈다.
-- LangSmith 감싸기는 `LANGSMITH_TRACING=true`와 `LANGSMITH_API_KEY`가 둘 다 있을 때만 하고, 패키지가 없으면 조용히 건너뛴다.
+- LangSmith 감싸기는 `LANGSMITH_TRACING=true`와 `LANGSMITH_API_KEY`가 둘 다 있을 때만 하고, 패키지가 없으면 조용히 건너뛴다. 켜져 있으면 붙인 그림도 요청과 함께 기록된다.
 - `TRANSIENT_ERRORS`(두 공급자의 429·5xx·시간 초과·연결 오류)는 서로 다른 두 정책이 같이 쓴다. 분류기는 이것(과 응답 형식 오류)을 "행을 `pending`으로 되돌릴 오류"로 보고, `call_with_retry`는 이것을 한 번 다시 시도한다. 여기에 넣거나 빼면 두 쪽이 동시에 바뀐다.
 - `call_with_retry(call, backoff_s=5.0)`: 일시 오류(`TRANSIENT_ERRORS`, `TransientLLMError`, `asyncio.TimeoutError`)면 `backoff_s`를 기다린 뒤 정확히 한 번 더 부르고, 또 일시 오류면 그 오류를 원인으로 단 `TransientLLMError`를 던진다. 그 밖의 오류(`ValidationError`, `CodexExecError`, 거절로 만든 `RuntimeError`)는 기다리지 않고 바로 올린다. `call`은 시도마다 새 awaitable을 만들어야 한다(`lambda: asyncio.wait_for(client.parse(...), t)`). 코루틴 하나는 두 번 await할 수 없다.
 
@@ -110,6 +118,10 @@ PDF.
 - 웹으로 PDF를 내보낼 때 이 확인을 건너뛰고 DB의 `file_path`를 바로 열지 않는다. 저장 폴더 밖의 `.env` 같은 파일이 새어 나가는 길이 된다.
 - `page_texts`는 예외를 던지지 않는다. 열 수 없는 파일(없음·깨짐·빈 파일)은 `[]`, 읽지 못한 쪽은 그 쪽만 `""`이다. 분류기의 "PDF를 읽을 수 없음" 판정과 분석의 "읽을 글자 없음" 422가 이것에 기댄다.
 - `page_count`·`render_page_png`는 파일 여는 오류를 그대로 올린다. `render_page_png`의 쪽 번호는 1부터, 기본 120dpi, 범위 밖이면 `PageNotFound`(`LookupError`의 하위)다.
+- **PyMuPDF 잠금.** PyMuPDF는 여러 스레드에서 동시에 쓰는 것을 지원하지 않는데, 이 모듈은 여러 스레드에서 불린다(분류기는 두 행의 PDF를 작업 스레드에서, 웹앱은 검토 쪽 그림과 분석 본문 읽기를 스레드 풀에서). 그래서 `page_texts`·`page_count`·`render_page_png`는 문서를 열기 전부터 닫을 때까지 프로세스 전체 잠금 `_PYMUPDF_LOCK`(재진입 가능한 `threading.RLock`, 안에서 이 모듈의 다른 함수를 불러도 막히지 않는다)을 쥔다. 한 번에 한 호출만 PyMuPDF 안에 있고 나머지는 차례를 기다린다. 결과와 오류 동작은 잠금 전과 같다.
+  - 일부러 둔 프로세스 전체 제한이다. 잠금은 프로세스마다 하나라 분류기와 웹앱(서로 다른 프로세스)끼리는 기다리지 않는다.
+  - 대가: PDF 일이 한 줄로 선다(PDF 읽기는 AI 호출보다 훨씬 짧아 처리량은 거의 그대로다). PyMuPDF 호출 하나가 멈추면 그 프로세스의 뒤 PDF 호출이 모두 기다린다 — 분류기에서는 기다리는 시간도 행 시간 한도(`PER_ROW_DEADLINE_S`)에 들어가고, 웹앱에서는 검토 쪽 그림·분석이 서버를 다시 켤 때까지 기다린다.
+  - PyMuPDF를 쓰는 새 함수도 이 잠금 안에서 열고 닫는다. 다른 칸에서 PyMuPDF를 직접 쓰지 않는다(`R9 외부 도구`도 막는다).
 
 ## 이 칸의 방식
 
@@ -125,8 +137,9 @@ PDF.
 
 - 네트워크·실제 DB·실제 `.env` 없이 돈다.
   - AI: `LLMClient`의 `_anthropic`·`_openai`에 MagicMock·AsyncMock을 꽂고 보낸 요청 모양을 확인한다. Codex는 `llm._run_codex`·`llm._codex_bin`을 바꾼다. 진짜 서브프로세스는 `sys.executable -c <스크립트>`로만 띄워 stdin 전달, 출력 디코딩, 취소 때의 트리 종료를 본다.
-  - DB: `db.asyncpg.create_pool`을 AsyncMock으로 바꾸고, 연결과 레코드는 가짜(`FakePool`, `FakeConn`, dict가 아닌 Mapping인 `FakeRecord`)를 쓴다.
-  - PDF: `tmp_path`에 pymupdf로 만든다. 한글은 내장 `korea` 글꼴로 넣어야 글자 추출이 된다.
+  - DB: `db.asyncpg.create_pool`을 AsyncMock으로 바꾸고, 연결과 레코드는 가짜(`FakePool`, `FakeConn`, dict가 아닌 Mapping인 `FakeRecord`)를 쓴다. 트랜잭션은 한 연결에서 돌고 커밋되는지, 블록이 예외·문장 실패·취소로 끝나면 되돌리고 예외를 올리는지, `fetch`/`execute`가 여전히 따로 연결을 빌리는지 본다.
+  - PDF: `tmp_path`에 pymupdf로 만든다. 한글은 내장 `korea` 글꼴로 넣어야 글자 추출이 된다. 잠금은 가짜 `pymupdf`(`fake_pymupdf`)로 여러 스레드에서 동시에 불러, PyMuPDF 안에서 두 호출이 겹치지 않는지(실패하는 호출도 포함), 실패한 호출이 다음 호출을 막지 않는지 본다. MuPDF의 stdout 출력이 꺼져 있는지도 본다.
+  - 그림 입력: Anthropic 두 경로는 그림이 글자 앞, OpenAI는 글자 뒤 `data:` 주소, codex는 `-i` 파일, 그림이 없으면 요청이 예전과 같음, 시스템 프롬프트가 그림 유무와 상관없이 같음, 글자 전용 모델은 요청 전에 `ImageInputUnsupported`.
   - KIS: httpx `MockTransport`가 KIS 서버 노릇을 하고, 기본 주소는 `.invalid`(절대 풀리지 않는 이름)라 요청이 PC 밖으로 나가지 못한다. 기다림은 가짜 시계·가짜 `sleep`으로 재서 실제로 자지 않는다. 토큰 1회, 나눠 받기, 재시도 횟수와 간격, 토큰 실패 기억, 오류 문장에 키 없음을 본다.
   - MongoDB: `pymongo.MongoClient`를 가짜로 바꾼다(서버 없음). 새 프로세스로 `core.mongo` import가 pymongo·bson을 불러오지 않는지도 본다.
   - 임베딩: OpenAI 클라이언트의 `embeddings.create`를 가짜로 바꿔 요청 모양(모델·차원·순서)과 순서 맞추기, 비 OpenAI 모델 거절을 본다.

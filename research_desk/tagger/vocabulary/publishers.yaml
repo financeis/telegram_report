@@ -1,99 +1,150 @@
-# publisher canonical name + aliases + publisher_type.
-# lookup_publisher() in vocabulary/__init__.py reads this.
+# 발행처 사전 — 발행처 이름의 유일한 원본이다.
+# - 구역 이름(broker / data_provider / ir_agency / other)이 그 구역에 있는 발행처의 publisher_type이다.
+# - canonical: 표지에 적힌 지금 회사명(한국어 정식 상호가 있으면 그것). 발행처 값은 canonical 중 하나이고, 사전에 없으면 비운다(null).
+# - aliases: 옛 이름·영문 이름·약칭, 그리고 텔레그램 채널이 파일 이름 끝(_YYYYMMDD_<표기>_<숫자>.pdf)에 붙이는 표기.
+#   별칭 하나는 정확히 한 항목에만 속하고, 어떤 항목의 canonical과도 같지 않다.
+# 분류기 시스템 프롬프트(research_desk/tagger/prompts.py)에 이 파일이 주석까지 그대로 들어간다.
+# research_desk/tagger/vocabulary/__init__.py가 같은 파일로 정식 이름·종류·파일 이름 표기를 조회한다.
 broker:
   - canonical: 키움증권
     aliases: ["키움", "Kiwoom", "KIWOOM", "키움리서치"]
   - canonical: 미래에셋증권
-    aliases: ["미래에셋", "Mirae Asset", "미래대우"]
+    aliases: ["미래에셋", "Mirae Asset", "Mirae+Asset"]
   - canonical: NH투자증권
     aliases: ["NH", "NH투자", "농협증권", "NH Investment"]
   - canonical: 삼성증권
-    aliases: ["삼성", "Samsung Securities"]
+    aliases: ["삼성", "Samsung", "Samsung Securities"]
   - canonical: KB증권
     aliases: ["KB", "KB Securities", "케이비증권"]
   - canonical: 신한투자증권
     aliases: ["신한", "신한금융투자", "신한증권", "Shinhan"]
   - canonical: 한국투자증권
-    aliases: ["한투", "한국투자", "KIS", "Korea Investment"]
+    aliases: ["한투", "한국투자", "Korea", "Korea Investment", "Korea Investment & Securities"]
   - canonical: 하나증권
-    aliases: ["하나", "하나금융투자", "하나대투"]
+    aliases: ["하나", "하나금융투자", "하나대투", "Hana", "Hana Securities"]
   - canonical: 메리츠증권
-    aliases: ["메리츠", "Meritz", "메리츠종금"]
-  - canonical: 하이투자증권
-    aliases: ["하이", "Hi Investment"]
+    aliases: ["메리츠", "Meritz", "MERITZ", "메리츠종금"]
   - canonical: 유진투자증권
-    aliases: ["유진", "Eugene"]
+    aliases: ["유진", "Eugene", "EUGENE"]
   - canonical: 유안타증권
     aliases: ["유안타", "Yuanta"]
   - canonical: IBK투자증권
-    aliases: ["IBK", "기업증권"]
+    aliases: ["IBK", "IBKS", "기업증권"]
   - canonical: 대신증권
     aliases: ["대신", "Daishin"]
   - canonical: BNK투자증권
     aliases: ["BNK", "부산은행증권"]
   - canonical: 현대차증권
-    aliases: ["현대차", "현대증권"]
+    aliases: ["현대차", "Hyundai Motor", "Hyundai+Motor", "Hyundai Motor Securities"]
   - canonical: iM증권
-    aliases: ["iM", "아이엠증권", "하이투자"]
+    aliases: ["iM", "아이엠증권", "하이투자증권", "하이투자", "Hi Investment"]
   - canonical: 다올투자증권
-    aliases: ["다올", "KTB"]
+    aliases: ["다올", "DAOL", "DAOL Investment & Securities", "KTB"]
   - canonical: SK증권
     aliases: ["SK", "SK Securities"]
   - canonical: 한화투자증권
-    aliases: ["한화", "Hanwha Securities"]
-  - canonical: DB금융투자
-    aliases: ["DB", "DB증권"]
+    aliases: ["한화", "Hanwha", "Hanwha Securities"]
+  - canonical: DB증권
+    aliases: ["DB", "DB금융투자", "DB Securities"]
   - canonical: DS투자증권
-    aliases: ["DS", "디에스투자"]
+    aliases: ["DS", "디에스투자", "DS Investment & Securities"]
   - canonical: LS증권
-    aliases: ["LS", "이베스트", "Ebest"]
+    aliases: ["LS", "이베스트", "이베스트투자증권", "Ebest"]
   - canonical: 상상인증권
-    aliases: ["상상인"]
+    aliases: ["상상인", "Sangsangin"]
   - canonical: 흥국증권
-    aliases: ["흥국"]
+    aliases: ["흥국", "Hungkuk"]
   - canonical: 부국증권
-    aliases: ["부국"]
+    aliases: ["부국", "Bookook", "Bookook Research Center"]
   - canonical: 유화증권
-    aliases: ["유화"]
+    aliases: ["유화", "Yuhwa", "Yuhwa Securities"]
   - canonical: 교보증권
     aliases: ["교보", "Kyobo"]
   - canonical: 우리투자증권
-    aliases: ["우리", "NH우리"]
-  - canonical: 미래대우증권
-    aliases: []   # historical alias, retained for old reports
+    aliases: ["우리"]
+  - canonical: 신영증권
+    aliases: ["신영", "Shinyoung", "Shinyoung Securities"]
+  - canonical: 한양증권
+    aliases: ["한양", "Hanyang", "Hanyang Securities"]
+  - canonical: 리딩투자증권
+    aliases: ["리딩", "Leading", "Leading Investment & Securities"]
+  - canonical: 삼성선물
+    aliases: ["Samsung Futures", "Samsung+Futures"]
 
 data_provider:
-  - canonical: FnGuide
-    aliases: ["FN가이드", "에프엔가이드", "에프앤가이드"]
-  - canonical: KIRS
-    aliases: []
-  - canonical: 한국기업평가
-    aliases: ["KR"]
-  - canonical: NICE신용평가
-    aliases: ["NICE", "나이스평가"]
-  - canonical: 한국신용평가
-    aliases: ["KIS rating"]
+  # 쪽마다 찍힌 "DB Copyright © FnGuide Inc." 표시는 배포 경로 표시이며 발행처가 아니다.
+  - canonical: 에프앤가이드
+    aliases: ["FnGuide", "FN가이드", "에프엔가이드"]
+  # 기업리서치센터 리포트와 기술분석보고서의 발행처. 기술분석보고서는 표지의 작성기관(한국기업평가·NICE신용평가·
+  # NICE평가정보·한국기술신용평가·서울평가정보 등)과 상관없이 한국IR협의회로 둔다. 작성기관 이름은 별칭이다.
+  - canonical: 한국IR협의회
+    aliases: ["KIRS", "한국IR협의회 기업리서치센터", "기업리서치센터", "Korea Investor Relations Service",
+              "한국기업평가", "NICE신용평가", "나이스신용평가", "NICE평가정보", "나이스평가정보",
+              "한국기술신용평가", "서울평가정보"]
+  - canonical: 지엘리서치
+    aliases: ["GL Research", "GL+Research", "GL리서치"]
+  - canonical: 밸류파인더
+    aliases: ["독립리서치법인밸류파인더", "valuefinder"]
+  - canonical: 다인자산운용
+    aliases: ["dyneasset", "Dyneasset", "다인에셋"]
+  - canonical: 스터닝밸류리서치
+    aliases: ["Stunning Value Research", "Stunning+Value+Research", "SV Research"]
+  - canonical: ARIS
+    aliases: ["Aris", "ARIS 독립리서치"]
+  - canonical: 그로쓰리서치
+    aliases: ["Growth Research", "Growth+Research"]
+  - canonical: IV리서치
+    aliases: ["IV 리서치", "IV Research", "IV+Research", "INVESTING VALUE"]
+  - canonical: 핀릿
+    aliases: ["Finlit", "FINLIT", "핀릿 리서치센터"]
+  - canonical: 민트투자자문
+    aliases: ["Mint Investment Advisors", "Mint+Investment+Advisors"]
+  - canonical: CMIR
+    aliases: ["Capital Markets Independent Research"]
+  - canonical: ARC Research
+    aliases: ["ARC"]
+  - canonical: 브라이어스인사이트
+    aliases: ["브라이어스 인사이트", "Brius Insight", "Brius+Insight"]
+  - canonical: 스몰인사이트리서치
+    aliases: ["Small Insight", "Small+Insight", "Small Insight Research"]
+  - canonical: 불릿
+    aliases: ["Bulit", "bulit!"]
+  - canonical: KONNECT
+    aliases: ["Konnect", "R-Advisory"]
+  - canonical: Foundation Investment Advisors
+    aliases: ["Foundation+Investment+Advisors", "Foundation Investment Advisor"]
+  - canonical: 버핏연구소
+    aliases: ["buffettlab"]
+  - canonical: CTT Research
+    aliases: ["CTT", "CTT Reserch", "CTT+Reserch"]
+  - canonical: 타이거리서치
+    aliases: ["Tiger Research", "Tiger+Research"]
+  - canonical: Lightwood Partners
+    aliases: ["LIGHTWOOD", "Lightwood+Partners", "Lightwood+IRI"]
+  - canonical: 쟁글
+    aliases: ["Xangle"]
 
 ir_agency:
-  - canonical: IRKUDOS
-    aliases: ["IR쿠도스", "아이알쿠도스"]
-  - canonical: dyneasset
-    aliases: ["다인에셋", "Dyneasset"]
-  - canonical: GL Research
-    aliases: ["GL리서치"]
+  - canonical: IR큐더스
+    aliases: ["IRKUDOS", "IR KUDOS", "아이알큐더스"]
+  - canonical: IR비즈넷
+    aliases: ["Irbiznet", "IR BIZNET"]
   - canonical: Smart Korea
     aliases: ["스마트코리아"]
   - canonical: Hellotrader
     aliases: ["헬로트레이더"]
-  - canonical: 밸류파인더
-    aliases: ["독립리서치법인밸류파인더", "valuefinder"]
 
 other:
+  # IR자료(기업 자체 발표자료)의 발행처.
   - canonical: 해당기업
     aliases: []
-  - canonical: KRX
-    aliases: ["한국거래소"]
+  - canonical: 한국거래소
+    aliases: ["KRX", "Korea Exchange"]
   - canonical: 금융투자협회
     aliases: ["KOFIA"]
   - canonical: 한국은행
     aliases: ["BOK"]
+  - canonical: 한국산업은행
+    aliases: ["KDB산업은행", "산업은행", "KDB미래전략연구소", "KDB Future Strategy Institute", "KDB+Future+Strategy+Institute"]
+  - canonical: 자본시장연구원
+    aliases: ["KCMI", "Korea Capital Market Institute"]

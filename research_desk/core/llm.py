@@ -9,6 +9,7 @@ the OpenAI route only.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import shutil
@@ -63,6 +64,55 @@ def api_key_env(model: str) -> Optional[str]:
 
 class CodexExecError(RuntimeError):
     """``codex exec`` exited non-zero or wrote no final message."""
+
+
+class ImageInputUnsupported(Exception):
+    """``parse`` got page images for a model that cannot take them.
+
+    Not a RuntimeError, so the ``except RuntimeError`` around ``require_key``
+    and CodexExecError cannot swallow it. Ask ``supports_images`` first.
+    """
+
+
+# OpenAI models that take text only. Everything else on the OpenAI API and
+# Codex CLI paths (gpt-4o, gpt-4.1, gpt-5.x, o1, o3, o4-mini, ...) takes images.
+_TEXT_ONLY_MODELS = frozenset({"gpt-4"})
+_TEXT_ONLY_PREFIXES = ("gpt-3.5", "gpt-4-0", "gpt-4-32k", "gpt-4-1106-preview",
+                       "gpt-4-turbo-preview", "o1-mini", "o1-preview", "o3-mini")
+
+
+def supports_images(model: str) -> bool:
+    """Whether ``parse(images=...)`` can send page images to ``model``.
+
+    Decided from the model name alone (no key, client, process or network).
+    Every Claude model takes images. The Codex CLI attaches them with
+    ``-i/--image`` (codex-cli 0.162.0); its model follows the OpenAI rule.
+    """
+    if is_anthropic(model):
+        return True
+    name = model[len(CODEX_PREFIX):] if is_codex(model) else model
+    return name not in _TEXT_ONLY_MODELS and not name.startswith(_TEXT_ONLY_PREFIXES)
+
+
+def _b64(png: bytes) -> str:
+    return base64.b64encode(png).decode("ascii")
+
+
+def _anthropic_user_content(user: str, images: tuple[bytes, ...]):
+    if not images:
+        return user  # today's request, unchanged
+    # Claude reads images best when they come before the text.
+    return [*({"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                           "data": _b64(png)}} for png in images),
+            {"type": "text", "text": user}]
+
+
+def _openai_user_content(user: str, images: tuple[bytes, ...]):
+    if not images:
+        return user  # today's request, unchanged
+    return [{"type": "text", "text": user},
+            *({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{_b64(png)}"}}
+              for png in images)]
 
 
 def _codex_bin() -> Optional[str]:
@@ -195,6 +245,7 @@ class LLMClient:
         schema: type[T],
         temperature: Optional[float] = None,
         constrained: bool = True,
+        images: Optional[Sequence[bytes]] = None,
     ) -> StructuredResult[T]:
         """One system+user call whose reply is validated against ``schema``.
 
@@ -206,21 +257,31 @@ class LLMClient:
         Non-strict tool input was tried and rejected: Claude sometimes returned
         nested objects as JSON strings. OpenAI ignores the flag. Raises
         pydantic.ValidationError when the reply doesn't validate.
+
+        ``images`` are PNG bytes (e.g. rendered PDF pages) attached to the
+        user message; the system prompt stays the same, so its cache holds.
+        None or empty sends exactly the text-only request. Raises
+        ImageInputUnsupported, before any request, when ``supports_images``
+        says the model cannot take them.
         """
+        images = tuple(images or ())
+        if images and not supports_images(model):
+            raise ImageInputUnsupported(f"model {model} cannot take page images")
         if is_codex(model):
-            return await self._parse_codex(model[len(CODEX_PREFIX):], system, user, schema)
+            return await self._parse_codex(model[len(CODEX_PREFIX):], system, user, schema,
+                                           images)
         if is_anthropic(model):
             if constrained:
-                return await self._parse_anthropic(model, system, user, schema)
-            return await self._parse_anthropic_text(model, system, user, schema)
-        return await self._parse_openai(model, system, user, schema, temperature)
+                return await self._parse_anthropic(model, system, user, schema, images)
+            return await self._parse_anthropic_text(model, system, user, schema, images)
+        return await self._parse_openai(model, system, user, schema, temperature, images)
 
-    async def _parse_openai(self, model, system, user, schema, temperature):
+    async def _parse_openai(self, model, system, user, schema, temperature, images=()):
         completion = await self._openai_client(model).chat.completions.parse(
             model=model,
             messages=[
                 {"role": "system", "content": system},
-                {"role": "user", "content": user},
+                {"role": "user", "content": _openai_user_content(user, images)},
             ],
             response_format=schema,
             **({} if temperature is None else {"temperature": temperature}),
@@ -234,15 +295,16 @@ class LLMClient:
             output_tokens=getattr(usage, "completion_tokens", 0) or 0,
         )
 
-    async def _create_anthropic(self, model, system, user, **kwargs):
+    async def _create_anthropic(self, model, system, user, images=(), **kwargs):
         return await self._anthropic_client(model).messages.create(
             model=model,
             max_tokens=ANTHROPIC_MAX_TOKENS,
             # The system prompt is identical across rows, so cache it: repeat
-            # calls within 5 minutes read it at 0.1x the input price.
+            # calls within 5 minutes read it at 0.1x the input price. Per-row
+            # values (text and page images) go in the user message only.
             system=[{"type": "text", "text": system,
                      "cache_control": {"type": "ephemeral"}}],
-            messages=[{"role": "user", "content": user}],
+            messages=[{"role": "user", "content": _anthropic_user_content(user, images)}],
             **kwargs,
         )
 
@@ -262,9 +324,9 @@ class LLMClient:
             return "refusal"
         return f"refusal ({details.category}): {details.explanation or ''}".strip()
 
-    async def _parse_anthropic(self, model, system, user, schema):
+    async def _parse_anthropic(self, model, system, user, schema, images=()):
         resp = await self._create_anthropic(
-            model, system, user,
+            model, system, user, images,
             output_config={
                 "effort": self.effort,
                 "format": {"type": "json_schema",
@@ -278,7 +340,7 @@ class LLMClient:
         text = "".join(b.text for b in resp.content if b.type == "text")
         return self._anthropic_result(resp, schema.model_validate_json(text))
 
-    async def _parse_anthropic_text(self, model, system, user, schema):
+    async def _parse_anthropic_text(self, model, system, user, schema, images=()):
         # The full JSON Schema (enums, maxLength, ...) guides the model, and
         # pydantic enforces it below. Appended after the caller's system text
         # so the combined prompt stays identical across calls (cacheable).
@@ -290,7 +352,7 @@ class LLMClient:
             "</output_format>"
         )
         resp = await self._create_anthropic(
-            model, system, user, output_config={"effort": self.effort},
+            model, system, user, images, output_config={"effort": self.effort},
         )
         if resp.stop_reason == "refusal":
             return replace(self._anthropic_result(resp, None),
@@ -298,7 +360,7 @@ class LLMClient:
         text = "".join(b.text for b in resp.content if b.type == "text")
         return self._anthropic_result(resp, schema.model_validate_json(_json_object(text)))
 
-    async def _parse_codex(self, model, system, user, schema):
+    async def _parse_codex(self, model, system, user, schema, images=()):
         self.require_key(CODEX_PREFIX + model)
         # Codex has no system role on the command line, so both parts go in one
         # prompt. The temp dir is the agent's whole (read-only) workspace.
@@ -308,12 +370,21 @@ class LLMClient:
             # Same strict schema the OpenAI API path sends.
             strict = openai.pydantic_function_tool(schema)["function"]["parameters"]
             schema_path.write_text(json.dumps(strict, ensure_ascii=False), encoding="utf-8")
+            # Page images ride along with -i/--image <FILE>... (codex-cli
+            # 0.162.0). It takes several values, so each image gets its own -i
+            # and another flag follows: the trailing "-" must stay the prompt.
+            image_args = []
+            for n, png in enumerate(images, start=1):
+                image_path = Path(tmp, f"page-{n}.png")
+                image_path.write_bytes(png)
+                image_args += ["-i", str(image_path)]
             cmd = [
                 _codex_bin(), "exec", "-m", model,
                 "-c", f"model_reasoning_effort={self.codex_effort}",
                 # Skip the user's MCP servers, hooks and notifiers.
                 "--ignore-user-config", "--ignore-rules",
                 "--skip-git-repo-check", "--ephemeral", "-s", "read-only",
+                *image_args,
                 "--output-schema", str(schema_path), "-o", str(out_path),
                 "--json", "-",
             ]

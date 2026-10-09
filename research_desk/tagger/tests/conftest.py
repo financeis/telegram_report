@@ -81,7 +81,6 @@ def make_llm_extraction(**overrides) -> LLMExtraction:
         stock_codes_raw=["005930"],
         company_names_raw=["삼성전자"],
         publisher_canon="키움증권",
-        publisher_type="broker",
         analysts=["홍길동"],
         oos_signals=OOSSignals(
             foreign_primary_coverage=False, etf_or_fund=False,

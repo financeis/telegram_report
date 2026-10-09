@@ -3,6 +3,8 @@
 v2 변경 (rev-7):
 - 6종 report_types
 - publishers.yaml 본문 import-time 주입 → LLM이 직접 publisher_canon 매핑
+  (canonical 이름 하나 또는 null만. 별칭은 알아보는 단서. publisher_type은 LLM이 내지 않고
+  시스템이 사전 구역에서 정한다)
 - stock_codes_raw / company_names_raw raw 추출만
 - sectors/products/topics 추출 폐기 (KRX entry가 답지)
 - 단일종목 정의에 IPO 예정 명시 (KRX 미매칭 시 review_needed로 자연 분기)
@@ -39,7 +41,7 @@ SYSTEM_PROMPT = f"""너는 한국 주식 리서치 PDF의 첫 1~3페이지를 �
 - 섹터: 좁은 섹터/테마. stock_codes_raw/company_names_raw는 0~수개. 본문에 명시적으로 등장한 KRX 6자리 코드/회사명만 포함 (peer reference로 한두 개 흘리는 종목은 제외).
 - IR자료: 발행 주체 = 해당기업 자체 (자체 IR 발표자료). 분석 타겟 외이므로 자동 OOS 처리됨.
   → stock_codes_raw/company_names_raw에 회사 정보를 추출 (audit용으로 보존됨).
-  → publisher_canon은 publishers vocabulary의 'other' 섹션 `해당기업` 항목으로 매칭 (publisher_type='other').
+  → publisher_canon은 `해당기업` (publishers vocabulary 'other' 섹션의 canonical).
 - 전략·시황: 시황·데일리·매크로·퀀트·전략·테마를 모두 포함. 자산배분/톱다운 의견 포함. stock_codes_raw/company_names_raw는 비움 (회사 한두 개 peer 언급은 제외).
 - 기타: 위에 안 들어가는 것 + OOS (해외/펀드/디지털/비상장 분석).
 
@@ -55,13 +57,15 @@ SYSTEM_PROMPT = f"""너는 한국 주식 리서치 PDF의 첫 1~3페이지를 �
 
 (IR자료 OOS는 report_type='IR자료'로 자동 결정. LLM이 별도 boolean을 set할 필요 없음.)
 
-## publisher 매핑 — 아래 vocabulary 보고 직접 정규화
+## publisher 매핑 — 아래 vocabulary의 canonical 이름 하나 또는 null
 
-다음 publishers vocabulary를 참고해서 publisher_canon과 publisher_type을 직접 출력.
+publisher_canon에는 아래 publishers vocabulary의 canonical 값 하나를 글자 그대로 출력하거나 null을 출력한다.
+aliases(옛 이름·영문 이름·약칭·파일 이름 표기)는 PDF의 발행 주체를 알아보는 단서일 뿐, 출력 값이 아니다.
 PDF에서 발견한 발행 주체가 vocabulary 안에 있으면 (영문/한글/별칭 어떤 형태든):
-  → canonical 표기로 publisher_canon 출력 + publisher_type도 함께
-vocabulary 안에 없으면:
-  → publisher_canon=null, publisher_type=null
+  → 그 항목의 canonical 표기를 publisher_canon으로 출력
+vocabulary 안에 없거나 발행 주체를 알 수 없으면:
+  → publisher_canon=null
+canonical이 아닌 값(별칭, 오타, 설명 문장)은 null로 저장된다. publisher_type은 출력하지 않는다 (시스템이 vocabulary 구역으로 정한다).
 
 publishers vocabulary:
 {_PUBLISHERS_YAML}
@@ -83,15 +87,26 @@ publishers vocabulary:
 """
 
 
-def user_message(*, file_name: str, caption: str | None, sent_at_iso: str, pdf_text: str) -> str:
-    """Build the user message for llm_extract."""
+# Stands where the PDF text goes when the PDF has no text and its page picture is
+# attached to the request instead. Fixed for every row (editing it changes the request).
+PAGE_IMAGE_NOTE = "(글자를 읽을 수 없는 PDF라 페이지를 그림으로 첨부했다. 첨부한 그림을 보고 추출한다.)"
+
+
+def user_message(*, file_name: str, caption: str | None, sent_at_iso: str,
+                 pdf_text: str = "", page_image: bool = False) -> str:
+    """Build the user message for llm_extract.
+
+    With ``page_image`` the page picture rides along with the request, so the fixed
+    PAGE_IMAGE_NOTE takes the place of the PDF text (``pdf_text`` is not used).
+    """
     cap = caption if caption else "(없음)"
+    body = PAGE_IMAGE_NOTE if page_image else pdf_text
     return (
         f"파일명: {file_name}\n"
         f"caption: {cap}\n"
         f"sent_at (UTC): {sent_at_iso}\n"
         f"PDF 첫 페이지(들):\n"
         f"---\n"
-        f"{pdf_text}\n"
+        f"{body}\n"
         f"---"
     )

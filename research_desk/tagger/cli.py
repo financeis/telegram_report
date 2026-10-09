@@ -1,9 +1,10 @@
-"""``tag`` command (spec §5): ``python -m research_desk tag run|inspect|escalate|reset-worker``.
+"""``tag`` command (spec §5): ``python -m research_desk tag run|inspect|escalate|reset-worker|requeue``.
 
 ``register(subparsers)`` adds the command. Each subcommand sets
 ``func(args) -> exit code``: 0 = done, 4 = not ready (a start-up check failed;
 the message is on stderr and no DB function was called, so no row was claimed).
-Any other error propagates as an exception (exit code 1).
+Any other error propagates as an exception (exit code 1), except in requeue,
+which prints one line on stderr (stdout empty) and returns 1.
 
 Start-up checks, all before the DB pool opens (spec §5, §7, §8):
 - run / escalate: the key of the model actually used (``--model``, else
@@ -12,6 +13,11 @@ Start-up checks, all before the DB pool opens (spec §5, §7, §8):
   it must load and match its version file. Tagged rows record that file's
   version as ``taxonomy_version``. ``--dry-run`` checks the same.
 - inspect / reset-worker: SUPABASE_DB_URL only.
+- requeue (``tagger/requeue.py``): no criterion is a usage error (2) before anything;
+  then SUPABASE_DB_URL, the publisher dictionary, with ``--unreadable`` whether the
+  tagging model (``tag run``'s) takes images (all 4 when they fail), with ``--apply`` that no
+  backfill / escalate / collect / web app is running on this PC (a running job: 1, a state that
+  clears once it ends; a process list that cannot be read: 4).
 """
 from __future__ import annotations
 
@@ -295,11 +301,55 @@ async def _cmd_reset_worker(worker_id: str) -> None:
         await sb.close()
 
 
+# ── requeue ──────────────────────────────────────────────────────────────────
+
+def _requeue(args) -> int:
+    """``tag requeue``: preview (default) or ``--apply``; see ``tagger/requeue.py``."""
+    # PyMuPDF and the publisher dictionary load only when this command runs.
+    from research_desk.tagger import requeue
+
+    criteria = tuple(name for name in requeue.CRITERIA if getattr(args, name))
+    if not criteria:
+        args.requeue_parser.error(requeue.NO_CRITERION)   # usage error: exit 2
+    settings.load_env()
+    try:
+        _require("SUPABASE_DB_URL")
+        dictionary = requeue.prepare(criteria, apply=args.apply,
+                                     model=tagger_settings.default_model())
+    except (NotReadyToRun, requeue.RequeueNotReady) as exc:
+        return _not_ready(exc)
+    except requeue.RequeueFailed as exc:   # a running job: nothing changed, clears once it ends
+        print(requeue.failure_line(exc), file=sys.stderr)
+        return 1
+    try:
+        report = asyncio.run(_cmd_requeue(criteria, dictionary, apply=args.apply))
+    except Exception as exc:   # one line on stderr, nothing on stdout
+        print(requeue.failure_line(exc), file=sys.stderr)
+        return 1
+    try:
+        _print_json(report)
+    except UnicodeEncodeError:
+        # A piped stdout in the console's code page cannot show some stored value. After
+        # --apply the rows are already reverted, so print the same JSON \u-escaped instead.
+        print(json.dumps(report, indent=2, ensure_ascii=True, default=str))
+    return 0
+
+
+async def _cmd_requeue(criteria: tuple[str, ...], dictionary, *, apply: bool) -> dict:
+    from research_desk.tagger import requeue
+
+    sb = await _open_db()
+    try:
+        return await requeue.run(sb, criteria, dictionary=dictionary, apply=apply)
+    finally:
+        await sb.close()
+
+
 # ── command list entry ───────────────────────────────────────────────────────
 
 def register(subparsers) -> None:
     """Add ``tag`` and its subcommands. Each subcommand sets ``func(args) -> exit code``."""
-    tag = subparsers.add_parser("tag", help="리포트 분류: run / inspect / escalate / reset-worker")
+    tag = subparsers.add_parser("tag", help="리포트 분류: run / inspect / escalate / reset-worker / requeue")
     sub = tag.add_subparsers(dest="tag_command", required=True)
 
     p_run = sub.add_parser("run", help="claim + tag a batch of pending rows")
@@ -331,3 +381,23 @@ def register(subparsers) -> None:
     )
     p_reset.add_argument("--worker-id", type=str, required=True)
     p_reset.set_defaults(func=_reset_worker)
+
+    requeue_help = ("분류된 행 가운데 조건에 맞는 행을 분류 대기(pending)로 되돌림. "
+                    "조건을 하나 이상 고른다. 기본은 미리 보기(아무것도 쓰지 않음), --apply로 적용")
+    p_requeue = sub.add_parser("requeue", help=requeue_help, description=requeue_help)
+    p_requeue.add_argument("--unreadable", action="store_true",
+                           help="review_needed이면서 메모가 first_page_unreadable로 시작하고 "
+                                "지금 PDF 1쪽을 그림으로 만들 수 있는 행")
+    p_requeue.add_argument("--publisher-not-in-dictionary", action="store_true",
+                           help="발행처가 비어 있지 않고 사전의 정식 이름이 아닌 행")
+    p_requeue.add_argument("--publisher-filename-mismatch", action="store_true",
+                           help="파일 이름 표기가 가리키는 발행처와 저장된 발행처(빈 값 포함)가 다른 행. "
+                                "메모에 publisher_suspect가 있거나 first_page_unreadable·llm_refusal로 "
+                                "시작하는 행은 빼고")
+    p_requeue.add_argument("--publisher-type-mismatch", action="store_true",
+                           help="발행처가 정식 이름인데 저장된 종류가 사전의 종류와 다른 행")
+    p_requeue.add_argument("--krx-unmatched", action="store_true",
+                           help="review_needed이면서 메모가 krx_unmatched_in_scope로 시작하는 행")
+    p_requeue.add_argument("--apply", action="store_true",
+                           help="실제로 되돌린다(백업 CSV를 먼저 쓰고 한 트랜잭션으로). 없으면 미리 보기")
+    p_requeue.set_defaults(func=_requeue, requeue_parser=p_requeue)

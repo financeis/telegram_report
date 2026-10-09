@@ -11,6 +11,7 @@
 
 - `report_summaries`(분석 결과)는 `features/analysis`의 표다. 재분류해도 분석 결과는 건드리지 않는다. `failed_attempts`는 수집기의 표다(`R11 표 주인`).
 - 분석 대상 외 행 모양(비우는 열·남기는 열)은 `domain.reports.oos_row_shape`에만 있다. 제외 처리는 그것을 쓰고 열 목록을 여기 다시 적지 않는다. 분류기 쓰기와 같은 모양이어야 하기 때문이다. 사유 값의 기준도 `domain.reports.OOS_REASONS`(`vocabulary.yaml`)다.
+- 재분류가 쓰는 "되돌리는 모양"은 `domain.reports.pending_reset_shape`에만 있다. `rules.build_pending_reset_payload()`는 그것을 그대로 돌려준다. 분류기의 `tag requeue`도 같은 모양으로 행을 되돌리므로 열 목록을 여기 다시 적지 않는다.
 - 다시 분류하는 일은 분류기(`python -m research_desk tag run`)가 한다. 검토는 행을 `pending`으로 되돌릴 뿐이고 `research_desk.tagger`를 import하지 않는다(`R5 기능`).
 - PDF 경로 확인·쪽 수·쪽 그림은 `core.pdf`가 한다. `pymupdf`를 직접 import하지 않는다(`R9 외부 도구`). DB 클라이언트는 `core.db.supabase_client`로만 만든다.
 - 커버리지 캐시는 coverage의 것이다. 검토는 `coverage.invalidate()`를 부르기만 한다. 분석 대상 리포트 조회는 `features/reports`가 한다.
@@ -33,7 +34,7 @@
   - 순서: 행 읽기(없으면 404) → `review_needed`가 아니면 409 `다른 작업에서 처리한 보고서입니다. 목록을 새로고침해 주세요.` → 쓸 값 만들기 → `tagging_status = 'review_needed'`일 때만 쓰기. 그 사이 상태가 바뀌어 쓴 행이 없으면 409 `보고서 상태가 바뀌었습니다. 새로고침해 주세요.`이고, 아무것도 쓰지 않으며 되돌리기 기록도 남기지 않는다.
   - 승인은 `tagging_status = 'verified'`만 쓴다. 분류는 그대로다.
   - 제외는 `{'tagging_status': 'verified', **oos_row_shape(row, reason)}`를 쓴다. 발행일은 NULL, 종목·회사명·업종(대·중)·제품은 `[]`, 리포트 종류·발행처·발행처 종류·애널리스트·제목·원문 종목·원문 회사명은 행의 값 그대로, 그리고 사유.
-  - 재분류는 스냅샷 22열을 모두 쓴다. `tagging_status = 'pending'`, 배열 열(`analysts`, `stock_codes`, `company_names`, `stock_codes_raw`, `company_names_raw`, `sectors_major`, `sectors_minor`, `products`)은 `[]`, 나머지는 NULL. 배열 열은 DB에서 `NOT NULL`이라 NULL을 쓰면 쓰기가 실패한다.
+  - 재분류는 `domain.reports.pending_reset_shape()`로 스냅샷 22열을 모두 쓴다. `tagging_status = 'pending'`, 배열 열(`analysts`, `stock_codes`, `company_names`, `stock_codes_raw`, `company_names_raw`, `sectors_major`, `sectors_minor`, `products`)은 `[]`, 나머지는 NULL. 배열 열은 DB에서 `NOT NULL`이라 NULL을 쓰면 쓰기가 실패한다. 이 값은 모양을 domain으로 옮기기 전과 같다(재분류 테스트를 바꾸지 않고 통과한다).
   - 처리가 쓰는 열은 스냅샷 22열(분류 칸 14개 + 분류 메타 8개, `rules.SNAPSHOT_COLUMNS`) 안에만 있다. 수집기 열(`id`, `message_id`, `chat_username`, `file_path`, `file_name`, `file_size_bytes`, `file_hash_sha256`, `caption`, `downloaded_at`, `sent_at`)은 처리도 되돌리기도 쓰지 않는다. 22열 밖을 쓰는 처리를 만들면 되돌릴 수 없게 된다.
   - 응답은 `{"undo_token": <32자리 16진수>, "report_id"}`다. 되돌릴 때 브라우저는 리포트 내용을 보내지 않는다.
 - 되돌리기(`POST /api/review/undo/{token}`)
@@ -48,14 +49,14 @@
 - DB 설정이 없거나 빈 값이면 DB가 필요한 주소는 `NotReady("검토", "DB 접속 설정(SUPABASE_URL, SUPABASE_SERVICE_KEY)이 없습니다")` → 503. 요청 값 검사, 쪽 범위, 모르는 토큰은 준비보다 먼저라 설정이 없어도 제 답(422·404·409)이 나간다.
 - 응답에 `file_path`, 저장 폴더 경로, Supabase URL·키를 넣지 않는다.
 - 사유 목록은 세 곳에 있다: `domain/vocabulary.yaml`(기준), `router.py`의 `ReviewAction.reason` `Literal`(`/openapi.json`의 `enum`을 그대로 두려고 직접 적었다), 화면의 `frontend/src/ReviewQueue.jsx`. 앞의 둘이 같은지는 테스트가 확인하지만 화면 쪽은 확인하지 않는다. 사유를 바꾸려면 이 셋과 DB 제약(마이그레이션)을 함께 바꾼다.
-- 검토 쪽에서 막을 수 없는 알려진 경쟁: `tag escalate`와 `tag run --row-ids`는 상태를 보지 않고 행을 다시 쓰므로 검토 결과를 덮을 수 있다. 검토의 조건부 쓰기는 자기 쓰기만 지킨다.
+- 검토 쪽에서 막을 수 없는 알려진 경쟁: `tag escalate`와 `tag run --row-ids`는 상태를 보지 않고 행을 다시 쓰므로 검토 결과를 덮을 수 있다. 검토의 조건부 쓰기는 자기 쓰기만 지킨다. `tag requeue --apply`는 웹앱이 켜져 있으면 실행을 거절하고(종료 코드 1), `verified` 행은 고르지 않는다.
 
 ## 이 칸의 방식
 
 - `service.py`의 `ReviewService`가 대기열·PDF·처리·되돌리기와 준비를 맡는다. 되돌리기 기록과 잠금이 서비스 객체에 있으므로 모든 요청이 `get_service()`의 프로세스 전역 서비스 하나를 쓴다. 웹 서버를 여러 프로세스로 띄우면 다른 프로세스에서는 토큰이 없는 것이 된다.
 - 준비: 처음 DB를 쓸 때 `settings.load_env()` → `SUPABASE_URL`·`SUPABASE_SERVICE_KEY` → `core.db.supabase_client`. 성공하면 클라이언트 하나를 계속 쓰고, 실패하면 다음 호출에서 다시 준비한다. PDF 폴더는 요청마다 `settings.storage_base_dir()`로 읽는다.
 - `store.py`의 `ReviewStore`는 Supabase REST로 네 가지만 한다: 대기 수, 다음 대기 행, id로 한 행, `update_if(rid, values, expected)`. `update_if`는 `id`로 고른 뒤 `expected`의 열을 주어진 순서대로 `eq`(None이면 `is_('null')`)로 걸고, 쓴 행을 돌려받는다(supabase-py 기본 `return=representation`). 빈 목록이면 행이 바뀌었거나 없어서 아무것도 쓰지 않은 것이다.
-- `rules.py`는 DB 없이 쓸 값만 만든다. 호출마다 새 목록을 돌려줘 호출끼리 목록을 나눠 갖지 않는다.
+- `rules.py`는 DB 없이 쓸 값만 만든다(제외는 `oos_row_shape`, 재분류는 `pending_reset_shape`를 부른다). 호출마다 새 목록을 돌려줘 호출끼리 목록을 나눠 갖지 않는다.
 - 핸들러는 `def`로 둔다. 서비스가 동기 DB 호출과 `threading.Lock`을 쓰므로 FastAPI 스레드에서 돌아야 한다.
 - 핸들러 이름(`review`, `review_pdf`, `review_preview`, `review_page`, `review_action`, `review_undo`), 인자, 요청 본문 모델 `ReviewAction`, 주소 순서는 `/openapi.json`을 그대로 두려고 고정했다. 바꾸거나 docstring을 달지 않는다.
 

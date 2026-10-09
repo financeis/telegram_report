@@ -3,7 +3,7 @@
 Every command is registered here, in one place, by its area's registration function:
 
 - ``collect``: ``research_desk.collector.cli.register``
-- ``tag`` (run / inspect / escalate / reset-worker): ``research_desk.tagger.cli.register``
+- ``tag`` (run / inspect / escalate / reset-worker / requeue): ``research_desk.tagger.cli.register``
 - ``web``: ``research_desk.web.server.register``
 - ``stocks set-version --as-of YYYY-MM-DD``: ``register_stocks`` below (core settings and
   ``domain.stocks``)
@@ -26,9 +26,10 @@ command function: ``python -m research_desk`` without a command loads neither Fa
 
 ``main(argv)`` parses the arguments and returns the exit code of the command's ``func(args)``.
 No command, an unknown command or bad arguments: argparse's usage message and exit code 2.
-``--help`` on any command: 0. Exit code 4 means "not ready", a state that running again does not
-fix (a missing setting, a stock list that does not match its version); ``tag``, ``stocks``,
-``prices`` and ``peers`` use it.
+``--help`` on any command: 0. Exit code 4 means "not ready": a problem that stays until a setting
+or file is fixed (a missing setting, a stock list that does not match its version); nothing was
+changed. A state that clears by waiting (another job running, e.g. ``tag requeue --apply`` while a
+backfill runs) is 1, not 4. ``tag``, ``stocks``, ``prices`` and ``peers`` use 4.
 
 ``stocks set-version`` (spec §8) records the stock list's content hash under the version
 ``KRX@<as-of>``, the as-of date of the stock data. It re-reads ``.env``, takes ``KRX_CSV_PATH``

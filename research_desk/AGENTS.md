@@ -21,9 +21,9 @@
 종료 코드. `main(argv)`은 명령 함수 `func(args)`의 반환값을 그대로 돌려주고, `__main__`이 `sys.exit(main())`으로 프로세스 종료 코드로 만든다.
 - `0`: 정상. `--help`는 모든 명령과 하위 명령에서 0이다.
 - `2`: 사용법 오류(명령 없음, 모르는 명령·옵션, 필수 인자 없음, `--view bad`나 숫자 자리의 글자처럼 argparse가 거르는 값). argparse가 stderr에 `usage: research_desk …`를 찍고, stdout은 비어 있고, 아무 명령도 돌지 않는다.
-- `4`: 준비 문제. 다시 돌려도 저절로 풀리지 않는 상태다(설정 누락, codex CLI 없음, 종목표를 못 읽거나 버전 정보와 다름, 잘못된 `--as-of` 날짜, MongoDB 접속 불가, 사업보고서 문서 없음). 이유를 stderr에 찍고 아무 일도 하지 않은 채 끝난다. `tag`는 행을 하나도 가져가지 않고, `set-version`은 버전 정보 파일을 건드리지 않고, `prices update`는 KIS·DB를 부르지 않고, `peers build`는 빌드를 시작하지 않는다. `tag`의 모든 하위 명령, `stocks set-version`, `prices update`, `peers build`·`peers inspect`, 앞으로 기능이 붙이는 명령이 쓴다. 기다리면 풀리는 상태(분류 작업 진행 중, 다른 유사도 계산 진행 중)는 4가 아니라 1이다.
+- `4`: 준비 문제. 다시 돌려도 저절로 풀리지 않는 상태다(설정 누락, codex CLI 없음, 종목표를 못 읽거나 버전 정보와 다름, 잘못된 `--as-of` 날짜, MongoDB 접속 불가, 사업보고서 문서 없음, `tag requeue`의 발행처 사전을 못 읽음·그림을 못 받는 분류 모델·프로세스 목록을 못 읽음). 이유를 stderr에 찍고 아무 일도 하지 않은 채 끝난다. `tag`는 행을 하나도 가져가거나 되돌리지 않고, `set-version`은 버전 정보 파일을 건드리지 않고, `prices update`는 KIS·DB를 부르지 않고, `peers build`는 빌드를 시작하지 않는다. `tag`의 모든 하위 명령, `stocks set-version`, `prices update`, `peers build`·`peers inspect`, 앞으로 기능이 붙이는 명령이 쓴다. 기다리면 풀리는 상태(분류 작업 진행 중, 다른 유사도 계산 진행 중, `tag requeue --apply` 때 백필·재처리·수집·웹앱이 돌고 있음)는 4가 아니라 1이다.
   - `scripts/run-batches.ps1`은 4를 보면 되돌리기·재시도 없이 곧바로 4로 멈춘다. 준비 문제를 1로 내면 되돌리기와 재시도를 두 번 더 하고서야 멈춘다.
-- `1`: 그 밖의 오류. `tag`·`stocks`는 예상하지 못한 예외를 잡지 않고 흘려보내고, 파이썬이 traceback과 함께 1로 끝낸다. `main()`에 예외를 통째로 잡는 처리를 넣지 않는다.
+- `1`: 그 밖의 오류. `tag`·`stocks`는 예상하지 못한 예외를 잡지 않고 흘려보내고, 파이썬이 traceback과 함께 1로 끝낸다. `main()`에 예외를 통째로 잡는 처리를 넣지 않는다. 예외로 `tag requeue`는 운영 데이터를 바꾸는 명령이라 stderr에 이유 한 줄만 내고 stdout은 비운 채 1로 끝난다.
 - `collect`만 다르다. 설정 누락도 1이고 stderr 문구는 `Config error: Missing required env var: <이름>`이다(예전 동작 유지). 4로 바꾸지 않는다.
 
 `stocks set-version`.

@@ -10,9 +10,11 @@
    collect ──(Supabase REST, 서비스 키)──▶ reports 새 행 (pending) / failed_attempts
 
 reports (pending) ──(Postgres 직접 연결 SUPABASE_DB_URL, asyncpg 풀 최대 10)──▶ tag run
-   tag run ──▶ 로컬 PDF 첫 1~3쪽 글자 ──▶ LLM (Anthropic / OpenAI / Codex CLI)
+   tag run ──▶ 로컬 PDF 첫 1~3쪽 글자 (글자가 없으면 1쪽 그림) ──▶ LLM (Anthropic / OpenAI / Codex CLI)
    tag run ──(같은 직접 연결, UPDATE 한 번)──▶ reports (auto / review_needed)
 
+reports (auto / review_needed) ──(같은 직접 연결)──▶ tag requeue (조건에 맞는 행 고르기, AI 없음)
+   tag requeue --apply ──▶ 백업 CSV backups/requeue/ ──(한 트랜잭션)──▶ reports (pending) ──▶ 다음 백필이 다시 분류
 윈도우 작업 스케줄러 (평일 장 마감 뒤) ──▶ scripts/run-prices.ps1 ──▶ prices update
    prices update ──(HTTPS, 앱키·시크릿 → 실행마다 접근 토큰 한 번)──▶ KIS Open API (수정주가 일봉, 현재가)
    prices update ──(Supabase REST)──▶ stock_price_snapshot (종목당 한 행) / price_update_runs
@@ -29,13 +31,13 @@ reports (pending) ──(Postgres 직접 연결 SUPABASE_DB_URL, asyncpg 풀 최
    features/peers ──▶ OpenAI 임베딩 (테마 검색의 새 질의 하나)
 ```
 
-- **수집기·웹앱·두 일괄 작업은 Supabase REST**(supabase-py, `SUPABASE_URL` + `SUPABASE_SERVICE_KEY`)로, **분류기는 Postgres 직접 연결**(`SUPABASE_DB_URL`)로 DB에 닿는다. 분류기만 직접 연결을 쓰는 이유: 가져가기(`FOR UPDATE SKIP LOCKED`)와 오래된 잠금 되돌리기가 한 문장 안에서 원자적으로 돌아야 하는데 REST로는 그렇게 쓸 수 없다.
+- **수집기·웹앱·두 일괄 작업은 Supabase REST**(supabase-py, `SUPABASE_URL` + `SUPABASE_SERVICE_KEY`)로, **분류기는 Postgres 직접 연결**(`SUPABASE_DB_URL`)로 DB에 닿는다. 분류기만 직접 연결을 쓰는 이유: 가져가기(`FOR UPDATE SKIP LOCKED`)와 오래된 잠금 되돌리기가 한 문장 안에서 원자적으로 돌아야 하는데 REST로는 그렇게 쓸 수 없다. `tag requeue`의 "잠그기 → 다시 확인 → 되돌리기 → 건수 확인 → 안 맞으면 취소"도 한 트랜잭션이어야 하고, 분류된 행 전체를 한 번에 읽어야 해서(REST는 1000행에서 끊긴다) 같은 직접 연결을 쓴다.
 - **AI는 네 곳에서만 부른다.**
-  - 분류기: 행마다, 반복 실행.
+  - 분류기: 행마다, 반복 실행. 글자 없는 PDF는 1쪽 그림을 함께 보낸다.
   - 웹앱의 재무 분석·비교 해석문: 사용자가 버튼을 눌렀을 때만, 웹 서버 전체 동시 2개.
   - 유사도 계산(`peers build`): 회사마다 사업 요약 카드 추출(동시 2개)과 임베딩(100개씩).
   - 웹앱의 테마 검색: 새 질의마다 임베딩 하나(같은 질의는 캐시, 유사 기업 기능의 동시 2개 자리).
-  - 목록 보기·선택·커버리지·검토·유사 기업 탭·상태 줄은 AI를 부르지 않는다. 유사 기업 탭은 저장된 임베딩으로 DB 함수가 계산한다.
+  - 목록 보기·선택·커버리지·검토·유사 기업 탭·상태 줄·`tag requeue`는 AI를 부르지 않는다. 유사 기업 탭은 저장된 임베딩으로 DB 함수가 계산한다.
 - **바깥 데이터마다 가져오는 명령은 하나뿐이다.** KIS는 `prices update`만, MongoDB는 `peers build`만 부른다. 웹앱은 둘 다 부르지 않고 저장된 표만 읽는다. MongoDB의 사업보고서 텍스트는 이 저장소 밖의 DART 수집 프로그램이 채우고, 이 앱은 쓰지 않는다.
 - **PDF 파일은 로컬 디스크에만 있다.** DB에는 저장 폴더 기준 상대 경로(`file_path`)만 있다. 그래서 분류기와 웹앱은 수집기와 같은 PC, 같은 `STORAGE_BASE_DIR`에서 돌아야 한다.
 - **화면(`frontend/`, React + Vite)** 은 빌드 결과(`frontend/dist`)를 웹 서버가 `/`와 `/assets`로 내준다. 개발 중에는 Vite 개발 서버(5173)가 `/api`를 8520으로 넘긴다. 화면은 `/api/*` 주소와 응답 모양에만 의존하고 파이썬 코드를 모른다. 유사 기업 탭·테마 검색은 `frontend/src/peers/`, 상태 줄은 `frontend/src/freshness/`에 있다.
@@ -47,7 +49,9 @@ reports (pending) ──(Postgres 직접 연결 SUPABASE_DB_URL, asyncpg 풀 최
 3. `features/reports` → `features/analysis.analyze_report(row)`: 같은 리포트 분석 중이면 409 → 웹 서버 전체 AI 자리 2개 중 하나를 잡음 → 단일종목이 아니면 422 → 재무 상세가 있는 저장 결과가 있으면 그대로 반환 → 모델 키·codex CLI 확인(없으면 "분석 기능 사용 불가" 503) → `core.pdf`로 저장 폴더 안 PDF를 찾아 쪽마다 글자를 뽑음 → `core.llm`으로 AI 호출(시간 한도 180초, 일시 오류면 5초 뒤 1회 재시도) → 숫자 근거 확인 → `report_summaries`에 저장.
 4. `features/reports`: 저장 결과를 붙인 리포트 공개 모양(`file_path` 없음) + `analysis_reused`를 돌려준다.
 
-분류 흐름(`tag run`)은 행 하나마다 노드 8개짜리 그래프를 돈다: PDF 첫 쪽 읽기 → LLM 메타데이터 추출 → 세 갈래 분기. ① 글자를 못 읽었거나 LLM이 거부함 → 읽기 실패 상태 → 쓰기. ② IR자료, 또는 해외·펀드·디지털자산 신호, 또는 비상장 신호인데 원문 코드가 종목표에 없음 → 분석 대상 외 사유 정하기 → 상태 정하기 → 쓰기. ③ 나머지 → 종목표 매칭 → 상태 정하기 → 쓰기. 행들은 `MAX_CONCURRENT_LLM`(2)개씩 동시에 돌고, 행마다 90초 한도가 있다.
+분류 흐름(`tag run`)은 행 하나마다 노드 8개짜리 그래프를 돈다: PDF 첫 쪽 읽기(1~3쪽에 글자가 하나도 없으면 1쪽을 그림으로 그림) → LLM 메타데이터 추출(글자, 또는 글자 대신 그 그림을 보여 줌; AI가 고른 발행처가 사전의 정식 이름인지 확인하고 파일 이름 표기와 대조해 의심 표시) → 세 갈래 분기. ① 글자도 그림도 못 얻었거나 LLM이 거부함 → 읽기 실패 상태 → 쓰기. ② IR자료, 또는 해외·펀드·디지털자산 신호, 또는 비상장 신호인데 원문 코드가 종목표에 없음 → 분석 대상 외 사유 정하기 → 상태 정하기 → 쓰기. ③ 나머지 → 종목표 매칭 → 상태 정하기 → 쓰기. 세 상태 노드는 모두 마지막에 같은 규칙을 적용한다: 그림으로 읽었거나 발행처가 의심스러우면 신뢰도를 `medium`으로 낮추고 메모를 덧붙인다(상태는 그대로). 행들은 `MAX_CONCURRENT_LLM`(2)개씩 동시에 돌고, 행마다 90초 한도가 있다. PDF 읽기·그리기는 프로세스 안에서 한 번에 하나씩만 한다(`core.pdf` 잠금, AI 호출은 동시 2 그대로).
+
+다시 분류 대기(`tag requeue`)는 AI를 부르지 않는다. 분류된 행 가운데 조건(못 읽었지만 지금은 1쪽 그림을 만들 수 있음, 사전에 없는 발행처, 파일 이름 표기와 다른 발행처, 사전과 다른 발행처 종류, 종목표 미매칭)에 맞는 `auto`·`review_needed` 행을 골라, 미리 보기만 하거나(`--apply` 없이) 백업 뒤 한 트랜잭션으로 `pending`에 되돌린다. 되돌리는 모양은 검토의 재분류와 같은 `domain` 한 정의다. 다시 분류는 평소 백필이 한다.
 
 ## 대표 흐름 — 유사 기업 탭 (`GET /api/stocks/{code}/peers`)
 
@@ -64,10 +68,10 @@ reports (pending) ──(Postgres 직접 연결 SUPABASE_DB_URL, asyncpg 풀 최
 | 칸 | 역할 | 쓸 수 있는 칸 |
 |---|---|---|
 | `__main__.py`, `cli.py` | 명령 입구. 모든 명령을 여기서 등록 | 모든 칸의 등록 함수, `core`·`domain` 함수, 기능의 공개 창구 |
-| `core` | 공용 설비: `.env`·설정 값, Supabase REST·Postgres 연결, LLM 공급자 연결·재시도·임베딩, KIS Open API 클라이언트, MongoDB 읽기, PDF 열기·글자·그림. 업무 개념을 모른다 | 없음 (외부 도구만) |
-| `domain` | 공용 기준: 분류 체계 값(`vocabulary.yaml`), "분석 대상"·"분석 대상 외 행 모양" 규칙, 종목표 읽기·조회·버전 | `core` |
+| `core` | 공용 설비: `.env`·설정 값, Supabase REST·Postgres 연결과 트랜잭션, LLM 공급자 연결·재시도·그림 입력·임베딩, KIS Open API 클라이언트, MongoDB 읽기, PDF 열기·글자·그림(PyMuPDF 프로세스 전체 잠금). 업무 개념을 모른다 | 없음 (외부 도구만) |
+| `domain` | 공용 기준: 분류 체계 값(`vocabulary.yaml`), "분석 대상"·"분석 대상 외 행 모양"·"되돌리는 모양"(`pending`으로 되돌릴 때의 값) 규칙, 종목표 읽기·조회·버전 | `core` |
 | `collector` | 텔레그램 → PDF + `pending` 행, 실패 기록 | `core`, `domain` |
-| `tagger` | `pending` → `auto`/`review_needed` (LangGraph 행 그래프) | `core`, `domain` |
+| `tagger` | `pending` → `auto`/`review_needed` (LangGraph 행 그래프), 발행처 사전과 조회(`tagger/vocabulary/`: `publishers.yaml` + 정식 이름·종류·파일 이름 표기 조회), 다시 분류 대기 명령 `tag requeue`(`tagger/requeue.py`) | `core`, `domain` |
 | `features/companies` | 기업 목록·관심 기업 | `core`, `domain` |
 | `features/analysis` | 리포트 1건 재무 분석, `report_summaries` 표, 웹 AI 자리 2개 | `core`, `domain` |
 | `features/reports` | 분류가 끝난 리포트 조회, 목록·PDF·분석 실행 주소. 다른 기능용으로 여러 종목 리포트 읽기, 가장 최근 리포트 시각, 분류 진행 확인 | `core`, `domain`, 기능 `analysis` |
@@ -91,7 +95,7 @@ reports (pending) ──(Postgres 직접 연결 SUPABASE_DB_URL, asyncpg 풀 최
 | 표 | 주인 칸 | 하는 일 |
 |---|---|---|
 | `reports` | `collector` | 새 행 만들기, 이미 받은 메시지 번호·마지막 번호 조회 |
-| `reports` | `tagger` | 대기 행 가져가기, 오래된 잠금 되돌리기, 분류 결과 쓰기, 작업자 단위 되돌리기, 현황 집계, 재처리 대상 조회 |
+| `reports` | `tagger` | 대기 행 가져가기, 오래된 잠금 되돌리기, 분류 결과 쓰기, 작업자 단위 되돌리기, 현황 집계, 재처리 대상 조회, 다시 분류 대기(조건에 맞는 분류된 행을 백업 뒤 한 트랜잭션으로 `pending`에 되돌리기) |
 | `reports` | `features/review` | 검토 대기열 조회, 검토 결과 쓰기, 되돌리기 |
 | `reports` | `features/reports` | 분류가 끝난 리포트 조회(목록·상세·PDF·집계 재료·여러 종목 리포트·가장 최근 리포트), 분류 진행 중인 행 개수 |
 | `failed_attempts` | `collector` | 실패 기록·재시도·정리 |
@@ -115,5 +119,6 @@ reports (pending) ──(Postgres 직접 연결 SUPABASE_DB_URL, asyncpg 풀 최
 | Codex CLI | 모델 이름이 `codex:<모델>` | 로컬 `codex exec` (ChatGPT 로그인 한도, API 키 없음) |
 | 한국투자증권 KIS Open API | `core.kis` ← `prices update` | httpx(HTTPS), 실전 서버 `KIS_BASE_URL`. `KIS_APP_KEY`·`KIS_APP_SECRET` → 실행마다 접근 토큰 한 번. 수정주가 일봉(한 번에 100행)과 현재가. 초당 호출 수는 `PRICES_MAX_CALLS_PER_SEC` 이하 |
 | 로컬 MongoDB `FS.A001_v2` | `core.mongo` ← `peers build` | pymongo, 읽기만. 사업보고서 섹션 하나 = 문서 하나이고 `parser_version` 0.2.0 이상인 문서만 읽는다. `DART_MONGO_URL`·`DART_MONGO_DB`·`DART_MONGO_COLLECTION` |
-| LangSmith | 선택 | `LANGSMITH_TRACING=true`면 LangGraph 실행과 LLM 호출 기록을 보냄 |
+| LangSmith | 선택 | `LANGSMITH_TRACING=true`면 LangGraph 실행과 LLM 호출 기록을 보냄(분류의 1쪽 그림 포함) |
+| Windows PowerShell 5.1 | `tag requeue --apply` | `Get-CimInstance Win32_Process`로 이 PC에서 백필·재처리·수집·웹앱이 도는지 확인(새 패키지 없음) |
 | 윈도우 작업 스케줄러 | 매일 주가 갱신 | 평일 장 마감 뒤(기본 18:30) `scripts/run-prices.ps1` → `python -m research_desk prices update`. 저장소 폴더를 현재 폴더로 맞추는 `.ps1`을 거쳐 `python -m research_desk <명령>`을 부르는 방식 |

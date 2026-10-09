@@ -74,10 +74,11 @@ Every command is `python -m research_desk <command>`; `--help` on any command li
 | `python -m research_desk collect --backfill-days 365` | One-off historical backfill: fetch from N days ago, skip already-downloaded |
 | `python -m research_desk collect --dry-run --backfill-days 365` | Preview backfill: count "new" vs "already-known skipped" before committing |
 | `python -m research_desk collect -v` | Verbose (DEBUG level) logging |
-| `python -m research_desk tag run` | Claim a batch of `pending` rows and tag them; prints a JSON report. Options: `--batch-size N` (default `TAGGER_BATCH_SIZE_DEFAULT`, 10), `--model M` (default `LLM_MODEL_DEFAULT`), `--dry-run` (calls the model, writes nothing), `--row-ids 1,2,3` (re-tag these rows whatever their status), `--max-concurrent-llm N` (default `MAX_CONCURRENT_LLM`, 2), `--worker-id W` |
+| `python -m research_desk tag run` | Claim a batch of `pending` rows and tag them; prints a JSON report. Options: `--batch-size N` (default `TAGGER_BATCH_SIZE_DEFAULT`, 10), `--model M` (default `LLM_MODEL_DEFAULT`), `--dry-run` (calls the model, writes nothing, and lists each row's result under `rows`), `--row-ids 1,2,3` (re-tag these rows whatever their status), `--max-concurrent-llm N` (default `MAX_CONCURRENT_LLM`, 2), `--worker-id W` |
 | `python -m research_desk tag inspect` | Print the queue as JSON: `pending`, `processing`, `auto`, `review_needed`, `verified`, `oos_total`, `last_24h` |
 | `python -m research_desk tag escalate --since <ISO time>` | Re-tag the `review_needed` rows tagged since that time (e.g. `2026-05-08T09:00`, read as UTC unless it has an offset such as `+09:00`) with `LLM_MODEL_ESCALATION`. Options: `--model M`, `--max-concurrent-llm N` |
 | `python -m research_desk tag reset-worker --worker-id W` | Put one worker's `processing` rows back to `pending` (cleanup after a crashed run) |
+| `python -m research_desk tag requeue <criteria> [--apply]` | Send classified `auto` / `review_needed` rows that meet the chosen criteria back to `pending`, so the usual backfill re-tags them under today's rules (no AI call; `verified` rows are never touched). Criteria, at least one: `--unreadable`, `--publisher-not-in-dictionary`, `--publisher-filename-mismatch`, `--publisher-type-mismatch`, `--krx-unmatched`. Without `--apply` it only prints a preview; `--apply` refuses while a backfill, escalate, collect or the web app runs, writes a CSV backup to `backups/requeue/` and reverts the rows in one transaction. See [docs/operations.md](docs/operations.md) |
 | `python -m research_desk web` | Start Research Desk on http://127.0.0.1:8520/; `--view market` / `--view review` open the coverage / review views (default `--view reports`) |
 | `python -m research_desk stocks set-version --as-of YYYY-MM-DD` | Record the stock list's version after replacing it (see [Stock list update](#stock-list-update)) |
 | `python -m research_desk prices update` | Fetch every stock of the stock list from KIS and refresh the price snapshot and its run record (daily, through `scripts\run-prices.ps1`) |
@@ -92,9 +93,10 @@ feature whether tagging is running, and that loads FastAPI. It does not start wh
 running (exit `1`), and a tagging backfill should not be started while it runs. The procedures for
 the daily prices and the yearly build are in [docs/operations.md](docs/operations.md).
 
-`tag inspect` and `tag reset-worker` need only `SUPABASE_DB_URL`; `tag run` and `tag escalate`
-also check the model's API key (or, for a `codex:` model, the codex CLI) and the stock list
-before they take any row.
+`tag inspect` and `tag reset-worker` need only `SUPABASE_DB_URL`; `tag requeue` needs it and a
+readable publisher dictionary, but no API key; `tag run` and `tag escalate` also check the
+model's API key (or, for a `codex:` model, the codex CLI) and the stock list before they take
+any row.
 
 ### Download concurrency (`collect`)
 
@@ -118,13 +120,16 @@ so total in-flight downloads stay bounded.
 - `4` Preparation problem — a missing setting (`<NAME> is required`, or a Korean sentence for
   `prices` and `peers`), no codex CLI for a `codex:` model, a stock list that cannot be read or
   does not match its version file, a bad `--as-of` date, an unreachable MongoDB or no business
-  report texts. The reason is printed on stderr; `tag` stops before it takes any row,
-  `stocks set-version` leaves the version file as it was, `prices update` calls neither KIS nor
-  the DB, and `peers build` starts no build. Fix the cause, then run again — retrying alone does
-  not help.
+  report texts, and for `tag requeue` an unreadable publisher dictionary, `--unreadable` with a
+  tagging model that takes no images, or a process list that cannot be read. The reason is
+  printed on stderr; `tag` stops before it takes or changes any row, `stocks set-version` leaves
+  the version file as it was, `prices update` calls neither KIS nor the DB, and `peers build`
+  starts no build. Fix the cause, then run again — retrying alone does not help.
 - `1` Any other error; also a `failed` price run (more than 20 % of the stocks not received —
   the snapshot is left as it was) and an `incomplete` peers build, a peers build refused because
-  tagging or another build is running
+  tagging or another build is running, and `tag requeue --apply` refused because a backfill,
+  escalate, collect or web app runs on this PC (nothing changed; stop or wait for it, then run
+  again). `tag requeue` prints one line on stderr and nothing on stdout.
 
 Every command: missing or wrong arguments print the usage and exit `2`; `--help` exits `0`.
 

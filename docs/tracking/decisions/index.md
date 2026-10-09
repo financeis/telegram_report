@@ -19,3 +19,6 @@
 | [0015](0015-no-peers-build-while-tagging.md) | 분류 작업이 돌고 있으면 유사도 계산을 시작하지 않는다(한쪽만 자동) | 2026-10-09 |
 | [0016](0016-status-line-for-scheduled-jobs.md) | 예약 작업이 밀렸는지는 모든 화면 맨 위 상태 줄로 본다 | 2026-10-09 |
 | [0017](0017-reits-excluded-by-stock-list-sector.md) | 유사 기업 대상에서 리츠는 종목표의 `산업명(중)`으로 뺀다 | 2026-10-09 |
+| [0018](0018-page-picture-for-text-less-pdfs.md) | 글자 없는 PDF는 첫 장 그림을 AI에게 보여 준다 | 2026-10-10 |
+| [0019](0019-closed-publisher-list-filename-tag-only-for-suspects.md) | 발행처는 사전의 닫힌 목록 안에서 AI가 고르고, 파일 이름 표기는 의심 표시·다시 분류 대상 고르기에만 쓴다 | 2026-10-10 |
+| [0020](0020-requeue-to-pending-for-retagging.md) | 다시 분류는 대기 줄로 되돌리는 `tag requeue`로 한다 | 2026-10-10 |

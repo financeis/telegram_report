@@ -1,7 +1,14 @@
-"""core.pdf: storage confinement, page text, page count, page images (temp PDFs only)."""
+"""core.pdf: storage confinement, page text, page count, page images, one PyMuPDF user at a time.
+
+Real reads use temp PDFs only; the concurrency checks swap ``pymupdf.open`` for a fake, so no
+real document is ever touched from two threads.
+"""
 from __future__ import annotations
 
 import struct
+import threading
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import pymupdf
@@ -164,3 +171,208 @@ def test_render_page_png_rejects_pages_outside_the_document(tmp_path, page):
     path = _make_pdf(tmp_path / "two.pdf", ["first", "second"])
     with pytest.raises(PageNotFound):
         pdf.render_page_png(path, page)
+
+
+# ── one PyMuPDF user at a time ───────────────────────────────────────────────
+# PyMuPDF must not be used from several threads at once. The tagger reads two rows' PDFs in
+# worker threads and the web app renders pages and reads text from FastAPI's thread pool, so
+# every core.pdf function holds one process-wide lock from opening a document to closing it.
+
+class _Tracker:
+    """Counts documents open at once and calls in progress at once, keeping the maxima."""
+
+    def __init__(self, pause: float = 0.002):
+        self._guard = threading.Lock()
+        self._pause = pause
+        self.open_docs = self.max_open_docs = 0
+        self.inside = self.max_inside = 0
+
+    @contextmanager
+    def call(self):
+        with self._guard:
+            self.inside += 1
+            self.max_inside = max(self.max_inside, self.inside)
+        try:
+            time.sleep(self._pause)  # give another thread the chance to step in
+            yield
+        finally:
+            with self._guard:
+                self.inside -= 1
+
+    def opened(self):
+        with self._guard:
+            self.open_docs += 1
+            self.max_open_docs = max(self.max_open_docs, self.open_docs)
+
+    def closed(self):
+        with self._guard:
+            self.open_docs -= 1
+
+
+class _FakePixmap:
+    def __init__(self, tracker: _Tracker, number: int):
+        self._tracker, self._number = tracker, number
+
+    def tobytes(self, fmt: str) -> bytes:
+        with self._tracker.call():
+            return f"{fmt}-{self._number}".encode()
+
+
+class _FakePage:
+    def __init__(self, tracker: _Tracker, number: int):
+        self._tracker, self.number = tracker, number
+
+    def get_text(self, kind: str) -> str:
+        with self._tracker.call():
+            return f"{kind}-{self.number}"
+
+    def get_pixmap(self, matrix, alpha: bool) -> _FakePixmap:
+        with self._tracker.call():
+            return _FakePixmap(self._tracker, self.number)
+
+
+class _FakeDoc:
+    PAGES = 3
+
+    def __init__(self, tracker: _Tracker):
+        self._tracker = tracker
+        self._closed = False
+        tracker.opened()
+
+    @property
+    def page_count(self) -> int:
+        with self._tracker.call():
+            return self.PAGES
+
+    def __getitem__(self, index: int) -> _FakePage:
+        with self._tracker.call():
+            if not 0 <= index < self.PAGES:
+                raise IndexError(index)
+            return _FakePage(self._tracker, index)
+
+    def close(self) -> None:
+        with self._tracker.call():
+            if not self._closed:
+                self._closed = True
+                self._tracker.closed()
+
+    def __enter__(self) -> "_FakeDoc":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+
+@pytest.fixture
+def fake_pymupdf(monkeypatch):
+    """``pymupdf.open`` as core.pdf sees it, replaced by a fake that records overlaps.
+
+    A path whose name starts with ``broken`` fails to open, like a damaged file.
+    """
+    tracker = _Tracker()
+
+    def fake_open(path):
+        with tracker.call():
+            if Path(path).name.startswith("broken"):
+                raise RuntimeError("cannot open broken document")
+            return _FakeDoc(tracker)
+
+    monkeypatch.setattr(pdf.pymupdf, "open", fake_open)
+    return tracker
+
+
+def _run_together(calls, timeout: float = 30) -> list:
+    """Start every call in its own thread at the same moment; their results (or errors) in order."""
+    barrier = threading.Barrier(len(calls))
+    results: list = [None] * len(calls)
+
+    def worker(i, call):
+        barrier.wait()
+        try:
+            results[i] = call()
+        except Exception as exc:  # compared by the test
+            results[i] = exc
+
+    threads = [threading.Thread(target=worker, args=(i, call), daemon=True)
+               for i, call in enumerate(calls)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout)
+    assert not any(thread.is_alive() for thread in threads), "a PDF call never finished"
+    return results
+
+
+def test_pdf_calls_from_many_threads_never_overlap_inside_pymupdf(fake_pymupdf):
+    calls = []
+    for _ in range(3):
+        calls += [
+            lambda: pdf.page_texts("report.pdf"),
+            lambda: pdf.page_texts("report.pdf", max_pages=2),
+            lambda: pdf.render_page_png("report.pdf", 2),
+            lambda: pdf.page_count("report.pdf"),
+        ]
+
+    results = _run_together(calls)
+
+    assert results == [
+        ["text-0", "text-1", "text-2"], ["text-0", "text-1"], b"png-1", 3,
+    ] * 3
+    assert fake_pymupdf.max_open_docs == 1  # the lock spans open → read → close
+    assert fake_pymupdf.max_inside == 1
+    assert fake_pymupdf.open_docs == 0
+
+
+def test_failing_pdf_calls_from_many_threads_keep_their_errors_and_never_overlap(fake_pymupdf):
+    calls = [
+        lambda: pdf.page_texts("broken.pdf"),
+        lambda: pdf.page_count("broken.pdf"),
+        lambda: pdf.render_page_png("broken.pdf", 1),
+        lambda: pdf.render_page_png("report.pdf", 4),
+        lambda: pdf.render_page_png("report.pdf", 0),
+        lambda: pdf.page_texts("report.pdf"),
+    ] * 2
+
+    results = _run_together(calls)
+
+    for first in (0, 6):
+        unopenable, count_error, render_error, past_end, before_start, texts = results[first:first + 6]
+        assert unopenable == []
+        assert isinstance(count_error, RuntimeError)
+        assert isinstance(render_error, RuntimeError)
+        assert isinstance(past_end, PageNotFound)
+        assert isinstance(before_start, PageNotFound)
+        assert texts == ["text-0", "text-1", "text-2"]
+    assert fake_pymupdf.max_open_docs == 1
+    assert fake_pymupdf.max_inside == 1
+    assert fake_pymupdf.open_docs == 0
+
+
+def test_a_failed_pdf_call_does_not_block_the_next_one(tmp_path):
+    good = _make_pdf(tmp_path / "two.pdf", ["first", "second"])
+    broken = tmp_path / "broken.pdf"
+    broken.write_bytes(b"not a pdf at all")
+
+    with pytest.raises(Exception):
+        pdf.page_count(broken)
+    with pytest.raises(PageNotFound):
+        pdf.render_page_png(good, 3)
+    assert pdf.page_texts(broken) == []
+
+    # From another thread, one call at a time: a lock left held by the failures above would
+    # hang here (and fail on the timeout instead of hanging the test run).
+    [count] = _run_together([lambda: pdf.page_count(good)], timeout=10)
+    [texts] = _run_together([lambda: pdf.page_texts(good)], timeout=10)
+    assert count == 2
+    assert [t.strip() for t in texts] == ["first", "second"]
+
+
+def test_mupdf_messages_never_reach_stdout():
+    # MuPDF prints some document errors (e.g. "MuPDF error: format error: No common ancestor
+    # in structure tree") straight to the process's stdout. Commands promise one JSON object on
+    # stdout, so importing core.pdf turns MuPDF's own error/warning printing off; the errors
+    # still surface as exceptions or empty results as before.
+    import pymupdf
+    from research_desk.core import pdf as _pdf  # noqa: F401 — the import sets the switches
+    assert not pymupdf.TOOLS.mupdf_display_errors()
+    assert not pymupdf.TOOLS.mupdf_display_warnings()

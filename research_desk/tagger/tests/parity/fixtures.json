@@ -489,5 +489,260 @@
       "tagging_confidence": "high",
       "tagging_notes": null
     }
+  },
+  {
+    "case": "publisher_filename_mismatch",
+    "input": {
+      "file_name": "samsung_005930_20260513_MERITZ_1096333.pdf",
+      "caption": null,
+      "sent_at": "2026-05-13T05:00:00+00:00",
+      "pdf_text": "삼성전자 005930 2Q26 Preview\n분석가: 홍길동\n키움증권 리서치센터\n2026-05-13"
+    },
+    "llm_mock": {
+      "report_type": "단일종목",
+      "title": "삼성전자 2Q26 Preview",
+      "published_at": "2026-05-13",
+      "stock_codes_raw": ["005930"],
+      "company_names_raw": ["삼성전자"],
+      "publisher_canon": "키움증권",
+      "publisher_type": "data_provider",
+      "analysts": ["홍길동"],
+      "oos_signals": {
+        "foreign_primary_coverage": false,
+        "etf_or_fund": false,
+        "digital_asset": false,
+        "private_company_likely": false
+      },
+      "self_confidence": "high",
+      "notes": null
+    },
+    "expected": {
+      "publisher": "키움증권",
+      "publisher_type": "broker",
+      "tagging_status": "auto",
+      "tagging_confidence": "medium",
+      "tagging_notes": "publisher_suspect:filename_mismatch"
+    }
+  },
+  {
+    "case": "publisher_alias_answer_null",
+    "input": {
+      "file_name": "samsung_005930_20260514_Eugene_1096334.pdf",
+      "caption": null,
+      "sent_at": "2026-05-14T05:00:00+00:00",
+      "pdf_text": "삼성전자 005930 2Q26 Review\n분석가: 이영희\nEugene Investment & Securities\n2026-05-14"
+    },
+    "llm_mock": {
+      "report_type": "단일종목",
+      "title": "삼성전자 2Q26 Review",
+      "published_at": "2026-05-14",
+      "stock_codes_raw": ["005930"],
+      "company_names_raw": ["삼성전자"],
+      "publisher_canon": "Eugene",
+      "analysts": ["이영희"],
+      "oos_signals": {
+        "foreign_primary_coverage": false,
+        "etf_or_fund": false,
+        "digital_asset": false,
+        "private_company_likely": false
+      },
+      "self_confidence": "high",
+      "notes": null
+    },
+    "expected": {
+      "publisher": null,
+      "publisher_type": null,
+      "tagging_status": "auto",
+      "tagging_confidence": "medium",
+      "tagging_notes": "publisher_suspect:filename_mismatch"
+    }
+  },
+  {
+    "case": "publisher_unknown_null",
+    "input": {
+      "file_name": "unknown_house_005930_note.pdf",
+      "caption": null,
+      "sent_at": "2026-05-15T05:00:00+00:00",
+      "pdf_text": "삼성전자 005930 Note\n분석가: 최민호\n미등록리서치 리서치센터\n2026-05-15"
+    },
+    "llm_mock": {
+      "report_type": "단일종목",
+      "title": "삼성전자 Note",
+      "published_at": "2026-05-15",
+      "stock_codes_raw": ["005930"],
+      "company_names_raw": ["삼성전자"],
+      "publisher_canon": null,
+      "analysts": ["최민호"],
+      "oos_signals": {
+        "foreign_primary_coverage": false,
+        "etf_or_fund": false,
+        "digital_asset": false,
+        "private_company_likely": false
+      },
+      "self_confidence": "high",
+      "notes": null
+    },
+    "expected": {
+      "publisher": null,
+      "publisher_type": null,
+      "tagging_status": "auto",
+      "tagging_confidence": "medium",
+      "tagging_notes": "publisher_suspect:unknown"
+    }
+  },
+  {
+    "case": "oos_ir_self_broker_filename_tag",
+    "input": {
+      "file_name": "company_self_ir_20260516_MERITZ_1096335.pdf",
+      "caption": null,
+      "sent_at": "2026-05-16T05:00:00+00:00",
+      "pdf_text": "Investor Relations Material\nIR자료 3분기 실적 발표\nSelfIRCo\n2026-05-16"
+    },
+    "llm_mock": {
+      "report_type": "IR자료",
+      "title": "Company Self IR Material 3Q26",
+      "published_at": "2026-05-16",
+      "stock_codes_raw": [],
+      "company_names_raw": ["SelfIRCo"],
+      "publisher_canon": "해당기업",
+      "analysts": [],
+      "oos_signals": {
+        "foreign_primary_coverage": false,
+        "etf_or_fund": false,
+        "digital_asset": false,
+        "private_company_likely": false
+      },
+      "self_confidence": "high",
+      "notes": null
+    },
+    "expected": {
+      "publisher": "해당기업",
+      "publisher_type": "other",
+      "out_of_scope_reason": "ir_self",
+      "tagging_status": "auto",
+      "tagging_confidence": "medium",
+      "tagging_notes": "publisher_suspect:filename_mismatch"
+    }
+  },
+  {
+    "case": "picture_only_단일종목",
+    "input": {
+      "file_name": "scan_005930_20260517_Kiwoom_1096336.pdf",
+      "caption": null,
+      "sent_at": "2026-05-17T05:00:00+00:00",
+      "pdf_text": ""
+    },
+    "llm_mock": {
+      "report_type": "단일종목",
+      "title": "삼성전자 2Q26 Preview",
+      "published_at": "2026-05-17",
+      "stock_codes_raw": ["005930"],
+      "company_names_raw": ["삼성전자"],
+      "publisher_canon": "키움증권",
+      "analysts": ["홍길동"],
+      "oos_signals": {
+        "foreign_primary_coverage": false,
+        "etf_or_fund": false,
+        "digital_asset": false,
+        "private_company_likely": false
+      },
+      "self_confidence": "high",
+      "notes": null
+    },
+    "expected": {
+      "report_type": "단일종목",
+      "publisher": "키움증권",
+      "publisher_type": "broker",
+      "analysts": ["홍길동"],
+      "title": "삼성전자 2Q26 Preview",
+      "stock_codes": ["005930"],
+      "company_names": ["삼성전자"],
+      "stock_codes_raw": ["005930"],
+      "company_names_raw": ["삼성전자"],
+      "sectors_major": ["반도체"],
+      "sectors_minor": ["메모리반도체"],
+      "out_of_scope_reason": null,
+      "tagging_status": "auto",
+      "tagging_confidence": "medium",
+      "tagging_notes": "page_image"
+    }
+  },
+  {
+    "case": "picture_only_oos_foreign",
+    "input": {
+      "file_name": "scan_disney_1q26.pdf",
+      "caption": null,
+      "sent_at": "2026-05-18T05:00:00+00:00",
+      "pdf_text": ""
+    },
+    "llm_mock": {
+      "report_type": "기타",
+      "title": "Disney (DIS) 1Q26 Preview",
+      "published_at": "2026-05-18",
+      "stock_codes_raw": [],
+      "company_names_raw": ["Disney"],
+      "publisher_canon": "키움증권",
+      "analysts": ["최선아"],
+      "oos_signals": {
+        "foreign_primary_coverage": true,
+        "etf_or_fund": false,
+        "digital_asset": false,
+        "private_company_likely": false
+      },
+      "self_confidence": "high",
+      "notes": null
+    },
+    "expected": {
+      "report_type": "기타",
+      "publisher": "키움증권",
+      "publisher_type": "broker",
+      "stock_codes": [],
+      "company_names": [],
+      "stock_codes_raw": [],
+      "company_names_raw": ["Disney"],
+      "out_of_scope_reason": "foreign",
+      "tagging_status": "auto",
+      "tagging_confidence": "medium",
+      "tagging_notes": "page_image"
+    }
+  },
+  {
+    "case": "picture_only_unmatched_suspect_review",
+    "input": {
+      "file_name": "scan_ipo_pending_unlisted.pdf",
+      "caption": null,
+      "sent_at": "2026-05-19T05:00:00+00:00",
+      "pdf_text": ""
+    },
+    "llm_mock": {
+      "report_type": "단일종목",
+      "title": "미상장IPO후보 신규상장 분석",
+      "published_at": "2026-05-19",
+      "stock_codes_raw": [],
+      "company_names_raw": ["미상장IPO후보"],
+      "publisher_canon": null,
+      "analysts": ["김철수"],
+      "oos_signals": {
+        "foreign_primary_coverage": false,
+        "etf_or_fund": false,
+        "digital_asset": false,
+        "private_company_likely": false
+      },
+      "self_confidence": "high",
+      "notes": null
+    },
+    "expected": {
+      "report_type": "단일종목",
+      "publisher": null,
+      "publisher_type": null,
+      "stock_codes": [],
+      "company_names": ["미상장IPO후보"],
+      "stock_codes_raw": [],
+      "company_names_raw": ["미상장IPO후보"],
+      "out_of_scope_reason": null,
+      "tagging_status": "review_needed",
+      "tagging_confidence": "low",
+      "tagging_notes": "krx_unmatched_in_scope:ipo_pending_or_unknown;page_image;publisher_suspect:unknown"
+    }
   }
 ]

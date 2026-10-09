@@ -6,6 +6,10 @@ v2 변경 (rev-7):
 
 The OOS columns come from the shared out-of-scope row shape
 (research_desk.domain.reports.oos_row_shape), the same rule manual review uses.
+
+The publisher columns ($4, $5) are the checked values llm_extract stored
+(``publisher_final``: a dictionary canonical name or None; ``publisher_type_final``:
+its dictionary section), for in-scope and OOS rows alike — never the raw AI answer.
 """
 from __future__ import annotations
 
@@ -17,14 +21,14 @@ from research_desk.tagger.sql import UPDATE_SQL
 from research_desk.tagger.state import RowState
 
 
-def _llm_columns(raw: Optional[LLMExtraction]) -> Optional[dict[str, Any]]:
-    """The LLM's classification under the DB column names (publisher_canon → publisher)."""
+def _llm_columns(raw: Optional[LLMExtraction], state: RowState) -> Optional[dict[str, Any]]:
+    """The LLM's classification under the DB column names, with the checked publisher."""
     if raw is None:
         return None
     return {
         "report_type": raw.report_type,
-        "publisher": raw.publisher_canon,
-        "publisher_type": raw.publisher_type,
+        "publisher": state.get("publisher_final"),
+        "publisher_type": state.get("publisher_type_final"),
         "analysts": raw.analysts,
         "title": raw.title,
         "stock_codes_raw": raw.stock_codes_raw,
@@ -38,9 +42,9 @@ def _build_payload(state: RowState, taxonomy_version: str) -> tuple:
     is_oos = bool(state.get("is_oos"))
 
     # OOS 케이스 — 분류 본체(stock_codes/company_names/sectors/products)는 비우되
-    # report_type/publisher/title/analysts/raw audit는 LLM 출력 그대로 보존.
+    # report_type/title/analysts/raw audit는 LLM 출력 그대로, publisher/publisher_type은 확인된 값.
     if is_oos:
-        shape = oos_row_shape(_llm_columns(raw), state["oos_reason"])
+        shape = oos_row_shape(_llm_columns(raw, state), state["oos_reason"])
         return (
             state["id"],                      # $1
             shape["published_at"],            # $2 published_at (OOS는 null)
@@ -77,8 +81,8 @@ def _build_payload(state: RowState, taxonomy_version: str) -> tuple:
         state["id"],
         state["published_at_final"],
         raw.report_type,
-        raw.publisher_canon,
-        raw.publisher_type,
+        state.get("publisher_final"),               # checked: canonical name or None
+        state.get("publisher_type_final"),          # dictionary section, not the AI's
         list(raw.analysts),
         raw.title,
         list(state.get("stock_codes_final", [])),
