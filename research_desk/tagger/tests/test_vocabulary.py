@@ -110,6 +110,16 @@ def test_miraedaewoo_is_gone():
     assert "미래대우" not in names | aliases
 
 
+@pytest.mark.parametrize("writer", [
+    "한국기업평가", "NICE신용평가", "나이스신용평가", "NICE평가정보", "나이스평가정보",
+    "한국기술신용평가", "서울평가정보",
+])
+def test_tech_analysis_writers_point_to_kirs_not_to_their_own_entry(writer):
+    # 기술분석보고서의 발행처는 작성기관과 상관없이 한국IR협의회다 (2026-10-10 사용자 결정).
+    assert writer not in canonical_names()
+    assert canonical_for(writer) == "한국IR협의회"
+
+
 @pytest.mark.parametrize("alias", ["현대증권", "NH우리", "KIS", "KIS rating", "KR", "하이"])
 def test_wrong_or_ambiguous_aliases_are_removed(alias):
     assert canonical_for(alias) is None

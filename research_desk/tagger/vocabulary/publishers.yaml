@@ -75,15 +75,12 @@ data_provider:
   # 쪽마다 찍힌 "DB Copyright © FnGuide Inc." 표시는 배포 경로 표시이며 발행처가 아니다.
   - canonical: 에프앤가이드
     aliases: ["FnGuide", "FN가이드", "에프엔가이드"]
-  # 기업리서치센터 리포트와 기술분석보고서(표지의 작성기관이 NICE평가정보·한국기술신용평가·서울평가정보 등인 것)의 발행처.
+  # 기업리서치센터 리포트와 기술분석보고서의 발행처. 기술분석보고서는 표지의 작성기관(한국기업평가·NICE신용평가·
+  # NICE평가정보·한국기술신용평가·서울평가정보 등)과 상관없이 한국IR협의회로 둔다. 작성기관 이름은 별칭이다.
   - canonical: 한국IR협의회
-    aliases: ["KIRS", "한국IR협의회 기업리서치센터", "기업리서치센터", "Korea Investor Relations Service"]
-  - canonical: 한국기업평가
-    aliases: ["Korea Ratings"]
-  - canonical: NICE신용평가
-    aliases: ["나이스신용평가", "NICE Investors Service"]
-  - canonical: 한국신용평가
-    aliases: ["Korea Investors Service"]
+    aliases: ["KIRS", "한국IR협의회 기업리서치센터", "기업리서치센터", "Korea Investor Relations Service",
+              "한국기업평가", "NICE신용평가", "나이스신용평가", "NICE평가정보", "나이스평가정보",
+              "한국기술신용평가", "서울평가정보"]
   - canonical: 지엘리서치
     aliases: ["GL Research", "GL+Research", "GL리서치"]
   - canonical: 밸류파인더
