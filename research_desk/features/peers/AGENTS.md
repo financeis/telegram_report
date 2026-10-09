@@ -47,7 +47,7 @@
 **임베딩.**
 - 임베딩 모델마다 따로 저장하고 다른 모델의 행은 건드리지 않는다. 그 빌드 모델의 임베딩이 없는 `ok` 프로필·부문만 만든다 — 이번 대상만이 아니라 그 (회계연도, 프로필 버전) 전체다.
 - 1536차원, 길이 1. 회사 임베딩 글에 고객사·경쟁사·그룹 이름을 넣지 않는다(`logic.company_text`).
-- 벡터는 REST에서 글자(`"[…]"`)로 돌아온다 → `store.parse_vector`. 벡터 읽기는 200행씩(`VECTOR_PAGE`), 그 밖의 목록 읽기는 1000행씩, 코드 목록은 100개씩 나눠 읽는다.
+- 벡터는 REST에서 글자(`"[…]"`)로 돌아온다 → `store.parse_vector`. 벡터 읽기는 200행씩(`VECTOR_PAGE`), 그 밖의 목록 읽기는 1000행씩, 코드 목록은 100개씩 나눠 읽는다. 쪽마다 쿼리를 새로 만든다(`_paged`에 쿼리를 만드는 함수를 넘긴다). postgrest-py의 `range()`는 offset·limit을 바꾸지 않고 덧붙이므로 같은 쿼리를 다시 쓰면 앞 쪽들의 offset·limit까지 함께 보낸다.
 
 **웹.**
 - 서비스를 만들 때 아무것도 읽지 않는다. 처음 요청 때 DB → 종목표 순으로 준비하고 그 둘만 프로세스 동안 들고 있다(종목표 버전 문제는 경고만). 실패는 기억하지 않는다.
@@ -81,5 +81,5 @@
 
 - 실행: 저장소 루트에서 `.venv\Scripts\python.exe -m pytest -q -p no:cacheprovider research_desk/features/peers`.
 - `tests/conftest.py`(autouse)가 이 기능이 읽을 수 있는 설정 변수를 모두 지우고, 실제 Supabase·MongoDB·AI 클라이언트를 만들려 하면 실패하게 한다.
-- `tests/fakes.py`: `FakeSupabase`(다섯 표의 키·NOT NULL·CHECK·외래 키 연쇄 삭제·1536차원, 벡터를 글자로 돌려줌, `ov`는 PostgreSQL 배열 글자를 풀어 비교, 두 DB 함수 흉내, 모든 작업 기록; 같은 쿼리에 `range()`를 다시 부르면 마지막 창을 쓴다), `FakeCollection`(pymongo 컬렉션), `FakeLLM`(`parse`·`embed`, 동시 호출 최대 수 기록). `tests/web_world.py`: 코사인을 정해 둔 벡터와 백분위표로 된 작은 세계와 기대 목록.
+- `tests/fakes.py`: `FakeSupabase`(다섯 표의 키·NOT NULL·CHECK·외래 키 연쇄 삭제·1536차원, 벡터를 글자로 돌려줌, `ov`는 PostgreSQL 배열 글자를 풀어 비교, 두 DB 함수 흉내, 모든 작업 기록; `range()`는 postgrest-py처럼 offset·limit을 덧붙이고 답은 첫 쌍을 따르며, 같은 쿼리를 10번 넘게 보내면 끝나지 않는 쪽 나누기로 보고 실패한다), `FakeCollection`(pymongo 컬렉션), `FakeLLM`(`parse`·`embed`, 동시 호출 최대 수 기록). `tests/web_world.py`: 코사인을 정해 둔 벡터와 백분위표로 된 작은 세계와 기대 목록.
 - 꼭 덮을 것: 입력 조립의 순서·상한·표 거르기·짧은 개요 보충·금융업 양식, 근거 검사와 0.8 경계의 재추출 1회, 회계연도 선택(3월 결산)과 대상 규칙(코넥스·스팩·리츠·종목표 밖), 재사용 세 조건과 실패 회사만 다시, `kept_previous`, 상태 전이(`done`/`incomplete` 95% 경계/`pilot`은 용어 열 불변), 6시간 경계, 보존, 분류 진행 중 거절(문장·1), 준비 문제 4의 원인마다, 백분위 보간(95 미만 없음, 100 초과는 100)과 등급 경계, 비교 열쇠(동의어·대소문자·공백·가운뎃점·하이픈, 낱말 안은 그대로), 모델별 임베딩 공존, 오류·중단 때 `failed`와 1, 피어 주소의 확인 순서, 새 `done` 빌드가 재시작 없이 다음 요청에 반영, RRF와 질의 용어의 완전 일치, 캐시, 검색 주소만의 키 없음 503, 창구 import가 무거운 것을 부르지 않음.

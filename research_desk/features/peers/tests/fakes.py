@@ -6,8 +6,10 @@
 - ``table(name)``: select (``count='exact'``, ``head``), insert, upsert (``on_conflict``), update,
   delete; filters eq / neq / in_ / is_('null') / gt / gte / lt / lte and ``ov`` (array overlap:
   a PostgreSQL array literal such as ``{"a","b,c"}``, parsed like PostgreSQL does, or a list);
-  order, range, limit. Like the real builder, ``range()`` changes the query it is called on, so a
-  paged read executes one query object several times.
+  order, range, limit. Like postgrest-py 2.29, ``range()`` adds an offset/limit pair to the query
+  it is called on instead of replacing the one it has; the fake answers with the first pair (the
+  worst case for a reused query: it gets its first page again and again). A query sent more than
+  ``MAX_SENDS`` times fails the test instead of looping forever.
 - the tables behave like the migration: primary keys (a duplicate insert fails), NOT NULL columns,
   CHECK value sets (checked only when a value is given), column defaults, the ``build_id``
   serial, foreign keys (a child row needs its parent) with ON DELETE CASCADE, and 1536-dimension
@@ -22,7 +24,7 @@
   (then segment number), ``p_limit`` capped to 0..200, null → 200).
 
 Every executed operation is kept in ``FakeSupabase.log`` (``Op``: kind, table, filters, payload,
-window, columns, on_conflict, limit).
+window, columns, on_conflict, limit, ranges).
 
 ``FakeCollection`` stands in for a pymongo Collection: ``find`` (equality and ``$in``, inclusion
 projection), ``distinct``, ``count_documents`` and ``database.client.close()``.
@@ -53,6 +55,7 @@ from research_desk.core.llm import EmbeddingResult, StructuredResult
 
 DIMS = 1536
 NOW = object()   # default marker: the fake's current time as ISO text
+MAX_SENDS = 10   # sends of one query object before the fake calls it a read that never ends
 
 
 class FakeAPIError(Exception):
@@ -145,10 +148,11 @@ class Op:
     table: str
     filters: list = field(default_factory=list)
     payload: Any = None
-    window: Optional[tuple[int, int]] = None
+    window: Optional[tuple[int, int]] = None      # the (start, end) the answer followed: the first sent
     columns: Optional[str] = None
     on_conflict: str = ""
     limit: Optional[int] = None
+    ranges: tuple = ()            # every (start, end) the request carried, in order
 
 
 def parse_array_literal(text: str) -> list[Optional[str]]:
@@ -217,7 +221,9 @@ class FakeQuery:
         self.filters: list[tuple[str, str, Any]] = []
         self.orders: list[tuple[str, bool, Optional[bool]]] = []
         self.window: Optional[tuple[int, int]] = None
+        self.ranges: list[tuple[int, int]] = []
         self.limit_size: Optional[int] = None
+        self.sends = 0
 
     # ── request kinds ────────────────────────────────────────────────────────
 
@@ -298,7 +304,11 @@ class FakeQuery:
         return self
 
     def range(self, start: int, end: int):
-        self.window = (start, end)
+        # postgrest-py 2.29 adds offset/limit to the request on every call; the answer follows
+        # the first pair.
+        self.ranges.append((start, end))
+        if self.window is None:
+            self.window = (start, end)
         return self
 
     def limit(self, size: int):
@@ -361,9 +371,15 @@ class FakeQuery:
 
     def execute(self) -> SimpleNamespace:
         assert self.kind is not None, "no request kind (select/insert/upsert/update/delete)"
+        self.sends += 1
+        assert self.sends <= MAX_SENDS, (
+            f"one {self.kind} on {self.table} sent {self.sends} times: a paged read that never ends? "
+            f"postgrest-py's range() adds offset/limit to a query instead of replacing them "
+            f"(offset/limit pairs sent: {self.ranges[:3]}…)")
         with self.db.lock:
             self.db.log.append(Op(self.kind, self.table, list(self.filters), deepcopy(self.payload),
-                                  self.window, self.columns, self.on_conflict, self.limit_size))
+                                  self.window, self.columns, self.on_conflict, self.limit_size,
+                                  tuple(self.ranges)))
             return getattr(self, f"_run_{self.kind}")()
 
     def _run_select(self) -> SimpleNamespace:

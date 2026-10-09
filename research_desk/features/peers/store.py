@@ -6,7 +6,10 @@ This feature owns ``company_profiles``, ``company_segments``, ``company_embeddin
 
 - every list read pages ``PAGE`` (1000) rows at a time in a fixed order until a short page
   (Supabase REST answers at most 1000 rows); vector reads page ``VECTOR_PAGE`` rows, since a
-  1536-number vector comes back as text and makes rows large. Vectors come back as lists.
+  1536-number vector comes back as text and makes rows large. Each page is a new query:
+  postgrest-py's ``range()`` adds offset/limit to a query instead of replacing them, so a reused
+  query would also carry every earlier page's pair (answered with the first pair, it would get
+  the first page again and never end). Vectors come back as lists.
 - a profile is replaced by deleting the old row first: its segments and embeddings go with it
   (ON DELETE CASCADE), so "embed what has no embedding" sees the new profile. An ``ok`` profile
   is written without a status, then its segments, then marked ``ok``: a run cut off in between
@@ -25,7 +28,8 @@ This feature owns ``company_profiles``, ``company_segments``, ``company_embeddin
 from __future__ import annotations
 
 import json
-from typing import Any, Iterable, Optional, Sequence
+from functools import partial
+from typing import Any, Callable, Iterable, Optional, Sequence
 
 PAGE = 1000
 VECTOR_PAGE = 200
@@ -75,15 +79,18 @@ class PeersStore:
         return self._sb.table(name)
 
     @staticmethod
-    def _paged(chain, page: int = PAGE) -> list[dict]:
+    def _paged(query: Callable[[], Any], page: Optional[int] = None) -> list[dict]:
+        """Every row of ``query()``, ``page`` (default ``PAGE``) rows a request until a short page.
+        ``query`` makes the ordered query anew for each page (see the module docstring)."""
+        size = page or PAGE
         rows: list[dict] = []
         offset = 0
         while True:
-            batch = chain.range(offset, offset + page - 1).execute().data or []
+            batch = query().range(offset, offset + size - 1).execute().data or []
             rows.extend(batch)
-            if len(batch) < page:
+            if len(batch) < size:
                 return rows
-            offset += page
+            offset += size
 
     def _key(self, chain, fiscal_year: int, profile_version: str):
         return chain.eq("fiscal_year", fiscal_year).eq("profile_version", profile_version)
@@ -137,7 +144,7 @@ class PeersStore:
 
     def builds(self) -> list[dict]:
         """Every build (no tables in the rows), in id order."""
-        return self._paged(self._table(BUILDS).select(BUILD_LIST_COLUMNS).order("build_id"))
+        return self._paged(lambda: self._table(BUILDS).select(BUILD_LIST_COLUMNS).order("build_id"))
 
     def delete_builds(self, build_ids: Sequence[int]) -> None:
         if build_ids:
@@ -148,21 +155,23 @@ class PeersStore:
     def profiles(self, fiscal_year: int, profile_version: str, columns: str = "*", *,
                  status: Optional[str] = None) -> list[dict]:
         """Profiles of one fiscal year and profile version (optionally one status), by code."""
-        chain = self._key(self._table(PROFILES).select(columns), fiscal_year, profile_version)
-        if status is not None:
-            chain = chain.eq("status", status)
-        return self._paged(chain.order("stock_code"))
+        def query():
+            chain = self._key(self._table(PROFILES).select(columns), fiscal_year, profile_version)
+            if status is not None:
+                chain = chain.eq("status", status)
+            return chain.order("stock_code")
+
+        return self._paged(query)
 
     def all_profiles(self, columns: str) -> list[dict]:
         """``columns`` of every profile row, in key order."""
-        chain = (self._table(PROFILES).select(columns).order("fiscal_year").order("profile_version")
-                 .order("stock_code"))
-        return self._paged(chain)
+        return self._paged(lambda: self._table(PROFILES).select(columns).order("fiscal_year")
+                           .order("profile_version").order("stock_code"))
 
     def segments(self, fiscal_year: int, profile_version: str) -> list[dict]:
         """Segments of one fiscal year and profile version, by code and number."""
-        chain = self._key(self._table(SEGMENTS).select("*"), fiscal_year, profile_version)
-        return self._paged(chain.order("stock_code").order("seg_no"))
+        return self._paged(lambda: self._key(self._table(SEGMENTS).select("*"), fiscal_year, profile_version)
+                           .order("stock_code").order("seg_no"))
 
     def profile(self, fiscal_year: int, profile_version: str, stock_code: str,
                 columns: str = "*") -> Optional[dict]:
@@ -180,19 +189,24 @@ class PeersStore:
     def profiles_of(self, fiscal_year: int, profile_version: str, codes: Iterable[str],
                     columns: str) -> list[dict]:
         """``columns`` of the ``ok`` profiles of ``codes`` (each once), by code."""
+        def query(part: list[str]):
+            return (self._key(self._table(PROFILES).select(columns), fiscal_year, profile_version)
+                    .eq("status", "ok").in_("stock_code", part).order("stock_code"))
+
         rows: list[dict] = []
         for part in self._code_parts(codes):
-            chain = (self._key(self._table(PROFILES).select(columns), fiscal_year, profile_version)
-                     .eq("status", "ok").in_("stock_code", part))
-            rows += self._paged(chain.order("stock_code"))
+            rows += self._paged(partial(query, part))
         return rows
 
     def segments_of(self, fiscal_year: int, profile_version: str, codes: Iterable[str]) -> list[dict]:
         """The segments of ``codes`` (each once), by code and number."""
+        def query(part: list[str]):
+            return (self._key(self._table(SEGMENTS).select("*"), fiscal_year, profile_version)
+                    .in_("stock_code", part).order("stock_code").order("seg_no"))
+
         rows: list[dict] = []
         for part in self._code_parts(codes):
-            chain = self._key(self._table(SEGMENTS).select("*"), fiscal_year, profile_version).in_("stock_code", part)
-            rows += self._paged(chain.order("stock_code").order("seg_no"))
+            rows += self._paged(partial(query, part))
         return rows
 
     def profiles_with_terms(self, fiscal_year: int, profile_version: str, keys: Sequence[str],
@@ -201,9 +215,9 @@ class PeersStore:
         (an array overlap), by code; none without keys."""
         if not keys:
             return []
-        chain = (self._key(self._table(PROFILES).select(columns), fiscal_year, profile_version)
-                 .eq("status", "ok").ov("terms", array_literal(keys)))
-        return self._paged(chain.order("stock_code"))
+        overlap = array_literal(keys)
+        return self._paged(lambda: self._key(self._table(PROFILES).select(columns), fiscal_year, profile_version)
+                           .eq("status", "ok").ov("terms", overlap).order("stock_code"))
 
     def replace_profile(self, row: dict, segments: Sequence[dict] = ()) -> None:
         """Write one company's profile in place of the row under the same key (see the module
@@ -243,11 +257,15 @@ class PeersStore:
     # ── embeddings ───────────────────────────────────────────────────────────
 
     def _embedding_rows(self, table: str, fiscal_year: int, profile_version: str, model: str,
-                        columns: str, order: Sequence[str], page: int = PAGE) -> list[dict]:
-        chain = self._key(self._table(table).select(columns), fiscal_year, profile_version).eq("embed_model", model)
-        for column in order:
-            chain = chain.order(column)
-        return self._paged(chain, page)
+                        columns: str, order: Sequence[str], page: Optional[int] = None) -> list[dict]:
+        def query():
+            chain = (self._key(self._table(table).select(columns), fiscal_year, profile_version)
+                     .eq("embed_model", model))
+            for column in order:
+                chain = chain.order(column)
+            return chain
+
+        return self._paged(query, page)
 
     def company_embedding_codes(self, fiscal_year: int, profile_version: str, model: str) -> set[str]:
         rows = self._embedding_rows(COMPANY_EMBEDDINGS, fiscal_year, profile_version, model,
@@ -308,14 +326,16 @@ class PeersStore:
 
     def embedding_keys(self) -> set[tuple[int, str, str]]:
         """Every (fiscal_year, profile_version, embed_model) that has company or segment embeddings."""
-        keys: set[tuple[int, str, str]] = set()
-        for table in (COMPANY_EMBEDDINGS, SEGMENT_EMBEDDINGS):
+        def query(table: str):
             chain = (self._table(table).select("fiscal_year, profile_version, embed_model")
                      .order("fiscal_year").order("profile_version").order("embed_model")
                      .order("stock_code"))
-            if table == SEGMENT_EMBEDDINGS:
-                chain = chain.order("seg_no")
-            keys |= {(r["fiscal_year"], r["profile_version"], r["embed_model"]) for r in self._paged(chain)}
+            return chain.order("seg_no") if table == SEGMENT_EMBEDDINGS else chain
+
+        keys: set[tuple[int, str, str]] = set()
+        for table in (COMPANY_EMBEDDINGS, SEGMENT_EMBEDDINGS):
+            keys |= {(r["fiscal_year"], r["profile_version"], r["embed_model"])
+                     for r in self._paged(partial(query, table))}
         return keys
 
     def delete_embeddings(self, fiscal_year: int, profile_version: str, model: str) -> None:

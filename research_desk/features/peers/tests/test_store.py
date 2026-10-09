@@ -71,6 +71,59 @@ def test_vector_reads_use_smaller_pages():
     assert [op.window for op in db.ops('select', 'company_embeddings')] == [(0, 199), (200, 399)]
 
 
+def test_each_page_is_a_query_of_its_own_so_later_pages_are_right_and_the_read_ends():
+    """postgrest-py 2.29's range() adds offset/limit to a query instead of replacing them, and the
+    fake answers with the first pair: a reused query would get the first page again and never
+    end. Every page is a new request carrying one pair."""
+    db = FakeSupabase(company_profiles=[profile_row(f'{i:06d}') for i in range(2345)])
+    rows = PeersStore(db).profiles(FY, PV, 'stock_code')
+    assert [r['stock_code'] for r in rows] == [f'{i:06d}' for i in range(2345)]
+    assert [op.ranges for op in db.ops('select', 'company_profiles')] == [
+        ((0, 999),), ((1000, 1999),), ((2000, 2999),)]
+
+
+CODES = [f'{i:06d}' for i in range(10)]
+SEGMENT_KEYS = [(code, number) for code in CODES for number in (0, 1)]
+
+# Every list read of the store: (read, its rows as the test compares them).
+PAGED_READS = {
+    'builds': (lambda s: [b['build_id'] for b in s.builds()], list(range(1, 11))),
+    'profiles': (lambda s: [r['stock_code'] for r in s.profiles(FY, PV, 'stock_code')], CODES),
+    'ok profiles': (lambda s: [r['stock_code'] for r in s.profiles(FY, PV, 'stock_code', status='ok')], CODES),
+    'all profiles': (lambda s: [r['stock_code'] for r in s.all_profiles('stock_code')], CODES),
+    'profiles of codes': (lambda s: [r['stock_code'] for r in s.profiles_of(FY, PV, CODES, 'stock_code')], CODES),
+    'profiles with terms': (lambda s: [r['stock_code'] for r in s.profiles_with_terms(FY, PV, ['old'])], CODES),
+    'segments': (lambda s: [(r['stock_code'], r['seg_no']) for r in s.segments(FY, PV)], SEGMENT_KEYS),
+    'segments of codes': (lambda s: [(r['stock_code'], r['seg_no']) for r in s.segments_of(FY, PV, CODES)],
+                          SEGMENT_KEYS),
+    'company embedding codes': (lambda s: sorted(s.company_embedding_codes(FY, PV, MODEL)), CODES),
+    'segment embedding keys': (lambda s: sorted(s.segment_embedding_keys(FY, PV, MODEL)), SEGMENT_KEYS),
+    'company vectors': (lambda s: [code for code, _ in s.company_vectors(FY, PV, MODEL)], CODES),
+    'segment vectors': (lambda s: [(code, no) for code, no, _ in s.segment_vectors(FY, PV, MODEL)],
+                        SEGMENT_KEYS),
+    'embedding keys': (lambda s: s.embedding_keys(), {(FY, PV, MODEL)}),
+}
+
+
+@pytest.mark.parametrize('name', list(PAGED_READS))
+def test_every_list_read_sends_a_new_query_for_each_page(monkeypatch, name):
+    """With small pages, each list read gets every row once and in order, and ends; each request
+    carries one offset/limit pair, and some request asks past the first page."""
+    monkeypatch.setattr(store_module, 'PAGE', 4)
+    monkeypatch.setattr(store_module, 'VECTOR_PAGE', 3)
+    monkeypatch.setattr(store_module, 'CODES_CHUNK', 5)
+    db = FakeSupabase(company_profiles=[profile_row(c) for c in CODES],
+                      company_segments=[segment_row(c, n) for c, n in SEGMENT_KEYS],
+                      company_embeddings=[embedding_row(c) for c in CODES],
+                      segment_embeddings=[embedding_row(c, seg_no=n) for c, n in SEGMENT_KEYS],
+                      peer_builds=[build_row('done') for _ in range(10)])
+    read, expected = PAGED_READS[name]
+    assert read(PeersStore(db)) == expected
+    selects = db.ops('select')
+    assert all(len(op.ranges) == 1 for op in selects)
+    assert any(op.window[0] > 0 for op in selects)
+
+
 def test_parse_vector_reads_text_and_lists():
     assert store_module.parse_vector('[0.5,-1,2e-3]') == [0.5, -1.0, 0.002]
     assert store_module.parse_vector([1, 2]) == [1.0, 2.0]
