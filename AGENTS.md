@@ -12,8 +12,10 @@
 telegram_report/
 ├── CLAUDE.md                        ← Claude Code가 읽는 이 안내 (AGENTS.md와 같은 내용)
 ├── AGENTS.md                        ← Codex가 읽는 이 안내 (CLAUDE.md와 같은 내용)
-├── README.md                        ← 사람용 설치·명령 안내
+├── README.md                        ← 프로젝트 소개: 화면·기능·구조도·실행 요약 (포트폴리오용)
 ├── docs/
+│   ├── setup.md                     ← 사람용 설치·명령 안내 (영문)
+│   ├── images/                      ← README 화면 캡처
 │   ├── architecture.md              ← 구성 요소와 데이터 흐름, 코드 칸 지도, 표 주인, 외부 의존
 │   ├── business-rules.md            ← 분류 상태 전이, 분류·분석·비교·커버리지·검토 규칙, 리포트 수·주가·반응·후보·유사 기업·상태 줄 규칙, 종목표 버전, 값 집합
 │   ├── security.md                  ← 로컬 전용 접근, 호스트·출처 제한, 비밀 값, PDF 경로 제한, 외부로 나가는 데이터
