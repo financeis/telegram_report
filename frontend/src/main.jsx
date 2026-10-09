@@ -22,6 +22,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   Star,
+  Telescope,
   X,
 } from "lucide-react";
 import "./theme.css";
@@ -30,6 +31,8 @@ import "./migration.css";
 import { api } from "./api";
 import Coverage, { StockActivity } from "./Coverage";
 import ReviewQueue from "./ReviewQueue";
+import Peers from "./peers/Peers";
+import ThemeSearch from "./peers/ThemeSearch";
 
 const number = (value) =>
   value == null
@@ -261,9 +264,9 @@ function App() {
   const priced = analyzed.filter((r) => r.summary.target_price_new != null);
   const latest = priced[0];
   const current = reports.find((r) => r.id === focused);
-  function pickStock(next) {
+  function pickStock(next, mode = "library") {
     setView("reports");
-    setStockMode("library");
+    setStockMode(mode);
     setCode(next);
     setSearch("");
     setSearchOpen(false);
@@ -375,7 +378,9 @@ function App() {
       ? "리서치 커버리지"
       : view === "review"
         ? "리포트 검토"
-        : "기업 리서치";
+        : view === "themes"
+          ? "테마로 기업 찾기"
+          : "기업 리서치";
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -440,6 +445,13 @@ function App() {
           >
             <BarChart3 size={18} />
             리서치 커버리지
+          </button>
+          <button
+            className={`nav-item ${view === "themes" ? "active" : ""}`}
+            onClick={() => setView("themes")}
+          >
+            <Telescope size={18} />
+            테마로 기업 찾기
           </button>
           <button
             className={`nav-item ${view === "reports" ? "active" : ""}`}
@@ -521,7 +533,7 @@ function App() {
         <header className="topbar">
           <div>
             워크스페이스 <ChevronRight size={13} /> {pageLabel}{" "}
-            {stock && !["market", "review"].includes(view) && (
+            {stock && !["market", "review", "themes"].includes(view) && (
               <>
                 <ChevronRight size={13} />
                 <strong>{stock.name}</strong>
@@ -537,6 +549,8 @@ function App() {
             <Coverage onStock={pickStock} />
           ) : view === "review" ? (
             <ReviewQueue onChanged={() => setReload((x) => x + 1)} />
+          ) : view === "themes" ? (
+            <ThemeSearch onStock={(c) => pickStock(c, "peers")} />
           ) : (
             <>
               <div className="page-heading">
@@ -672,9 +686,22 @@ function App() {
                     >
                       발행 추이 · 발행처
                     </button>
+                    <button
+                      className={stockMode === "peers" ? "active" : ""}
+                      onClick={() => setStockMode("peers")}
+                    >
+                      유사 기업
+                    </button>
                   </div>
                   {stockMode === "activity" && (
                     <StockActivity key={code} code={code} />
+                  )}
+                  {stockMode === "peers" && (
+                    <Peers
+                      key={code}
+                      code={code}
+                      onStock={(c) => pickStock(c, "peers")}
+                    />
                   )}
                   <div hidden={stockMode !== "library"}>
                     <div className="section-intro">
