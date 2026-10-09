@@ -74,7 +74,7 @@
 1. `research_desk/features/<이름>/`에 필요한 파일만 만들고 `__init__.py`에 공개 이름을 묶는다. 주소가 있으면 `from .router import router`.
 2. 주소가 있으면 `research_desk/web/app.py`의 기능 import 줄(`from research_desk.features import …`)과 `FEATURES` 목록에 창구 이름을 더한다. 주소 없는 기능은 넣지 않는다. `create_app()`이 목록마다 `feature.router`를 붙이기 때문이다.
 3. 백그라운드 작업 명령이 있으면 `jobs.py`에 `register(subparsers)`를 두고, 창구에서 `from .jobs import register as register_jobs`로 묶는다. `research_desk/cli.py`에는 창구 import 한 줄과 `build_parser()` 안의 등록 한 줄을 더한다(`cli.py`도 기능은 창구로만 쓴다, `R8 입구`).
-   - 명령은 시작할 때 `settings.load_env()`를 부른다. 준비 문제(키·설정·파일 없음)는 아무 일도 하기 전에 이유 한 줄을 stderr에 내고 종료 코드 4로 끝난다. 4는 다시 돌려도 저절로 풀리지 않는 상태라는 뜻이다. 정상은 0, 인자 오류는 argparse의 2, `--help`는 0이다.
+   - 명령은 시작할 때 `settings.load_env()`를 부른다. 준비 문제(키·설정·파일 없음)는 아무 일도 하기 전에 이유 한 줄을 stderr에 내고 종료 코드 4로 끝난다. 4는 아무것도 바꾸지 않았고 안내대로 고친 뒤 다시 실행하면 되는 상태라는 뜻이다(`docs/standards.md`). 정상은 0, 인자 오류는 argparse의 2, `--help`는 0이다.
    - 걸림돌. `cli.py`는 어느 명령이든 시작할 때 창구 `__init__.py` 전체를 import한다. 그런데 기존 기능 창구는 모두 FastAPI를 함께 불러온다(`router`, 또는 `HTTPException`을 쓰는 `service`). 이대로 `register_jobs`를 붙이면 `collect`·`tag`도 FastAPI를 불러오게 되고, `research_desk/tests/test_cli.py`의 "명령 입구는 `fastapi`·`uvicorn`을 불러오지 않는다" 검사가 실패한다. 웹 패키지는 `requirements-workspace.txt`에만 있다. 첫 명령을 붙이는 기능에서 두 조건을 함께 지킬 방식을 정해야 한다. 이 검사를 지우거나 느슨하게 하지 말고, 방식을 사용자와 정한 뒤 진행한다.
    - 정해진 시간 실행은 윈도우 작업 스케줄러가 `scripts/`의 `.ps1`을 부르고, 그 스크립트가 저장소 폴더로 옮겨 `python -m research_desk <명령>`을 실행하는 방식이다. 한국어가 든 `.ps1`은 UTF-8(BOM 포함)로 저장한다. Windows PowerShell 5.1은 BOM 없는 스크립트를 시스템 코드 페이지(949)로 읽어 한국어가 깨진다.
 4. 새 표를 만들면 `migrations/`에 SQL을 더하고, 그 표와 주인 칸을 `research_desk/tests/architecture_rules.py`의 `TABLE_OWNERS`에 등록한다. 등록하지 않은 표는 구조 검사가 지키지 못한다. 여러 기능이 같이 쓰는 데이터(예: 주가)는 기능 하나가 주인이 되고, 나머지는 그 창구로 읽는다.
