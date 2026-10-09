@@ -122,6 +122,17 @@ CLEAN_TREE = {
         import fitz
         import pymupdf
     """,
+    "core/mongo.py": """
+        def mongo_collection(url, db, name):
+            import pymongo
+            from bson import ObjectId
+            return pymongo.MongoClient(url)[db][name]
+    """,
+    "core/kis.py": """
+        def connections():
+            import httpx
+            return httpx.Client()
+    """,
     "domain/reports.py": """
         from pathlib import Path
 
@@ -713,6 +724,46 @@ def test_r9_external_tools_stay_in_their_area(tmp_path):
         | at("tagger/nodes/extract_pdf.py", 1, 2, rule="R9 외부 도구")
         | at("cli.py", 1, rule="R9 외부 도구")
     )
+
+
+def test_r9_mongodb_and_http_tools_stay_in_core(tmp_path):
+    root = make_tree(tmp_path, {
+        "core/mongo.py": """
+            def mongo_collection(url, db, name):
+                import pymongo
+                from bson import ObjectId
+                return pymongo.MongoClient(url)[db][name]
+        """,
+        "core/kis.py": """
+            def connections():
+                import httpx
+                return httpx.Client()
+        """,
+        "features/prices/service.py": """
+            import httpx
+            from bson.objectid import ObjectId
+
+
+            def snapshot():
+                import pymongo
+                return pymongo
+        """,
+        "features/peers/store.py": "from pymongo import MongoClient\n",
+        "domain/stocks.py": "import bson\n",
+        "web/app.py": "import httpx\n",
+        "cli.py": "from pymongo.errors import PyMongoError\n",
+        "features/peers/tests/test_store.py": "import httpx\nimport pymongo\nfrom bson import ObjectId\n",
+    })
+    violations = check_tree(root)
+    assert hits(violations) == (
+        at("features/prices/service.py", 1, 2, 6, rule="R9 외부 도구")
+        | at("features/peers/store.py", 1, rule="R9 외부 도구")
+        | at("domain/stocks.py", 1, rule="R9 외부 도구")
+        | at("web/app.py", 1, rule="R9 외부 도구")
+        | at("cli.py", 1, rule="R9 외부 도구")
+    )
+    (inside_a_function,) = [v for v in violations if v.path.endswith("prices/service.py") and v.line == 6]
+    assert "`pymongo`" in inside_a_function.message and "research_desk/core/" in inside_a_function.message
 
 
 def test_r10_old_code_is_never_imported_even_by_tests(tmp_path):

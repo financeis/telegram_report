@@ -82,6 +82,9 @@ EXTERNAL_TOOL_AREAS = {
     "dotenv": "core",
     "fitz": "core",
     "pymupdf": "core",
+    "pymongo": "core",  # core.mongo
+    "bson": "core",  # pymongo의 BSON 패키지
+    "httpx": "core",  # core.kis (KIS Open API)
     "telethon": "collector",
     "langgraph": "tagger",
 }
