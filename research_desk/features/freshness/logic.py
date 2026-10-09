@@ -5,8 +5,8 @@ window's ``latest_run()`` answer, the reports window's ``latest_report_sent_at()
 an aware datetime in any zone; Korean time (KST) is what counts.
 
 Expected trading day (``expected_trading_day``): today when now is a weekday at or after
-``CUTOFF`` (18:30, when the daily price run starts), else the nearest weekday before today. So a
-weekday before 18:30 expects the weekday before (Monday morning: last Friday), and Saturday and
+``CUTOFF`` (20:00: the daily price run starts at 18:30 and is normally done well before 20:00),
+else the nearest weekday before today. So a weekday before 20:00 expects the weekday before (Monday morning: last Friday), and Saturday and
 Sunday expect Friday. The rule knows weekdays only, not market holidays.
 
 Prices (``price_freshness``) are stale, with a ``note`` sentence giving the reason, in the first
@@ -16,13 +16,13 @@ case that fits:
    (``as_of`` is None): ``NOTE_NEVER_UPDATED``;
 2. the latest run failed, whatever ``as_of`` is: ``NOTE_LAST_RUN_FAILED``;
 3. ``as_of`` is before the expected trading day: ``NOTE_BEHIND`` with the as_of day ("10월 7일"),
-   then ``HOLIDAY_HINT``. A weekday market holiday makes this rule warn wrongly from 18:30 that
+   then ``HOLIDAY_HINT``. A weekday market holiday makes this rule warn wrongly from 20:00 that
    day until the next trading day's prices are in, and the rule cannot tell, so the hint comes
    with every such note.
 
 Otherwise they are fresh and ``note`` is None: stale exactly when there is a note. A ``running``
-latest run is not stale by itself; it is judged by ``as_of`` like any other, so the daily run
-that has started at 18:30 but not finished yet shows the as_of note until it ends. An ``as_of``
+latest run is not stale by itself; it is judged by ``as_of`` like any other, and a daily run
+still going after 20:00 shows the as_of note until it ends. An ``as_of``
 after the expected trading day (a run by hand during trading hours) is fresh.
 
 Reports (``report_freshness``) are stale when there is no in-scope report, or when the newest
@@ -44,7 +44,7 @@ from zoneinfo import ZoneInfo
 KST = ZoneInfo('Asia/Seoul')
 
 # ── the adjustable values ────────────────────────────────────────────────────
-CUTOFF = time(18, 30)       # from this time on a weekday, that day's prices are expected
+CUTOFF = time(20, 0)        # from this time on a weekday, that day's prices are expected
 REPORT_STALE_DAYS = 3       # reports are stale when the newest is older than this many days
 
 # The prices window's status of a failed run (the prices feature's value; a test checks it).

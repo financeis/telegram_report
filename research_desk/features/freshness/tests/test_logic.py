@@ -1,10 +1,10 @@
 """features.freshness logic: the freshness rules of spec §12.3 as pure functions.
 
 Checked:
-- the expected trading day: in Korea, today when now is a weekday at or after 18:30 (18:29:59.999999
+- the expected trading day: in Korea, today when now is a weekday at or after 20:00 (19:59:59.999999
   is still the weekday before), else the nearest weekday before today — Monday morning gives the
-  Friday before, Saturday and Sunday (also after 18:30) give Friday; "now" in any zone counts in
-  Korea; the 18:30 is read when the rule runs, so it can be adjusted;
+  Friday before, Saturday and Sunday (also after 20:00) give Friday; "now" in any zone counts in
+  Korea; the 20:00 is read when the rule runs, so it can be adjusted;
 - the price states, first match wins: no successful run ever (no run at all, or only failed /
   running runs), the latest run failed (even with a current as_of), as_of before the expected
   trading day (with the holiday hint), else fresh; a running latest run is judged by as_of alone;
@@ -67,47 +67,49 @@ def behind(day_text: str) -> str:
 # ── the expected trading day ─────────────────────────────────────────────────
 
 @pytest.mark.parametrize('now, expected', [
-    (kst(THU, 18, 29, 59, 999999), WED),
-    (kst(THU, 18, 30), THU),
+    (kst(THU, 19, 59, 59, 999999), WED),
+    (kst(THU, 18, 30), WED),
+    (kst(THU, 20, 0), THU),
     (kst(THU, 0, 0), WED),
     (kst(THU, 23, 59, 59), THU),
     (kst(MON, 0, 0), FRI),
     (kst(MON, 9, 0), FRI),
-    (kst(MON, 18, 29), FRI),
-    (kst(MON, 18, 30), MON),
+    (kst(MON, 19, 59), FRI),
+    (kst(MON, 20, 0), MON),
     (kst(SAT, 10, 0), FRI),
-    (kst(SAT, 18, 30), FRI),
+    (kst(SAT, 20, 0), FRI),
     (kst(SAT, 22, 0), FRI),
     (kst(SUN, 0, 0), FRI),
     (kst(SUN, 23, 59, 59), FRI),
     (kst(NEXT_TUE, 8, 0), MON),
     (kst(WED, 9, 0), TUE),
-], ids=['weekday 18:29:59.999999', 'weekday 18:30', 'weekday midnight', 'weekday late evening',
-        'Monday midnight', 'Monday morning', 'Monday 18:29', 'Monday 18:30', 'Saturday morning',
-        'Saturday 18:30', 'Saturday evening', 'Sunday midnight', 'Sunday late evening',
+], ids=['weekday 19:59:59.999999', 'weekday 18:30 while the price run may still be going',
+        'weekday 20:00', 'weekday midnight', 'weekday late evening',
+        'Monday midnight', 'Monday morning', 'Monday 19:59', 'Monday 20:00', 'Saturday morning',
+        'Saturday 20:00', 'Saturday evening', 'Sunday midnight', 'Sunday late evening',
         'Tuesday morning', 'Wednesday morning'])
 def test_the_expected_trading_day(now, expected):
     assert expected_trading_day(now) == expected
 
 
 @pytest.mark.parametrize('now, expected', [
-    (datetime(2026, 10, 8, 9, 29, 59, tzinfo=timezone.utc), WED),    # 18:29:59 in Korea
-    (datetime(2026, 10, 8, 9, 30, tzinfo=timezone.utc), THU),        # 18:30 in Korea
+    (datetime(2026, 10, 8, 10, 59, 59, tzinfo=timezone.utc), WED),   # 19:59:59 in Korea
+    (datetime(2026, 10, 8, 11, 0, tzinfo=timezone.utc), THU),        # 20:00 in Korea
     (datetime(2026, 10, 7, 23, 0, tzinfo=timezone.utc), WED),        # Thursday 08:00 in Korea
     (datetime(2026, 10, 9, 15, 0, tzinfo=timezone.utc), FRI),        # Saturday 00:00 in Korea
     (datetime(2026, 10, 11, 14, 59, tzinfo=timezone.utc), FRI),      # Sunday 23:59 in Korea
     (datetime(2026, 10, 11, 15, 0, tzinfo=timezone.utc), FRI),       # Monday 00:00 in Korea
-], ids=['18:29:59 KST', '18:30 KST', 'Thursday morning KST', 'Saturday KST', 'Sunday KST',
+], ids=['19:59:59 KST', '20:00 KST', 'Thursday morning KST', 'Saturday KST', 'Sunday KST',
         'Monday midnight KST'])
 def test_the_expected_trading_day_counts_in_korea_whatever_the_zone_of_now(now, expected):
     assert expected_trading_day(now) == expected
 
 
-def test_the_cutoff_is_18_30_and_read_when_the_rule_runs(monkeypatch):
-    assert logic.CUTOFF == time(18, 30)
-    monkeypatch.setattr(logic, 'CUTOFF', time(19, 0))
-    assert expected_trading_day(kst(THU, 18, 30)) == WED
-    assert expected_trading_day(kst(THU, 19, 0)) == THU
+def test_the_cutoff_is_20_00_and_read_when_the_rule_runs(monkeypatch):
+    assert logic.CUTOFF == time(20, 0)
+    monkeypatch.setattr(logic, 'CUTOFF', time(21, 0))
+    assert expected_trading_day(kst(THU, 20, 0)) == WED
+    assert expected_trading_day(kst(THU, 21, 0)) == THU
 
 
 # ── prices: the four states ──────────────────────────────────────────────────
@@ -161,18 +163,19 @@ def test_an_as_of_after_the_expected_trading_day_is_fresh():
 
 
 @pytest.mark.parametrize('now, as_of, stale', [
-    (kst(THU, 18, 29, 59, 999999), WED, False),   # before 18:30 Wednesday's prices are current
-    (kst(THU, 18, 30), WED, True),                # from 18:30 Thursday's are expected
-    (kst(THU, 18, 30), THU, False),
+    (kst(THU, 19, 59, 59, 999999), WED, False),   # before 20:00 Wednesday's prices are current
+    (kst(THU, 18, 30), WED, False),               # the 18:30 run may still be going: not stale yet
+    (kst(THU, 20, 0), WED, True),                 # from 20:00 Thursday's are expected
+    (kst(THU, 20, 0), THU, False),
     (kst(MON, 9, 0), FRI, False),                 # Monday morning: Friday's are current
     (kst(MON, 9, 0), THU, True),
-    (kst(MON, 18, 30), FRI, True),
+    (kst(MON, 20, 0), FRI, True),
     (kst(SAT, 12, 0), FRI, False),
     (kst(SAT, 12, 0), THU, True),
     (kst(SUN, 12, 0), FRI, False),
     (kst(SUN, 12, 0), THU, True),
-], ids=['Thu 18:29 / Wed', 'Thu 18:30 / Wed', 'Thu 18:30 / Thu', 'Mon morning / Fri',
-        'Mon morning / Thu', 'Mon 18:30 / Fri', 'Sat / Fri', 'Sat / Thu', 'Sun / Fri', 'Sun / Thu'])
+], ids=['Thu 19:59 / Wed', 'Thu 18:30 / Wed', 'Thu 20:00 / Wed', 'Thu 20:00 / Thu', 'Mon morning / Fri',
+        'Mon morning / Thu', 'Mon 20:00 / Fri', 'Sat / Fri', 'Sat / Thu', 'Sun / Fri', 'Sun / Thu'])
 def test_the_as_of_rule_at_the_boundaries(now, as_of, stale):
     result = price_freshness(run('ok', as_of=as_of), now)
     assert result['stale'] is stale
