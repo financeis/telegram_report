@@ -235,18 +235,21 @@ def prepare(criteria: Sequence[str], *, apply: bool, model: str) -> PublisherDic
 # ── the criteria ─────────────────────────────────────────────────────────────
 
 def first_page_renders(file_path: Optional[str]) -> bool:
-    """Whether page 1 of the PDF at ``file_path`` (under STORAGE_BASE_DIR) renders to an image now.
+    """Whether the tagger could show page 1 of the PDF at ``file_path`` (under STORAGE_BASE_DIR) to the AI now.
 
-    Any failure — no path, outside the storage folder, missing, broken, no page — is False.
+    Uses the tagger's own picture rule (``extract_pdf._render_page_images``: drawn at the
+    tagger's dpi, smaller when over the AI limits), so a row picked here is one the
+    tagger will really read from a picture. Any failure — no path, outside the storage
+    folder, missing, broken, no page, too big at every tried dpi — is False.
     """
     if not file_path:
         return False
+    from research_desk.tagger.nodes import extract_pdf
     try:
         path = pdf.resolve_in_storage(settings.storage_base_dir(), file_path)
-        pdf.render_page_png(path, 1)
     except Exception:
         return False
-    return True
+    return bool(extract_pdf._render_page_images(path))
 
 
 def _notes(row: Mapping[str, Any]) -> str:

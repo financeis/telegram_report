@@ -993,3 +993,17 @@ def test_the_first_page_check_renders_page_1_under_the_storage_folder(tagger_env
     assert REAL_FIRST_PAGE_RENDERS("../outside.pdf") is False
     assert REAL_FIRST_PAGE_RENDERS(None) is False
     assert REAL_FIRST_PAGE_RENDERS("") is False
+
+
+def test_the_first_page_check_uses_the_taggers_picture_rule(tagger_env, tmp_path, monkeypatch):
+    # A page the tagger cannot fit under the AI picture limits is "no picture" there, so
+    # requeue must not pick it either — otherwise every requeue run would pick it again.
+    from research_desk.tagger.nodes import extract_pdf
+    storage = tmp_path / "reports"
+    tagger_env.setenv("STORAGE_BASE_DIR", str(storage))
+    make_pdf(storage / "ok.pdf")
+    assert REAL_FIRST_PAGE_RENDERS("ok.pdf") is True
+
+    monkeypatch.setattr(extract_pdf, "_fit_scale", lambda png: 0.5)   # never fits the limits
+    assert extract_pdf._render_page_images(storage / "ok.pdf") == []
+    assert REAL_FIRST_PAGE_RENDERS("ok.pdf") is False
