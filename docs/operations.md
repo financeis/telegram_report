@@ -114,7 +114,7 @@
 ```powershell
 powershell -File scripts\run-batches.ps1 -Iterations N -BatchSize 10
 ```
-- 한 배치 ≈22~25초. 1,500회 ≈ 10시간이 약 15,000건 백필의 실측 추산이다(gpt-5.4-mini 기준). Haiku 5.5 시험 실행(dry-run)에서는 행당 2~11초였다 — 첫 실운영 백필에서 다시 잰다.
+- 한 배치 ≈22~25초. 1,500회 ≈ 10시간이 약 15,000건 백필의 실측 추산이다(gpt-5.4-mini 기준). Haiku 5.5 첫 실운영 백필(2026-10-09)에서도 한 배치 ≈22~25초였다. 그림으로 읽는 행이 섞인 배치는 더 걸린다(2026-10-10 재분류에서 25~60초).
 - Ctrl+C 해도 안전하다. 다시 실행하면 남은 `pending`부터 이어 간다(같은 행을 두 번 하지 않음).
 - 스크립트는 저장소의 `.venv` 파이썬을 스스로 찾는다(순서: `-Python <경로>` → `$env:RESEARCH_DESK_PY` → 스크립트 위 폴더의 `.venv` → 기본 작업 폴더의 `.venv`). 종료 코드 0·1·4로 끝날 때 마지막 줄은 `Summary: success=<성공 배치 수> failed_attempts=<실패 시도 수>`다(2·3으로 끝날 때는 오류 문구로 끝난다).
 - 스크립트 종료 코드: 0 모두 완료 / 1 한 배치가 3번 다 실패 / 2 파이썬 못 찾음 / 3 되돌리기(reset-worker) 자체 실패 / 4 준비 문제.
@@ -256,7 +256,7 @@ python -m research_desk peers inspect
 
 ### 발행처 사전을 고친 뒤 (순서대로)
 1. **백필이 도는 동안에는 사전(`research_desk/tagger/vocabulary/publishers.yaml`)을 고치지 않는다.** 사전 원문이 AI 요청에 그대로 들어가서, 고치는 순간 같은 백필 안에서 다른 요청이 섞인다. 사전을 고쳐 커밋한 뒤 다음 단계로 간다.
-2. **백필·재처리·수집·웹앱을 끈다.** `--apply`가 이 PC의 프로세스 목록을 보고 하나라도 돌고 있으면 아무것도 바꾸지 않고 1로 멈추며 끌 것과 PID를 알려 준다(목록 자체를 못 읽으면 4). 사각지대: 관리자 권한으로 띄운 프로세스는 명령줄이 보이지 않아 찾지 못한다 — 백필·웹앱은 이 문서대로 일반 터미널에서 띄우고, 관리자 창에서 띄운 것이 있으면 직접 끈다.
+2. **백필·재처리·수집·웹앱을 끈다.** `--apply`가 이 PC의 프로세스 목록을 보고 하나라도 돌고 있으면 아무것도 바꾸지 않고 1로 멈추며 끌 것과 PID를 알려 준다(목록 자체를 못 읽으면 4). 사각지대: 관리자 권한으로 띄운 프로세스는 명령줄이 보이지 않아 찾지 못하고, 이미 열린 PowerShell 창에서 `& .\scripts\run-batches.ps1`로 띄운 백필은 배치 사이(자식 `tag run`이 없는 몇 초)에 보이지 않는다 — 백필은 `powershell -File scripts\run-batches.ps1 …`로, 웹앱은 일반 터미널에서 띄우고, 관리자 창이나 열린 창에서 띄운 것이 있으면 직접 끈다.
 3. **미리 보기.** 고친 내용에 맞는 조건을 고른다: 이름을 바꾸거나 뺐으면 `--publisher-not-in-dictionary`, 구역(종류)을 옮겼으면 `--publisher-type-mismatch`, 별칭·파일 이름 표기를 더했으면 `--publisher-filename-mismatch`. 그림 경로가 생기기 전에 못 읽음으로 간 행은 `--unreadable`.
    ```powershell
    python -m research_desk tag requeue --publisher-not-in-dictionary --publisher-filename-mismatch --publisher-type-mismatch
