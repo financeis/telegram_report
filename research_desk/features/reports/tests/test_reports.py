@@ -25,8 +25,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi import APIRouter, FastAPI, HTTPException
@@ -64,6 +66,7 @@ STOCKS_NOT_READY = {'detail': f'리포트 기능을 지금 쓸 수 없습니다:
 NOT_IN_STORAGE = 'PDF를 찾을 수 없습니다.'
 FILE_MISSING = '로컬 PDF 파일이 없습니다. 수집 상태를 확인해 주세요.'
 LOGGER = 'research_desk.features.reports.service'
+KST = ZoneInfo('Asia/Seoul')
 
 # The first header cell has a line break inside quotes, like the real file.
 HEADER_LINE = '"종목\n코드",종목명,시장,산업명(대),산업명(중),주요제품\n'
@@ -221,7 +224,7 @@ def window(monkeypatch):
 def test_window_exposes_the_public_names():
     assert isinstance(reports.router, APIRouter)
     for name in ('report_row', 'get_report', 'public_report', 'period_rows', 'stock_rows',
-                 'rows_for_stocks'):
+                 'rows_for_stocks', 'latest_report_sent_at'):
         assert callable(getattr(reports, name)), name
 
 
@@ -537,6 +540,7 @@ WINDOW_CALLS = {
     'stock_rows': lambda: reports.stock_rows('016360', '2026-01-01'),
     'rows_for_stocks': lambda: reports.rows_for_stocks(['016360', '005930'], '2026-01-01'),
     'rows_for_stocks without codes': lambda: reports.rows_for_stocks([], '2026-01-01'),
+    'latest_report_sent_at': lambda: reports.latest_report_sent_at(),
 }
 
 
@@ -740,6 +744,7 @@ def test_the_window_needs_no_stock_list(window, db, summaries, tmp_path, monkeyp
     assert list(reports.period_rows('2026-01-01', True)['id']) == [1]
     assert list(reports.stock_rows('016360', '2026-01-01')['id']) == [1]
     assert list(reports.rows_for_stocks(['016360'], '2026-01-01')['id']) == [1]
+    assert reports.latest_report_sent_at() == datetime(2026, 5, 11, 1, tzinfo=timezone.utc)
 
 
 def test_the_window_uses_one_service_prepared_once(window, db):
@@ -748,8 +753,37 @@ def test_the_window_uses_one_service_prepared_once(window, db):
     reports.period_rows('2026-01-01', False)
     reports.stock_rows('016360', '2026-01-01')
     reports.rows_for_stocks(['016360'], '2026-01-01')
+    reports.latest_report_sent_at()
     assert db.made == [(URL, KEY)]
     assert get_service() is get_service()
+
+
+def test_latest_report_sent_at_is_when_the_newest_in_scope_report_arrived(window, db):
+    assert reports.latest_report_sent_at() is None   # no in-scope row yet
+    db.tables['reports'] = [
+        tagged(1, sent_at='2026-05-10T01:00:00+00:00'),
+        tagged(2, sent_at='2026-05-11T15:30:00.123456+00:00'),
+        tagged(3, status='verified', reason='foreign', sent_at='2026-05-12T00:00:00+00:00'),
+        tagged(4, status='processing', sent_at='2026-05-13T00:00:00+00:00'),
+    ]
+    latest = reports.latest_report_sent_at()
+    assert latest == datetime(2026, 5, 11, 15, 30, 0, 123456, tzinfo=timezone.utc)
+    assert latest.astimezone(KST).isoformat() == '2026-05-12T00:30:00.123456+09:00'
+    for query in db.queries('reports'):   # one row each time, with the 16 columns
+        assert (query.limit_size, query.columns) == (1, ', '.join(EXPECTED_COLS))
+
+
+@pytest.mark.parametrize('stored, expected', [
+    ('2026-05-11T01:00:00+00:00', datetime(2026, 5, 11, 1, tzinfo=timezone.utc)),
+    ('2026-05-11T01:00:00Z', datetime(2026, 5, 11, 1, tzinfo=timezone.utc)),
+    ('2026-05-11T10:00:00+09:00', datetime(2026, 5, 11, 1, tzinfo=timezone.utc)),
+    ('2026-05-11T01:00:00.5+00:00', datetime(2026, 5, 11, 1, 0, 0, 500000, tzinfo=timezone.utc)),
+    ('2026-05-11T01:00:00', datetime(2026, 5, 11, 1, tzinfo=timezone.utc)),   # no zone given: UTC
+])
+def test_latest_report_sent_at_is_an_aware_datetime(window, db, stored, expected):
+    db.tables['reports'] = [tagged(1, sent_at=stored)]
+    latest = reports.latest_report_sent_at()
+    assert latest == expected and latest.utcoffset() is not None
 
 
 def test_rows_for_stocks_is_a_frame_of_the_sixteen_columns(window, db):

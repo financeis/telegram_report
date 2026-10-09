@@ -213,6 +213,7 @@ READS = {
     'stock': lambda store: store.fetch_stock_rows('016360', '2026-01-01'),
     'stocks': lambda store: store.fetch_rows_for_stocks(['016360', '005930'], '2026-01-01'),
     'one row': lambda store: store.fetch_report_row(1),
+    'latest row': lambda store: store.fetch_latest_row(),
 }
 
 
@@ -227,7 +228,7 @@ def test_every_read_selects_the_sixteen_columns_from_reports(read):
     assert all(r['publisher_type'] == 'broker' for r in rows)
 
 
-FRAME_READS = {name: read for name, read in READS.items() if name != 'one row'}
+FRAME_READS = {name: read for name, read in READS.items() if name not in ('one row', 'latest row')}
 
 
 @pytest.mark.parametrize('rows', [
@@ -525,3 +526,54 @@ def test_fetch_report_row_is_none_without_an_in_scope_row():
     assert store.fetch_report_row(1)['id'] == 1
     assert store.fetch_report_row(2) is None   # out of scope
     assert store.fetch_report_row(3) is None   # no such row
+
+
+# ── the row sent last ────────────────────────────────────────────────────────
+
+def test_fetch_latest_row_chain():
+    sb = MagicMock()
+    select = sb.table.return_value.select.return_value
+    is_ret = select.in_.return_value.is_.return_value
+    limited = is_ret.order.return_value.limit.return_value
+    limited.execute.return_value = MagicMock(data=[{'id': 7, 'sent_at': '2026-05-11T01:00:00+00:00'}])
+    assert ReportStore(sb).fetch_latest_row() == {'id': 7, 'sent_at': '2026-05-11T01:00:00+00:00'}
+    sb.table.assert_called_once_with('reports')
+    sb.table.return_value.select.assert_called_once_with(SELECT_COLS)
+    select.in_.assert_called_once_with('tagging_status', ['auto', 'verified'])
+    select.in_.return_value.is_.assert_called_once_with('out_of_scope_reason', 'null')
+    is_ret.order.assert_called_once_with('sent_at', desc=True, nullsfirst=False)
+    is_ret.order.return_value.limit.assert_called_once_with(1)
+
+
+def test_the_latest_row_is_the_in_scope_row_sent_last():
+    rows = [
+        tagged(1, sent='2026-05-10T01:00:00+00:00'),
+        tagged(2, sent='2026-05-11T09:00:00+00:00'),                                      # latest in scope
+        tagged(3, sent='2026-05-11T08:59:59+00:00'),
+        tagged(4, status='verified', reason='ir_self', sent='2026-05-12T00:00:00+00:00'),  # out of scope
+        tagged(5, status='review_needed', sent='2026-05-13T00:00:00+00:00'),               # not final
+        tagged(6, status='processing', sent='2026-05-14T00:00:00+00:00'),
+    ]
+    db = FakeSupabase(reports=rows)
+    row = ReportStore(db).fetch_latest_row()
+    assert row['id'] == 2 and set(row) == set(EXPECTED_COLS)
+    (query,) = db.executed
+    assert query.orders == [('sent_at', True, False)]
+    assert query.limit_size == 1 and query.window is None   # one row, no paging
+
+
+def test_the_latest_row_follows_the_shared_rule():
+    for row in every_status_and_reason():
+        found = ReportStore(FakeSupabase(reports=[row])).fetch_latest_row()
+        assert (found is not None) == is_in_scope(row), row
+
+
+def test_the_latest_row_is_none_without_an_in_scope_row():
+    assert ReportStore(FakeSupabase(reports=[])).fetch_latest_row() is None
+    assert ReportStore(FakeSupabase(reports=[tagged(1, status='pending')])).fetch_latest_row() is None
+
+
+def test_a_row_without_sent_at_is_never_the_latest():
+    # sent_at is NOT NULL in the table; the order still puts NULLs last, not first
+    rows = [tagged(1, sent=None), tagged(2, sent='2026-05-11T01:00:00+00:00')]
+    assert ReportStore(FakeSupabase(reports=rows)).fetch_latest_row()['id'] == 2

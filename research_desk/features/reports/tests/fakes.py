@@ -1,7 +1,8 @@
 """In-memory stand-in for the supabase-py query builder, for the reports tests.
 
 Serves the read calls the reports feature makes on ``reports`` and the analysis window makes on
-``report_summaries``: select, eq, in_, is_('null'), gte, contains, ov, order, range, execute.
+``report_summaries``: select, eq, in_, is_('null'), gte, contains, ov, order, limit, range,
+execute.
 Filters follow PostgREST: a NULL value never passes eq / in_ / gte / contains / ov, and
 ``is_(col, 'null')`` passes only NULL; ``ov`` (array overlap) passes a row whose array shares at
 least one value with the given list. ``order`` sorts like PostgreSQL: NULLs last ascending and
@@ -32,6 +33,7 @@ class FakeQuery:
         self.filters: list[tuple[str, str, Any]] = []   # (operator, column, value) in call order
         self.orders: list[tuple[str, bool, Optional[bool]]] = []   # (column, desc, nullsfirst)
         self.window: Optional[tuple[int, int]] = None   # range(start, end), both inclusive
+        self.limit_size: Optional[int] = None           # limit(size)
 
     def select(self, columns: str = "*") -> "FakeQuery":
         self.columns = columns
@@ -68,6 +70,10 @@ class FakeQuery:
 
     def range(self, start: int, end: int) -> "FakeQuery":
         self.window = (start, end)
+        return self
+
+    def limit(self, size: int) -> "FakeQuery":
+        self.limit_size = size
         return self
 
     def filter_values(self, operator: str, column: str) -> list[Any]:
@@ -126,6 +132,8 @@ class FakeQuery:
         if self.window is not None:
             start, end = self.window
             data = data[start:end + 1]
+        if self.limit_size is not None:
+            data = data[:self.limit_size]
         return SimpleNamespace(data=data)
 
 

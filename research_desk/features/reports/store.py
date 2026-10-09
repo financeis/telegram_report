@@ -21,7 +21,9 @@ langgraph_tagger/analytics/db.py with the same queries:
   (each as given). The server filters on the in-scope rule and the array overlap only; rows are
   kept on the client by their effective date, like the period read with out-of-scope rows. The
   codes are asked ``CODES_PER_QUERY`` at a time, each batch paged in id order;
-- one row by id: in-scope only, None when there is none.
+- one row by id: in-scope only, None when there is none;
+- the row sent last: the in-scope row with the latest ``sent_at`` (one row), None when there is
+  none.
 
 All group-by / unnest / bucketing happens in the callers.
 """
@@ -183,4 +185,12 @@ class ReportStore:
     def fetch_report_row(self, rid: int) -> Optional[dict]:
         """The in-scope row with this id (the 16 columns), or None."""
         result = _in_scope(self._select().eq('id', rid)).execute()
+        return result.data[0] if result.data else None
+
+    def fetch_latest_row(self) -> Optional[dict]:
+        """The in-scope row with the latest sent_at (the 16 columns), or None. NULLs sort last."""
+        result = (_in_scope(self._select())
+                  .order('sent_at', desc=True, nullsfirst=False)
+                  .limit(1)
+                  .execute())
         return result.data[0] if result.data else None

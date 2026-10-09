@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Any, Iterable, Mapping, Optional
@@ -79,6 +80,12 @@ def public_report(row: Mapping[str, Any], summary: Optional[dict]) -> dict:
     """The report as the browser sees it: the public columns, ``summary`` and ``pdf_url``."""
     return {k: row.get(k) for k in PUBLIC_COLUMNS} | {
         'summary': summary, 'pdf_url': f"/api/reports/{row['id']}/pdf"}
+
+
+def _instant(value: str) -> datetime:
+    """A timestamp the DB gave as ISO text, as an aware datetime (UTC when it names no zone)."""
+    moment = datetime.fromisoformat(value)
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
 
 
 class ReportsService:
@@ -132,6 +139,13 @@ class ReportsService:
 
     def rows_for_stocks(self, codes: Iterable[str], since: str) -> pd.DataFrame:
         return self.store().fetch_rows_for_stocks(codes, since)
+
+    def latest_report_sent_at(self) -> Optional[datetime]:
+        """The latest sent_at among in-scope rows, aware; None without one."""
+        row = self.store().fetch_latest_row()
+        if row is None or row.get('sent_at') is None:
+            return None
+        return _instant(row['sent_at'])
 
     # ── addresses ────────────────────────────────────────────────────────────
 
@@ -253,3 +267,10 @@ def rows_for_stocks(codes: Iterable[str], since: str) -> pd.DataFrame:
     and 100 codes per query, a row only once. NotReady without DB settings, codes or not.
     """
     return get_service().rows_for_stocks(codes, since)
+
+
+def latest_report_sent_at() -> Optional[datetime]:
+    """When the newest in-scope report arrived: the latest sent_at among in-scope rows, as an
+    aware datetime (the zone the DB gives, UTC), or None when there is no in-scope row. Reads one
+    row with the 16 columns. NotReady without DB settings."""
+    return get_service().latest_report_sent_at()
