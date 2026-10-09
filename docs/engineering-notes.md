@@ -4,7 +4,8 @@
 
 | 보이는 것 | 원인 | 대응 |
 |---|---|---|
-| Pydantic serializer warning (`LLMExtraction` 직렬화 시) | 분류기의 LLM 응답 모델(`LLMExtraction`)을 직렬화할 때 Pydantic이 내는 경고 | 기능 영향 없음(분류 결과와 저장 값이 같다). 무시한다 |
+| Pydantic serializer warning (`LLMExtraction`·`CompanyProfile` 직렬화 시) | 분류기와 유사 기업 프로필의 LLM 응답 모델을 직렬화할 때 Pydantic이 내는 경고 | 기능 영향 없음(분류 결과·프로필과 저장 값이 같다). 무시한다 |
+| `Failed to send compressed multipart ingest: … LangSmithRateLimitError … Monthly unique traces usage limit exceeded` (429) | AI 호출 기록 서비스(LangSmith)의 월 기록 한도를 다 써서 기록 전송이 거절됨. AI 호출 자체와 결과는 그대로다(2026-10-10 유사 기업 시험 실행에서 처음 봄) | 무시해도 된다. 다만 그달에는 LangSmith에 토큰 추이가 남지 않아 동시 호출 수를 올릴지 판단할 자료가 없다. 큰 실행에서 경고가 거슬리면 그 창에서만 `$env:LANGSMITH_TRACING='false'`를 두고 돌린다(`.env`보다 앞선다) |
 | 반복 실행 중 `exit=-1073741569`(드물게 `-1073741784`) (Windows native crash) | 윈도우에서 파이썬 프로세스가 비정상 종료된 경우. 2026-10-09 백필에서 자주 났고, 분류기가 PDF를 두 스레드에서 동시에 읽은 것(PyMuPDF는 여러 스레드 동시 사용을 지원하지 않는다)이 원인으로 추정돼 2026-10-10에 `core.pdf`의 PyMuPDF 호출을 프로세스 전체 잠금으로 줄 세웠고, 그 뒤 크게 줄었다 | `run-batches.ps1`이 그 작업자의 행을 되돌리고 재시도해서 자동 복구한다(데이터 손실 없음). 한 배치가 3번 연속 나면 스크립트가 1로 멈춘다 — 그때는 사람이 본다 |
 | `LangChainPendingDeprecationWarning: The default value of allowed_objects will change…` | LangGraph가 import될 때 내는 예고 경고. `tag run`·`tag escalate`가 그래프를 불러올 때와, 테스트 실행 끝의 "1 warning"이 이것이다 | 무시한다. `collect`·`web`·`stocks`·`prices`·`peers`·`tag inspect`·`tag reset-worker`·`tag requeue`·`--help`에서 이 경고가 보이면 그쪽은 무해한 것이 아니다 — 누가 명령 입구에서 그래프를 일찍 import하게 만든 것이니 그 import를 함수 안으로 옮긴다 |
 | `KIS … retry 1/3 in 1s` (`prices update` 중 경고) | KIS가 한도 초과(429·`EGW00201`)·5xx를 돌려주거나 시간 초과가 나서 1·2·4초 간격으로 다시 묻는 중 | 가끔이면 무시한다. 같은 실행에서 계속 나오면 같은 앱키를 쓰는 masterdb 수집이 돌고 있는지, `PRICES_MAX_CALLS_PER_SEC`가 너무 높지 않은지 본다 |
