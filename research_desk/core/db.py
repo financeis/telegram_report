@@ -1,11 +1,15 @@
 """DB connections: Supabase REST client (service key) and a direct Postgres pool.
 
 ``SupabaseSQL`` is a thin fetch/execute adapter over the pool that returns rows
-as plain dicts. The SQL itself lives with the area that owns the table.
+as plain dicts. Each fetch/execute borrows its own pooled connection; to run
+several statements in one transaction (lock rows, check them, update, count,
+roll back on a mismatch), ``SupabaseSQL.transaction()`` borrows one connection
+for the whole block. The SQL itself lives with the area that owns the table.
 """
 from __future__ import annotations
 
-from typing import Any, Iterable, Optional
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator, Iterable, Optional
 
 import asyncpg
 from supabase import Client, create_client
@@ -55,3 +59,36 @@ class SupabaseSQL:
     async def execute(self, sql: str, args: Iterable[Any] = ()) -> None:
         async with self._pool.acquire() as conn:
             await conn.execute(sql, *args)
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator["SQLTransaction"]:
+        """One pooled connection with one open transaction for the whole ``async with`` block.
+
+        Every fetch/execute on the yielded object runs on that connection, inside that
+        transaction. The block ending normally commits. Any exception leaving the block
+        (an ``Exception``, or a cancellation / Ctrl+C) rolls back first and then propagates,
+        so nothing done inside the block is kept.
+        """
+        async with self._pool.acquire() as conn:
+            transaction = conn.transaction()
+            await transaction.start()
+            try:
+                yield SQLTransaction(conn)
+            except BaseException:
+                await transaction.rollback()
+                raise
+            await transaction.commit()
+
+
+class SQLTransaction:
+    """fetch/execute on the one connection of an open ``SupabaseSQL.transaction()``."""
+
+    def __init__(self, conn: asyncpg.Connection) -> None:
+        self._conn = conn
+
+    async def fetch(self, sql: str, args: Iterable[Any] = ()) -> list[dict]:
+        rows = await self._conn.fetch(sql, *args)
+        return [dict(r) for r in rows]
+
+    async def execute(self, sql: str, args: Iterable[Any] = ()) -> None:
+        await self._conn.execute(sql, *args)
