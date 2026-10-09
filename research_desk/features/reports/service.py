@@ -35,7 +35,7 @@ import asyncio
 import logging
 from pathlib import Path
 from threading import Lock
-from typing import Any, Mapping, Optional
+from typing import Any, Iterable, Mapping, Optional
 
 import pandas as pd
 from fastapi import HTTPException
@@ -129,6 +129,9 @@ class ReportsService:
 
     def stock_rows(self, code: str, since: str) -> pd.DataFrame:
         return self.store().fetch_stock_rows(code, since)
+
+    def rows_for_stocks(self, codes: Iterable[str], since: str) -> pd.DataFrame:
+        return self.store().fetch_rows_for_stocks(codes, since)
 
     # ── addresses ────────────────────────────────────────────────────────────
 
@@ -238,3 +241,15 @@ def stock_rows(code: str, since: str) -> pd.DataFrame:
     """In-scope rows whose stock_codes hold ``code`` (as given), published since ``since``, the
     16 columns. NotReady without DB settings."""
     return get_service().stock_rows(code, since)
+
+
+def rows_for_stocks(codes: Iterable[str], since: str) -> pd.DataFrame:
+    """In-scope rows whose stock_codes share at least one code with ``codes`` and whose effective
+    date (published_at, else the KST date of sent_at) is on or after ``since`` (YYYY-MM-DD); the
+    16 columns, empty included.
+
+    Codes are used as given (no zero-padding); one that is not plain letters and digits matches
+    nothing, and one plain string instead of a collection is a TypeError. Read 1000 rows at a time
+    and 100 codes per query, a row only once. NotReady without DB settings, codes or not.
+    """
+    return get_service().rows_for_stocks(codes, since)

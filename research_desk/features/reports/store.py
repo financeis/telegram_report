@@ -17,19 +17,25 @@ langgraph_tagger/analytics/db.py with the same queries:
   sent_at as a KST date;
 - stock rows: in-scope rows whose ``stock_codes`` contain the code (as given), published since
   the start day;
+- rows for several stocks: in-scope rows whose ``stock_codes`` share at least one of the codes
+  (each as given). The server filters on the in-scope rule and the array overlap only; rows are
+  kept on the client by their effective date, like the period read with out-of-scope rows. The
+  codes are asked ``CODES_PER_QUERY`` at a time, each batch paged in id order;
 - one row by id: in-scope only, None when there is none.
 
 All group-by / unnest / bucketing happens in the callers.
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 import pandas as pd
 
 from research_desk.domain.reports import IN_SCOPE_STATUSES
 
 PAGE = 1000
+# Codes in one array-overlap query: keeps the request address short.
+CODES_PER_QUERY = 100
 
 EXPECTED_COLS: tuple[str, ...] = (
     'id', 'published_at', 'sent_at', 'report_type', 'publisher',
@@ -60,6 +66,34 @@ def _to_frame(rows: list[dict]) -> pd.DataFrame:
     empty results — downstream aggregators index columns by name."""
     df = pd.DataFrame(rows, columns=list(EXPECTED_COLS))
     return df
+
+
+def _effective_dates(df: pd.DataFrame) -> pd.Series:
+    """Each row's effective date: published_at, else sent_at as a KST date (NaT without both)."""
+    pub = pd.to_datetime(df['published_at'], errors='coerce')
+    sent = pd.to_datetime(df['sent_at'], errors='coerce', utc=True)
+    sent_kst = (sent.dt.tz_convert('Asia/Seoul')
+                    .dt.tz_localize(None)
+                    .dt.normalize())
+    return pub.fillna(sent_kst)
+
+
+def _on_or_after(df: pd.DataFrame, period_start_iso: str) -> pd.DataFrame:
+    """The rows whose effective date is on or after the start day, index renumbered from 0.
+    UTC 15:00 is 00:00 of the next day in KST; a row with neither date is dropped."""
+    return df[_effective_dates(df) >= pd.Timestamp(period_start_iso)].reset_index(drop=True)
+
+
+def _codes_to_ask(codes: Iterable[str]) -> list[str]:
+    """The codes for an array filter: each once, in the given order, exactly as given.
+
+    One plain string is refused: iterating it would ask for its characters one by one. Codes that
+    are not plain letters and digits (empty, spaced, punctuated, not text) are left out: no stored
+    code looks like that, and inside the array literal they would break the query or match wrong.
+    """
+    if isinstance(codes, str):
+        raise TypeError('codes must be a collection of stock codes, not one string')
+    return [code for code in dict.fromkeys(codes) if isinstance(code, str) and code.isalnum()]
 
 
 def _final_status(chain):
@@ -108,14 +142,7 @@ class ReportStore:
         if include_oos:
             # Client-side period filter using effective_date semantics:
             # published_at OR (sent_at as KST date).
-            pub = pd.to_datetime(df['published_at'], errors='coerce')
-            sent = pd.to_datetime(df['sent_at'], errors='coerce', utc=True)
-            sent_kst = (sent.dt.tz_convert('Asia/Seoul')
-                            .dt.tz_localize(None)
-                            .dt.normalize())
-            eff = pub.fillna(sent_kst)
-            cutoff = pd.Timestamp(period_start_iso)
-            df = df[eff >= cutoff].reset_index(drop=True)
+            df = _on_or_after(df, period_start_iso)
         return df
 
     def fetch_stock_rows(self, code: str, period_start_iso: str) -> pd.DataFrame:
@@ -131,6 +158,27 @@ class ReportStore:
                  .gte('published_at', period_start_iso))
         rows = _paged_fetch(chain)
         return _to_frame(rows)
+
+    def fetch_rows_for_stocks(self, codes: Iterable[str], period_start_iso: str) -> pd.DataFrame:
+        """In-scope rows whose stock_codes share at least one code with ``codes`` (as given),
+        kept when their effective date is on or after the start day.
+
+        ``.ov()`` gets a real list, like ``.contains()`` above: supabase-py writes the array
+        literal. The server filters on the in-scope rule and the overlap only; the period filter
+        runs here. Codes go ``CODES_PER_QUERY`` at a time; a row found by two batches comes once.
+        """
+        wanted = _codes_to_ask(codes)
+        rows: list[dict] = []
+        seen: set = set()
+        for start in range(0, len(wanted), CODES_PER_QUERY):
+            chain = (_in_scope(self._select())
+                     .ov('stock_codes', wanted[start:start + CODES_PER_QUERY])
+                     .order('id'))   # a fixed order, so the pages do not shift between reads
+            for row in _paged_fetch(chain):
+                if row['id'] not in seen:
+                    seen.add(row['id'])
+                    rows.append(row)
+        return _on_or_after(_to_frame(rows), period_start_iso)
 
     def fetch_report_row(self, rid: int) -> Optional[dict]:
         """The in-scope row with this id (the 16 columns), or None."""

@@ -18,7 +18,13 @@ import pandas as pd
 import pytest
 
 from research_desk.domain.reports import IN_SCOPE_STATUSES, TAGGING_STATUSES, is_in_scope
-from research_desk.features.reports.store import EXPECTED_COLS, PAGE, SELECT_COLS, ReportStore
+from research_desk.features.reports.store import (
+    CODES_PER_QUERY,
+    EXPECTED_COLS,
+    PAGE,
+    SELECT_COLS,
+    ReportStore,
+)
 from research_desk.features.reports.tests.fakes import FakeSupabase
 
 # The column list of langgraph_tagger/analytics/db.py, in its order.
@@ -205,6 +211,7 @@ READS = {
     'period without OOS': lambda store: store.fetch_inscope_or_oos_rows('2026-01-01', False),
     'period with OOS': lambda store: store.fetch_inscope_or_oos_rows('2026-01-01', True),
     'stock': lambda store: store.fetch_stock_rows('016360', '2026-01-01'),
+    'stocks': lambda store: store.fetch_rows_for_stocks(['016360', '005930'], '2026-01-01'),
     'one row': lambda store: store.fetch_report_row(1),
 }
 
@@ -223,8 +230,12 @@ def test_every_read_selects_the_sixteen_columns_from_reports(read):
 FRAME_READS = {name: read for name, read in READS.items() if name != 'one row'}
 
 
-@pytest.mark.parametrize('rows', [[], [tagged(1, status='pending', codes=('005930',), published='2000-01-01')]],
-                         ids=['empty table', 'nothing matches'])
+@pytest.mark.parametrize('rows', [
+    [],
+    [tagged(1, status='pending', codes=('005930',), published='2000-01-01')],
+    # read by the reads that keep rows by date on the client, then dropped there
+    [tagged(1, published='2000-01-01', sent='2000-01-01T01:00:00+00:00')],
+], ids=['empty table', 'nothing matches', 'too old'])
 @pytest.mark.parametrize('read', list(FRAME_READS.values()), ids=list(FRAME_READS))
 def test_every_frame_has_the_sixteen_columns_in_order_even_when_empty(read, rows):
     df = read(ReportStore(FakeSupabase(reports=rows)))
@@ -266,6 +277,7 @@ IN_SCOPE_READS = {
     'in-scope': lambda store: store.fetch_inscope_rows('2026-01-01'),
     'period without OOS': lambda store: store.fetch_inscope_or_oos_rows('2026-01-01', False),
     'stock': lambda store: store.fetch_stock_rows('016360', '2026-01-01'),
+    'stocks': lambda store: store.fetch_rows_for_stocks(['016360'], '2026-01-01'),
 }
 
 
@@ -360,6 +372,136 @@ def test_stock_rows_are_in_scope_rows_holding_the_code_since_the_start_day():
     assert ids(store.fetch_stock_rows('016360', '2000-01-01')) == [1, 2]
     # the DB is asked with the code as given: no zero-padding here
     assert ids(store.fetch_stock_rows('16360', '2000-01-01')) == []
+
+
+# ── rows for several stocks ──────────────────────────────────────────────────
+
+def test_fetch_rows_for_stocks_chain():
+    sb = MagicMock()
+    select = sb.table.return_value.select.return_value
+    is_ret = select.in_.return_value.is_.return_value
+    ordered = is_ret.ov.return_value.order.return_value
+    ordered.range.return_value.execute.return_value = MagicMock(data=[])
+    df = ReportStore(sb).fetch_rows_for_stocks(['016360', '005930'], '2026-01-01')
+    sb.table.assert_called_once_with('reports')
+    sb.table.return_value.select.assert_called_once_with(SELECT_COLS)
+    select.in_.assert_called_once_with('tagging_status', ['auto', 'verified'])
+    select.in_.return_value.is_.assert_called_once_with('out_of_scope_reason', 'null')
+    # a real list: supabase-py writes the array literal (never a '{...}' string built here)
+    is_ret.ov.assert_called_once_with('stock_codes', ['016360', '005930'])
+    is_ret.ov.return_value.order.assert_called_once_with('id')
+    ordered.range.assert_called_once_with(0, 999)
+    is_ret.gte.assert_not_called()   # no date filter on the server
+    assert list(df.columns) == list(EXPECTED_COLS) and len(df) == 0
+
+
+def test_rows_for_stocks_are_in_scope_rows_sharing_at_least_one_code():
+    rows = [
+        tagged(1),                                            # 016360 → kept
+        tagged(2, codes=('005930', '016360')),                # one of several codes → kept
+        tagged(3, codes=('000660',)),                         # the other code asked → kept
+        tagged(4, codes=('035420',)),                         # a code not asked
+        tagged(5, codes=()),                                  # no codes (e.g. an industry report)
+        tagged(6, status='verified', reason='foreign'),       # out of scope
+        tagged(7, status='review_needed'),                    # not final
+        tagged(8, codes=('000660', '016360')),                # both codes asked → once
+    ]
+    db = FakeSupabase(reports=rows)
+    df = ReportStore(db).fetch_rows_for_stocks(['016360', '000660'], '2026-01-01')
+    assert ids(df) == [1, 2, 3, 8]
+    (query,) = db.executed
+    # the server filters on the in-scope rule and the overlap only, in id order
+    assert query.filters == [('in', 'tagging_status', list(IN_SCOPE_STATUSES)),
+                             ('is', 'out_of_scope_reason', None),
+                             ('ov', 'stock_codes', ['016360', '000660'])]
+    assert query.orders == [('id', False, None)]
+
+
+def test_rows_for_stocks_are_kept_by_effective_date_from_the_start_day():
+    rows = [
+        tagged(1, published='2026-05-01'),                                     # the start day → kept
+        tagged(2, published='2026-04-30'),                                     # the day before
+        # no published_at: sent_at 15:00 UTC is 00:00 KST on the start day → kept
+        tagged(3, published=None, sent='2026-04-30T15:00:00+00:00'),
+        # one second earlier is still the day before in KST → dropped
+        tagged(4, published=None, sent='2026-04-30T14:59:59+00:00'),
+        # published_at wins over sent_at, both ways
+        tagged(5, published='2026-05-01', sent='2026-04-20T00:00:00+00:00'),
+        tagged(6, published='2026-04-30', sent='2026-05-05T00:00:00+00:00'),
+        tagged(7, published=None, sent=None),                                  # no date at all
+    ]
+    df = ReportStore(FakeSupabase(reports=rows)).fetch_rows_for_stocks(['016360'], '2026-05-01')
+    assert ids(df) == [1, 3, 5]
+    assert list(df.index) == [0, 1, 2]   # index renumbered after the client-side filter
+    assert list(df.columns) == list(EXPECTED_COLS)
+
+
+@pytest.mark.parametrize('count, windows', [
+    (0, [(0, 999)]),
+    (999, [(0, 999)]),
+    (1000, [(0, 999), (1000, 1999)]),   # a full last page needs one more read
+    (1001, [(0, 999), (1000, 1999)]),
+    (2500, [(0, 999), (1000, 1999), (2000, 2999)]),
+])
+def test_rows_for_stocks_page_through_windows_of_1000(count, windows):
+    db = FakeSupabase(reports=[tagged(i) for i in range(1, count + 1)])
+    df = ReportStore(db).fetch_rows_for_stocks(['016360'], '2026-01-01')
+    assert [q.window for q in db.executed] == windows
+    assert ids(df) == list(range(1, count + 1))
+
+
+def test_codes_are_asked_100_at_a_time_and_a_row_found_twice_comes_once():
+    codes = [f'{n:06d}' for n in range(1, 251)]   # 250 codes: batches of 100, 100 and 50
+    rows = [
+        tagged(1, codes=(codes[0],)),
+        tagged(2, codes=(codes[5], codes[150])),                # batches 1 and 2
+        tagged(3, codes=(codes[99], codes[100], codes[249])),   # all three batches
+        tagged(4, codes=(codes[249],)),
+        tagged(5, codes=('999999',)),
+    ]
+    db = FakeSupabase(reports=rows)
+    df = ReportStore(db).fetch_rows_for_stocks(codes, '2026-01-01')
+    assert CODES_PER_QUERY == 100
+    assert [q.filter_values('ov', 'stock_codes') for q in db.executed] == [
+        [codes[:100]], [codes[100:200]], [codes[200:]]]
+    assert ids(df) == [1, 2, 3, 4]
+
+
+def test_codes_are_asked_as_given_and_once_each():
+    db = FakeSupabase(reports=[tagged(1), tagged(2, codes=('16360',))])
+    store = ReportStore(db)
+    # the DB is asked with the code as given: no zero-padding here
+    assert ids(store.fetch_rows_for_stocks(['16360', '16360'], '2026-01-01')) == [2]
+    assert db.executed[-1].filter_values('ov', 'stock_codes') == [['16360']]
+    # any iterable of codes, read once
+    assert ids(store.fetch_rows_for_stocks(iter(['016360', '16360']), '2026-01-01')) == [1, 2]
+    assert db.executed[-1].filter_values('ov', 'stock_codes') == [['016360', '16360']]
+
+
+@pytest.mark.parametrize('odd', ['', ' ', ' 016360', '0163 60', 'a,b', '{016360}', '"016360"', 'x\\y',
+                                 None, 16360])
+def test_codes_that_are_not_plain_letters_and_digits_are_left_out_of_the_query(odd):
+    # no stored code looks like these, and inside an array literal they would break the query
+    db = FakeSupabase(reports=[tagged(1)])
+    df = ReportStore(db).fetch_rows_for_stocks(['016360', odd], '2026-01-01')
+    assert ids(df) == [1]
+    assert [q.filter_values('ov', 'stock_codes') for q in db.executed] == [[['016360']]]
+
+
+@pytest.mark.parametrize('codes', [[], [''], ('', ' ', None)], ids=['none', 'blank', 'nothing to ask'])
+def test_without_a_code_to_ask_nothing_is_read(codes):
+    db = FakeSupabase(reports=[tagged(1)])
+    df = ReportStore(db).fetch_rows_for_stocks(codes, '2026-01-01')
+    assert db.executed == []
+    assert list(df.columns) == list(EXPECTED_COLS) and len(df) == 0
+
+
+def test_one_code_as_a_plain_string_is_refused():
+    # iterating '016360' would ask for '0', '1', '6', … one character at a time
+    db = FakeSupabase(reports=[tagged(1)])
+    with pytest.raises(TypeError):
+        ReportStore(db).fetch_rows_for_stocks('016360', '2026-01-01')
+    assert db.executed == []
 
 
 # ── one row by id ────────────────────────────────────────────────────────────

@@ -14,6 +14,10 @@ features read reports only through the names below. Public names:
 - ``period_rows(since, include_oos)`` → DataFrame of the period's rows (with out-of-scope rows
   kept by their effective date when ``include_oos``).
 - ``stock_rows(code, since)`` → DataFrame of the in-scope rows holding ``code``.
+- ``rows_for_stocks(codes, since)`` → DataFrame of the in-scope rows holding at least one of
+  ``codes`` (each as given, no zero-padding), kept when their effective date (published_at, else
+  the KST date of sent_at) is on or after ``since``. Codes that are not plain letters and digits
+  match nothing; one plain string instead of a collection is a TypeError.
 
 Every DataFrame (and ``report_row``) has the 16 columns: id, published_at, sent_at, report_type,
 publisher, stock_codes, company_names, sectors_major, sectors_minor, products, tagging_status,
@@ -23,4 +27,4 @@ Without DB settings every read raises ``NotReady("리포트", …)``; an unreada
 only the report list (spec §9.9).
 """
 from .router import router
-from .service import get_report, period_rows, public_report, report_row, stock_rows
+from .service import get_report, period_rows, public_report, report_row, rows_for_stocks, stock_rows

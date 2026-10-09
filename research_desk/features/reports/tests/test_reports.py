@@ -220,7 +220,8 @@ def window(monkeypatch):
 
 def test_window_exposes_the_public_names():
     assert isinstance(reports.router, APIRouter)
-    for name in ('report_row', 'get_report', 'public_report', 'period_rows', 'stock_rows'):
+    for name in ('report_row', 'get_report', 'public_report', 'period_rows', 'stock_rows',
+                 'rows_for_stocks'):
         assert callable(getattr(reports, name)), name
 
 
@@ -534,6 +535,8 @@ WINDOW_CALLS = {
     'period_rows': lambda: reports.period_rows('2026-01-01', False),
     'period_rows with oos': lambda: reports.period_rows('2026-01-01', True),
     'stock_rows': lambda: reports.stock_rows('016360', '2026-01-01'),
+    'rows_for_stocks': lambda: reports.rows_for_stocks(['016360', '005930'], '2026-01-01'),
+    'rows_for_stocks without codes': lambda: reports.rows_for_stocks([], '2026-01-01'),
 }
 
 
@@ -736,6 +739,7 @@ def test_the_window_needs_no_stock_list(window, db, summaries, tmp_path, monkeyp
     assert reports.get_report(1)['id'] == 1
     assert list(reports.period_rows('2026-01-01', True)['id']) == [1]
     assert list(reports.stock_rows('016360', '2026-01-01')['id']) == [1]
+    assert list(reports.rows_for_stocks(['016360'], '2026-01-01')['id']) == [1]
 
 
 def test_the_window_uses_one_service_prepared_once(window, db):
@@ -743,8 +747,26 @@ def test_the_window_uses_one_service_prepared_once(window, db):
     reports.report_row(1)
     reports.period_rows('2026-01-01', False)
     reports.stock_rows('016360', '2026-01-01')
+    reports.rows_for_stocks(['016360'], '2026-01-01')
     assert db.made == [(URL, KEY)]
     assert get_service() is get_service()
+
+
+def test_rows_for_stocks_is_a_frame_of_the_sixteen_columns(window, db):
+    db.tables['reports'] = [
+        tagged(1, publisher_type=None),
+        tagged(2, codes=('005930', '000660')),
+        tagged(3, codes=('000660',), published='2025-12-31'),            # before the start day
+        tagged(4, codes=('000660',), status='verified', reason='foreign'),
+        tagged(5, codes=('035420',)),
+    ]
+    df = reports.rows_for_stocks(['016360', '000660'], '2026-01-01')
+    assert list(df.columns) == list(EXPECTED_COLS)
+    assert list(df['id']) == [1, 2]
+    assert list(df['publisher_type']) == [None, 'broker']
+    assert list(reports.rows_for_stocks(['16360'], '2026-01-01')['id']) == []   # no zero-padding
+    for empty in (reports.rows_for_stocks(['999999'], '2026-01-01'), reports.rows_for_stocks([], '2026-01-01')):
+        assert list(empty.columns) == list(EXPECTED_COLS) and len(empty) == 0
 
 
 # ── with the real analysis window (same DB stand-in) ─────────────────────────
