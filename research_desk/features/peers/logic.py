@@ -681,7 +681,6 @@ PEERS_MAX = 50           # the merged list (adjustable)
 SHARED_TERMS_MAX = 5
 # Shared-term bonus for ranking (§6.4): percentile points added per shared term. 0 = off.
 SHARED_TERM_BONUS = 0.0
-COVERAGE_DAYS = 365      # report counts over this many days (§7)
 
 
 def ordered_segments(rows: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:

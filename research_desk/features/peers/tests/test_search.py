@@ -126,7 +126,7 @@ def test_the_answer_fuses_three_rankings_and_has_the_spec_keys(world):
     assert rows['032580']['coverage'] == counts_record('none')
     assert rows['032580']['price'] == {k: v for k, v in SNAPSHOTS['032580'].items() if k != 'market'}
     assert rows['888880']['price'] is None
-    assert world.counts.calls == [(FUSED, 365)] and world.snapshots.calls == [FUSED]
+    assert world.counts.calls == [(FUSED, {})] and world.snapshots.calls == [FUSED]
 
 
 def test_the_fused_order_is_the_rrf_of_the_three_rankings(world):

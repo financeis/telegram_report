@@ -14,6 +14,7 @@ this feature's router and the web app's NotReady → 503 answer, over the world 
 """
 from __future__ import annotations
 
+import inspect
 import json
 import os
 from types import SimpleNamespace
@@ -24,7 +25,6 @@ from fastapi.testclient import TestClient
 from research_desk.core import db as core_db
 from research_desk.core.settings import NotReady
 from research_desk.features import coverage, prices
-from research_desk.features.peers import logic
 from research_desk.features.peers import service as service_module
 from research_desk.features.peers.service import PeersService, get_service
 from research_desk.features.peers.store import BUILD_TABLE_COLUMNS, PeersStore
@@ -43,6 +43,8 @@ from .web_world import (
     make_db,
     write_stock_list,
 )
+
+REAL_REPORT_COUNTS = coverage.report_counts      # kept before the fixtures replace it
 
 DB_REASON = 'DB 접속 설정(SUPABASE_URL, SUPABASE_SERVICE_KEY)이 없습니다'
 STOCK_LIST_REASON = '종목표 파일을 읽을 수 없습니다'
@@ -220,9 +222,10 @@ def test_the_seed_and_the_basis(world):
 
 def test_report_counts_and_prices_are_asked_once_for_the_seed_and_the_peers(world):
     get(world)
-    assert world.counts.calls == [([SEED] + LISTED, 365)]
+    # No day count of its own: the coverage window counts its last 365 days.
+    assert world.counts.calls == [([SEED] + LISTED, {})]
+    assert inspect.signature(REAL_REPORT_COUNTS).parameters['days'].default == 365
     assert world.snapshots.calls == [[SEED] + LISTED]
-    assert logic.COVERAGE_DAYS == 365
 
 
 def test_the_window_picks_the_period_of_the_seed_and_the_peers(world):

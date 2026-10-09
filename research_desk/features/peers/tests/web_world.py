@@ -198,15 +198,16 @@ LABELS = {SEED: 'covered', '000660': 'covered'}
 
 
 class Counts:
-    """Stand-in for ``coverage.report_counts``: every code, label from ``LABELS`` (else none)."""
+    """Stand-in for ``coverage.report_counts``: every code, label from ``LABELS`` (else none).
+    ``calls`` keeps the codes and the options of each call (``{}``: the window's own day count)."""
 
     def __init__(self, labels=None) -> None:
         self.labels = dict(LABELS if labels is None else labels)
-        self.calls: list[tuple[list[str], int]] = []
+        self.calls: list[tuple[list[str], dict]] = []
 
-    def __call__(self, codes, days=365):
+    def __call__(self, codes, **options):
         codes = list(codes)
-        self.calls.append((codes, days))
+        self.calls.append((codes, options))
         return {code: counts_record(self.labels.get(code, 'none'),
                                     3 if self.labels.get(code, 'none') != 'none' else 0) for code in codes}
 

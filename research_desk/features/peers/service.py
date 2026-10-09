@@ -32,9 +32,10 @@ of the build's model; 422 ``그 사업부문이 없습니다.`` for a segment nu
 - ``logic.merge_peers`` (grading with the build's tables, at most ``PEERS_MAX``), shared terms
   from the profiles' ``terms`` and the build's term table, the same industry from the stock list's
   ``산업명(중)``, each peer's segments;
-- report counts of the seed and the peers through ``coverage.report_counts(codes, days=365)`` and
-  their prices through ``prices.snapshots(codes)`` (its ``market`` key is dropped), one call each;
-  the reaction for the chosen window and the candidate flag.
+- report counts of the seed and the peers through ``coverage.report_counts(codes)`` (the window's
+  own day count, its last 365 days: this feature keeps no copy of it) and their prices through
+  ``prices.snapshots(codes)`` (its ``market`` key is dropped), one call each; the reaction for the
+  chosen window and the candidate flag.
 
 Theme search (``search``): readiness and the latest build; the query normalized with the synonym
 table; its embedding with the build's model at 1536 dimensions, from a cache of the last
@@ -334,7 +335,7 @@ class PeersService:
         segments = _segments_by_code(store.segments_of(fy, pv, peer_codes))
 
         codes = [code] + peer_codes
-        counts = coverage.report_counts(codes, days=logic.COVERAGE_DAYS)
+        counts = coverage.report_counts(codes)
         snapshots = prices.snapshots(codes)
         seed_price = _price(snapshots.get(code))
         seed_excess = seed_price["excess"].get(window) if seed_price and seed_price.get("excess") else None
@@ -463,7 +464,7 @@ class PeersService:
         top = [code for code in top if code in profiles]
         best = {row["stock_code"]: row for row in segment_rows if row["stock_code"] in profiles}
         names = {(s["stock_code"], s["seg_no"]): s for s in store.segments_of(fy, pv, [c for c in top if c in best])}
-        counts = coverage.report_counts(top, days=logic.COVERAGE_DAYS) if top else {}
+        counts = coverage.report_counts(top) if top else {}
         snapshots = prices.snapshots(top) if top else {}
         written = dict(terms)
 
