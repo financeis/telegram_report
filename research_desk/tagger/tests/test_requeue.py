@@ -381,6 +381,8 @@ def test_the_image_check_is_only_for_unreadable(env, table, capsys):
     assert report(out)["mode"] == "preview"
 
 
+# ── a running job: exit 1, nothing read or written ───────────────────────────
+
 @pytest.mark.parametrize("command_line,label", [
     ('"C:\\rd\\.venv\\Scripts\\python.exe" -u -m research_desk tag run --worker-id h-1-ab12',
      "백필(run-batches.ps1 또는 research_desk tag run)"),

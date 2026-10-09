@@ -49,7 +49,7 @@
 - DB 설정이 없거나 빈 값이면 DB가 필요한 주소는 `NotReady("검토", "DB 접속 설정(SUPABASE_URL, SUPABASE_SERVICE_KEY)이 없습니다")` → 503. 요청 값 검사, 쪽 범위, 모르는 토큰은 준비보다 먼저라 설정이 없어도 제 답(422·404·409)이 나간다.
 - 응답에 `file_path`, 저장 폴더 경로, Supabase URL·키를 넣지 않는다.
 - 사유 목록은 세 곳에 있다: `domain/vocabulary.yaml`(기준), `router.py`의 `ReviewAction.reason` `Literal`(`/openapi.json`의 `enum`을 그대로 두려고 직접 적었다), 화면의 `frontend/src/ReviewQueue.jsx`. 앞의 둘이 같은지는 테스트가 확인하지만 화면 쪽은 확인하지 않는다. 사유를 바꾸려면 이 셋과 DB 제약(마이그레이션)을 함께 바꾼다.
-- 검토 쪽에서 막을 수 없는 알려진 경쟁: `tag escalate`와 `tag run --row-ids`는 상태를 보지 않고 행을 다시 쓰므로 검토 결과를 덮을 수 있다. 검토의 조건부 쓰기는 자기 쓰기만 지킨다. `tag requeue --apply`는 웹앱이 켜져 있으면 실행을 거절하고(종료 코드 4), `verified` 행은 고르지 않는다.
+- 검토 쪽에서 막을 수 없는 알려진 경쟁: `tag escalate`와 `tag run --row-ids`는 상태를 보지 않고 행을 다시 쓰므로 검토 결과를 덮을 수 있다. 검토의 조건부 쓰기는 자기 쓰기만 지킨다. `tag requeue --apply`는 웹앱이 켜져 있으면 실행을 거절하고(종료 코드 1), `verified` 행은 고르지 않는다.
 
 ## 이 칸의 방식
 

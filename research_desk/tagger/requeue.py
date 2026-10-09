@@ -20,7 +20,8 @@ never are. A row meeting several criteria counts under each and is reverted once
 Preview (default) reads and reports; it writes nothing. ``--apply``:
 
 1. nothing that writes reports runs on this PC (backfill, escalate, collect, web app), checked
-   from the process list (``list_processes``); a running job or an unreadable list is "not ready";
+   from the process list (``list_processes``); a running job stops it with exit 1
+   (``RequeueJobsRunning``), a list that cannot be read is "not ready" (4);
 2. the targets are picked again and their current values written to a new CSV in ``BACKUP_DIR``
    before anything changes;
 3. one transaction locks the rows, re-checks each (still ``auto`` / ``review_needed``, still meets
