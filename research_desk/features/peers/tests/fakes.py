@@ -30,7 +30,8 @@ projection), ``distinct``, ``count_documents`` and ``database.client.close()``.
 ``FakeLLM`` stands in for ``core.llm.LLMClient``: ``parse`` answers through a ``reply(model, user)``
 function (a CompanyProfile, a StructuredResult, or an exception to raise), ``embed`` answers with
 one vector per text (deterministic, not unit length, so normalizing is visible). It records the
-calls and the most calls in flight at once.
+calls, the most ``parse`` calls in flight at once (``max_active``), the most ``embed`` calls in
+flight at once (``embed_max_active``) and how often it was closed (``closes``).
 """
 from __future__ import annotations
 
@@ -619,7 +620,10 @@ class FakeLLM:
         self.embed_calls: list[dict] = []
         self.active = 0
         self.max_active = 0
+        self.embed_active = 0
+        self.embed_max_active = 0
         self.closed = False
+        self.closes = 0
 
     async def parse(self, *, model, system, user, schema, temperature=None, constrained=True):
         self.parse_calls.append({"model": model, "system": system, "user": user,
@@ -641,13 +645,19 @@ class FakeLLM:
 
     async def embed(self, *, model, texts, dimensions=None):
         self.embed_calls.append({"model": model, "texts": list(texts), "dimensions": dimensions})
-        if self.delay:
-            await asyncio.sleep(self.delay)
-        return EmbeddingResult(vectors=[list(self.embedder(t)) for t in texts],
-                               input_tokens=len(texts) * 7)
+        self.embed_active += 1
+        self.embed_max_active = max(self.embed_max_active, self.embed_active)
+        try:
+            if self.delay:
+                await asyncio.sleep(self.delay)
+            return EmbeddingResult(vectors=[list(self.embedder(t)) for t in texts],
+                                   input_tokens=len(texts) * 7)
+        finally:
+            self.embed_active -= 1
 
     async def close(self) -> None:
         self.closed = True
+        self.closes += 1
 
 
 def unit(vector) -> list[float]:
