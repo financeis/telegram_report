@@ -113,7 +113,7 @@ reports (pending) ──(Postgres 직접 연결 SUPABASE_DB_URL, asyncpg 풀 최
 | Anthropic API | 모델 이름이 `claude-*` | `ANTHROPIC_API_KEY` |
 | OpenAI API | 그 밖의 모델 이름, 그리고 모든 임베딩(`peers build`, 웹 테마 검색) | `OPENAI_API_KEY`. 유사 기업 기능은 프로필 모델이 Claude여도 임베딩 때문에 이 키가 필요하다 |
 | Codex CLI | 모델 이름이 `codex:<모델>` | 로컬 `codex exec` (ChatGPT 로그인 한도, API 키 없음) |
-| 한국투자증권 KIS Open API | `core.kis` ← `prices update` | httpx(HTTPS), 실전 서버 `KIS_BASE_URL`. `KIS_APP_KEY`·`KIS_APP_SECRET` → 실행마다 접근 토큰 한 번. 수정주가 일봉(한 번에 100행)과 현재가. 호출 시작 간격은 `PRICES_MAX_CALLS_PER_SEC` 이하 |
+| 한국투자증권 KIS Open API | `core.kis` ← `prices update` | httpx(HTTPS), 실전 서버 `KIS_BASE_URL`. `KIS_APP_KEY`·`KIS_APP_SECRET` → 실행마다 접근 토큰 한 번. 수정주가 일봉(한 번에 100행)과 현재가. 초당 호출 수는 `PRICES_MAX_CALLS_PER_SEC` 이하 |
 | 로컬 MongoDB `FS.A001_v2` | `core.mongo` ← `peers build` | pymongo, 읽기만. 사업보고서 섹션 하나 = 문서 하나이고 `parser_version` 0.2.0 이상인 문서만 읽는다. `DART_MONGO_URL`·`DART_MONGO_DB`·`DART_MONGO_COLLECTION` |
 | LangSmith | 선택 | `LANGSMITH_TRACING=true`면 LangGraph 실행과 LLM 호출 기록을 보냄 |
 | 윈도우 작업 스케줄러 | 매일 주가 갱신 | 평일 장 마감 뒤(기본 18:30) `scripts/run-prices.ps1` → `python -m research_desk prices update`. 저장소 폴더를 현재 폴더로 맞추는 `.ps1`을 거쳐 `python -m research_desk <명령>`을 부르는 방식 |
